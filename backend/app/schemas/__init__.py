@@ -6,6 +6,12 @@ from .user import (
     UserWithStats,
     Token,
 )
+from .clipboard import (
+    ClipboardUpdate,
+    ClipboardResponse,
+    ClipboardHistoryItem,
+    ClipboardHistoryList,
+)
 
 __all__ = [
     "UserCreate",
@@ -13,4 +19,8 @@ __all__ = [
     "UserResponse",
     "UserWithStats",
     "Token",
+    "ClipboardUpdate",
+    "ClipboardResponse",
+    "ClipboardHistoryItem",
+    "ClipboardHistoryList",
 ]
