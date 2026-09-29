@@ -43,11 +43,19 @@
 - 后端用 `pytest` + `pytest-asyncio`，测试放 `backend/tests/`。
 - 新增/修复接口后补测试；安全红线（归属校验、角色边界、路径穿越）务必覆盖。
 
+## Git 工作流程
+- 所有功能开发在独立分支完成，**禁止直接提交到 main**。
+- 分支命名规范：`feature/功能名`、`fix/问题描述`、`refactor/重构内容`。
+- 提交信息用中文，简明扼要说明改动内容；多文件改动按模块分组描述。
+- 提交前必须确保代码能运行（后端能启动、前端能构建）；测试相关改动需确保测试通过。
+- `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/uploads/`、编译产物。
+
 ## 工作方式
 - 按第 15 节的 8 个阶段推进，**不要跳阶段**。
 - 新增/修改接口后，同步更新前端 api 封装与对应 store。
 - 安全红线关键代码处（deps.py 角色校验、文件下载接口等）留简短中文注释标明约束意图。
 - 不确定的设计取舍先问，不要自行更改第 16 节「已确认的设计决策」。
+- **执行任何操作前，必须向用户汇报将要做什么；操作完成后，汇报实际做了什么、结果如何**。
 
 ## 常用命令（速查；完整 setup 与部署见 README.md）
 - 后端启动：`uvicorn app.main:app --reload`（在 `backend/`）
@@ -55,3 +63,4 @@
 - 跑单个测试：`pytest tests/test_xxx.py::test_name`
 - 初始化首个超管：`python -m scripts.create_superadmin`
 - 前端：`npm run dev`（开发）/ `npm run build`（构建），在 `frontend/`
+- Git 操作：功能开发前先创建分支 `git checkout -b feature/功能名`；提交用 `git add` + `git commit -m "描述"`
