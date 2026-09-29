@@ -105,69 +105,99 @@ Vite 开发服务器已把 `/api` 与 `/ws` 代理到 `127.0.0.1:8000`，浏览�
 
 ## 生产部署
 
-### 1. 构建前端
+ClipSync 支持三种部署方式：
+
+### 方式一：自动化脚本部署（推荐）
+
+使用提供的自动化部署脚本，适合大多数 Linux 环境。
 
 ```bash
-cd frontend
-npm install
-npm run build      # 产物在 frontend/dist
+# 上传项目到服务器
+cd /var/www
+sudo git clone https://github.com/your-repo/clipsync.git
+cd clipsync
+
+# 配置环境变量
+cd backend
+sudo cp ../deployment/.env.production.example .env
+sudo nano .env  # 编辑配置
+
+# 执行部署脚本
+cd ..
+sudo bash deployment/scripts/deploy.sh
 ```
 
-### 2. 后端服务（systemd）
+部署脚本会自动完成：
+1. 检查系统依赖
+2. 配置数据库
+3. 安装 Python 和 Node.js 依赖
+4. 执行数据库迁移
+5. 创建超级管理员
+6. 构建前端
+7. 配置 Nginx 和 Systemd
+8. 设置定时任务（数据库备份、过期数据清理）
 
-编辑 `deploy/clipsync.service` 中的路径、用户和 `.env` 位置，然后：
+完成后：
+```bash
+sudo systemctl start clipsync
+sudo systemctl enable clipsync
+sudo systemctl restart nginx
+```
+
+**详细文档**：[deployment/DEPLOY.md](deployment/DEPLOY.md)
+
+### 方式二：Docker Compose 部署
+
+适合容器化环境，快速启动。
 
 ```bash
-sudo cp deploy/clipsync.service /etc/systemd/system/clipsync.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now clipsync
+cd deployment/docker
+cp .env.example .env
+nano .env  # 编辑配置
+
+# 启动所有服务
+docker-compose up -d
+
+# 创建超级管理员
+docker-compose exec backend python -m scripts.create_superadmin
 ```
 
-> **重要**：该服务默认以 **单 worker** 运行。WebSocket 连接管理器是「进程内内存」结构，实时广播依赖同一进程。若日后并发上升需要多 worker，必须先引入 Redis 等跨进程 pub/sub，否则实时同步会失效。
+访问 http://localhost
 
-### 3. Nginx 反向代理与 HTTP/HTTPS 切换
+**详细文档**：[deployment/docker/README.md](deployment/docker/README.md)
 
-`deploy/` 下提供两套配置，通过符号链接切换，改完 reload 即可：
+### 方式三：手动部署
 
-**HTTP 阶段（内网、无域名、无证书）：**
+完整的手动部署步骤见 [deployment/DEPLOY.md](deployment/DEPLOY.md)。
 
-```bash
-sudo ln -sf /path/to/clipsync/deploy/nginx.http.conf /etc/nginx/sites-enabled/clipsync.conf
-sudo nginx -t && sudo systemctl reload nginx
-```
+## HTTP / HTTPS 切换
 
-对应地在 `backend/.env` 设置：
+ClipSync 支持灵活的协议切换：
 
-```
-DEPLOY_SCHEME=http
-COOKIE_SECURE=false
-HSTS_ENABLED=false
-CORS_ORIGINS=http://<你的内网IP>
-```
+**HTTP（开发/内网）**：
+- 在 `backend/.env` 设置：
+  ```
+  DEPLOY_SCHEME=http
+  COOKIE_SECURE=false
+  HSTS_ENABLED=false
+  CORS_ORIGINS=http://your-ip
+  ```
 
-**HTTPS 阶段（有域名、有证书）：**
+**HTTPS（生产）**：
+1. 获取 SSL 证书（Let's Encrypt 或购买）
+2. 配置 Nginx SSL（见 `deployment/nginx/clipsync.conf`）
+3. 在 `backend/.env` 设置：
+  ```
+  DEPLOY_SCHEME=https
+  COOKIE_SECURE=true
+  HSTS_ENABLED=true
+  CORS_ORIGINS=https://your-domain.com
+  ```
+4. 重启服务：`sudo systemctl restart clipsync nginx`
 
-先用 certbot 等签发证书，修改 `nginx.https.conf` 中的 `server_name` 与证书路径，然后：
+前端使用相对路径和协议自适应，切换协议无需重新构建。
 
-```bash
-sudo ln -sf /path/to/clipsync/deploy/nginx.https.conf /etc/nginx/sites-enabled/clipsync.conf
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-对应地在 `backend/.env` 设置：
-
-```
-DEPLOY_SCHEME=https
-COOKIE_SECURE=true
-HSTS_ENABLED=true
-CORS_ORIGINS=https://<你的域名>
-```
-
-改完 `.env` 后重启后端：`sudo systemctl restart clipsync`。
-
-前端使用相对路径请求，WebSocket 会根据页面协议自动选择 `ws://` 或 `wss://`，因此切换协议无需重新构建前端。
-
-> ⚠️ **HTTP 阶段安全提示**：纯 HTTP 下，登录密码、令牌和所有文本/文件内容都以明文传输，且可被同网段嗅探。HTTP 方案**只应用于可信内网**，切勿直接暴露在公网。尽快切换到 HTTPS。
+> ⚠️ **HTTP 阶段安全提示**：纯 HTTP 下所有数据明文传输，**仅用于可信内网**。生产环境务必使用 HTTPS。
 
 ## 关键配置项（backend/.env）
 

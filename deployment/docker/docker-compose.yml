@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  # MySQL 数据库
+  db:
+    image: mysql:8.0
+    container_name: clipsync-db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_password}
+      MYSQL_DATABASE: ${DB_NAME:-clipsync}
+      MYSQL_USER: ${DB_USER:-clipsync}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-clipsync_password}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 后端服务
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: ../deployment/docker/Dockerfile.backend
+    container_name: clipsync-backend
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: ${DB_USER:-clipsync}
+      DB_PASSWORD: ${DB_PASSWORD:-clipsync_password}
+      DB_NAME: ${DB_NAME:-clipsync}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-10080}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      DEPLOY_SCHEME: ${DEPLOY_SCHEME:-http}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      HSTS_ENABLED: ${HSTS_ENABLED:-false}
+    volumes:
+      - uploads_data:/app/uploads
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "
+        alembic upgrade head &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+      "
+
+  # 前端服务
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: ../deployment/docker/Dockerfile.frontend
+    container_name: clipsync-frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx-docker.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  mysql_data:
+    driver: local
+  uploads_data:
+    driver: local
