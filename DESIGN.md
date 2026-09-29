@@ -31,7 +31,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 | 层 | 选型 | 说明 |
 |----|------|------|
-| 后端框架 | Python 3.11+ / FastAPI | 异步、原生支持 WebSocket、自动生成 API 文档 |
+| 后端框架 | Python 3.12+ / FastAPI | 异步、原生支持 WebSocket、自动生成 API 文档 |
 | ASGI 服务器 | Uvicorn (+ Gunicorn 多进程) | 生产环境用 Gunicorn 管理 Uvicorn worker |
 | 数据库 | MySQL 8.0 | 存用户与元数据 |
 | ORM / 驱动 | SQLAlchemy 2.0 (async) + asyncmy | 异步访问 MySQL |

@@ -18,7 +18,7 @@
 
 ## 技术栈
 
-- **后端**：Python 3.11+ / FastAPI（异步）、SQLAlchemy 2.0 async + asyncmy、Alembic、JWT（python-jose）、passlib[bcrypt]、slowapi 限流。
+- **后端**：Python 3.12+ / FastAPI（异步）、SQLAlchemy 2.0 async + asyncmy、Alembic、JWT（python-jose）、passlib[bcrypt]、slowapi 限流。
 - **数据库**：MySQL 8.0（utf8mb4）。
 - **前端**：Vue 3 + Vite、Pinia、vue-router、axios、原生 WebSocket。
 - **部署**：Gunicorn（UvicornWorker）+ Nginx 反向代理 + systemd。
@@ -61,7 +61,7 @@ clipsync/
 
 ### 先决条件
 
-- Python 3.11+
+- Python 3.12+
 - Node.js 18+
 - MySQL 8.0（已运行，且能创建数据库）
 
