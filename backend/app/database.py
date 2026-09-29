@@ -8,7 +8,7 @@ from .config import settings
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
-    pool_pre_ping=True,
+    pool_pre_ping=False,  # aiomysql 0.3.x 与 SQLAlchemy 的 ping 兼容性问题，暂时禁用
     pool_recycle=3600,
 )
 

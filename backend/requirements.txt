@@ -4,12 +4,11 @@ uvicorn[standard]==0.34.0
 
 # 数据库
 sqlalchemy==2.0.36
-aiomysql==0.2.0
+aiomysql==0.3.2
 alembic==1.14.0
 
 # 认证与安全
 python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
 python-multipart==0.0.20
 
 # 限流
