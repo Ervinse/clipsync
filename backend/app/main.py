@@ -7,7 +7,7 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import settings
 from .rate_limit import limiter
-from .api import auth, clipboard, files, ws
+from .api import auth, clipboard, files, ws, access
 
 app = FastAPI(
     title="ClipSync API",
@@ -39,9 +39,18 @@ async def root():
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(clipboard.router, prefix="/api/clipboard", tags=["文本"])
 app.include_router(files.router, prefix="/api/files", tags=["文件"])
+app.include_router(access.router, prefix="/api/access-codes", tags=["访问码管理"])
 app.include_router(ws.router, tags=["WebSocket"])
 
+# 免登录访问路由（独立前缀）
+# 注意：access.router 包含了需登录的管理接口和免登录的访问接口
+# 通过路径区分：/api/access/{code} 是公开的
+from fastapi import APIRouter as FastAPIRouter
+access_public = FastAPIRouter()
+access_public.add_api_route("/{code}", access.access_text, methods=["GET"], tags=["快速访问"])
+access_public.add_api_route("/{code}/download", access.access_file_download, methods=["GET"], tags=["快速访问"])
+app.include_router(access_public, prefix="/api/access")
+
 # 后续阶段继续挂载：
-# from .api import access, admin
-# app.include_router(access.router, prefix="/api/access", tags=["快速访问"])
+# from .api import admin
 # app.include_router(admin.router, prefix="/api/admin", tags=["管理后台"])
