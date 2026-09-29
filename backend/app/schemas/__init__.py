@@ -12,6 +12,14 @@ from .clipboard import (
     ClipboardHistoryItem,
     ClipboardHistoryList,
 )
+from .file import (
+    UploadInitRequest,
+    UploadInitResponse,
+    UploadChunkRequest,
+    UploadCompleteRequest,
+    FileResponse,
+    FileListResponse,
+)
 
 __all__ = [
     "UserCreate",
@@ -23,4 +31,10 @@ __all__ = [
     "ClipboardResponse",
     "ClipboardHistoryItem",
     "ClipboardHistoryList",
+    "UploadInitRequest",
+    "UploadInitResponse",
+    "UploadChunkRequest",
+    "UploadCompleteRequest",
+    "FileResponse",
+    "FileListResponse",
 ]

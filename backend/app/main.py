@@ -7,7 +7,7 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import settings
 from .rate_limit import limiter
-from .api import auth, clipboard, ws
+from .api import auth, clipboard, files, ws
 
 app = FastAPI(
     title="ClipSync API",
@@ -38,10 +38,10 @@ async def root():
 # 挂载路由
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(clipboard.router, prefix="/api/clipboard", tags=["文本"])
+app.include_router(files.router, prefix="/api/files", tags=["文件"])
 app.include_router(ws.router, tags=["WebSocket"])
 
 # 后续阶段继续挂载：
-# from .api import files, access, admin
-# app.include_router(files.router, prefix="/api/files", tags=["文件"])
+# from .api import access, admin
 # app.include_router(access.router, prefix="/api/access", tags=["快速访问"])
 # app.include_router(admin.router, prefix="/api/admin", tags=["管理后台"])
