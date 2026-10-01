@@ -29,10 +29,11 @@ class WebSocketManager {
     // 根据当前协议选择 ws:// 或 wss://
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.host
-    this.url = `${protocol}//${host}/ws?token=${token}`
+    // token 不放 URL（会进 access log），通过子协议传递；服务端只回选 clipsync.v1
+    this.url = `${protocol}//${host}/ws`
 
     try {
-      this.ws = new WebSocket(this.url)
+      this.ws = new WebSocket(this.url, ['clipsync.v1', `bearer.${token}`])
 
       this.ws.onopen = () => {
         console.log('[WS] 已连接')

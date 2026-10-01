@@ -47,6 +47,13 @@ const handleCreate = async () => {
       delete data.file_id
     }
 
+    // 后端接收 expires_at（ISO 时间，带时区）；0 或空表示永久有效
+    const hours = Number(data.expires_in_hours)
+    delete data.expires_in_hours
+    data.expires_at = hours > 0
+      ? new Date(Date.now() + hours * 3600 * 1000).toISOString()
+      : null
+
     await accessStore.createCode(data)
     closeCreateModal()
   } catch (error) {
@@ -65,7 +72,7 @@ const handleRevoke = async (code) => {
 }
 
 const copyLink = (code) => {
-  const link = accessStore.generateLink(code.code)
+  const link = accessStore.generateLink(code)
   navigator.clipboard.writeText(link).then(() => {
     alert('链接已复制到剪贴板')
   })
@@ -73,7 +80,8 @@ const copyLink = (code) => {
 
 const formatDate = (dateString) => {
   if (!dateString) return '永久有效'
-  const date = new Date(dateString)
+  // 后端时间为 naive UTC，补 Z 按 UTC 解析后转本地显示
+  const date = new Date(/[zZ]|[+-]\d\d:\d\d$/.test(dateString) ? dateString : dateString + 'Z')
   return date.toLocaleString('zh-CN', {
     year: 'numeric',
     month: '2-digit',
@@ -85,7 +93,7 @@ const formatDate = (dateString) => {
 
 const getFileName = (fileId) => {
   const file = filesStore.files.find(f => f.id === fileId)
-  return file?.filename || '未知文件'
+  return file?.original_name || '未知文件'
 }
 </script>
 
@@ -191,7 +199,7 @@ const getFileName = (fileId) => {
               :key="file.id"
               :value="file.id"
             >
-              {{ file.filename }}
+              {{ file.original_name }}
             </option>
           </select>
         </div>
@@ -201,7 +209,7 @@ const getFileName = (fileId) => {
           <input
             v-model.number="createForm.expires_in_hours"
             type="number"
-            min="1"
+            min="0"
             max="8760"
             placeholder="24"
           />

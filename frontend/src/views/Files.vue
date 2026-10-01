@@ -39,12 +39,16 @@ const handleFileChange = async (event) => {
   }
 }
 
-const handleDownload = (file) => {
-  filesStore.downloadFile(file.id)
+const handleDownload = async (file) => {
+  try {
+    await filesStore.downloadFile(file)
+  } catch (error) {
+    alert('下载失败：' + (error.message || '未知错误'))
+  }
 }
 
 const handleDelete = async (file) => {
-  if (!confirm(`确定删除文件 "${file.filename}" 吗？`)) return
+  if (!confirm(`确定删除文件 "${file.original_name}" 吗？`)) return
 
   try {
     await filesStore.deleteFile(file.id)
@@ -146,7 +150,7 @@ const formatDate = (dateString) => {
       >
         <div class="file-icon">📄</div>
         <div class="file-info">
-          <div class="file-name">{{ file.filename }}</div>
+          <div class="file-name">{{ file.original_name }}</div>
           <div class="file-meta">
             <span>{{ formatSize(file.size) }}</span>
             <span>•</span>

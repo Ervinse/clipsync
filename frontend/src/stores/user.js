@@ -31,10 +31,11 @@ export const useUserStore = defineStore('user', {
     // 配额信息
     quota(state) {
       return {
-        used: state.userInfo?.storage_used || 0,
+        // 后端 /auth/me 返回 used_bytes
+        used: state.userInfo?.used_bytes || 0,
         total: state.userInfo?.quota_bytes || 0,
         percentage: state.userInfo?.quota_bytes
-          ? Math.round((state.userInfo.storage_used / state.userInfo.quota_bytes) * 100)
+          ? Math.round(((state.userInfo.used_bytes || 0) / state.userInfo.quota_bytes) * 100)
           : 0,
       }
     },

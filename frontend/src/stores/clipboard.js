@@ -61,18 +61,21 @@ export const useClipboardStore = defineStore('clipboard', {
      * 监听 WebSocket 实时更新
      */
     setupWebSocket() {
-      // 监听剪贴板更新事件
-      ws.on('clipboard_update', (data) => {
-        console.log('[剪贴板] 收到实时更新:', data)
-        this.currentText = data.content || ''
-      })
+      // 后端推送只带信号（不含正文），收到后重新拉取当前文本
+      this._onClipboardUpdated = () => {
+        this.fetchCurrent().catch(() => {})
+      }
+      ws.on('clipboard_updated', this._onClipboardUpdated)
     },
 
     /**
      * 清理监听器
      */
     cleanupWebSocket() {
-      ws.off('clipboard_update')
+      if (this._onClipboardUpdated) {
+        ws.off('clipboard_updated', this._onClipboardUpdated)
+        this._onClipboardUpdated = null
+      }
     },
   },
 })
