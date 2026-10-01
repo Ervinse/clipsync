@@ -25,9 +25,52 @@ onMounted(async () => {
   await adminStore.fetchInviteCodes()
   // 文件元数据 admin 及以上均可查看（后端 /api/admin/files 同此权限），不含下载入口
   await adminStore.fetchFiles()
+  await adminStore.fetchSettings()
+  syncSettingsForm()
 })
 
 const stats = computed(() => adminStore.stats || {})
+
+// 系统设置：后端 GET 对 admin 及以上开放，PATCH 仅 superadmin；目前只有这两项存库
+const settingsForm = ref({
+  registration_enabled: true,
+  default_quota_mb: 100,
+})
+const isSavingSettings = ref(false)
+
+const syncSettingsForm = () => {
+  const s = adminStore.settings
+  if (!s) return
+  settingsForm.value = {
+    registration_enabled: s.registration_enabled,
+    default_quota_mb: Math.round(s.default_quota_bytes / 1024 / 1024),
+  }
+}
+
+const handleSaveSettings = async () => {
+  if (!userStore.isSuperAdmin) {
+    alert('仅超级管理员可修改系统设置')
+    return
+  }
+  const quotaMB = Number(settingsForm.value.default_quota_mb)
+  if (!Number.isInteger(quotaMB) || quotaMB < 0) {
+    alert('默认配额必须是非负整数（MB）')
+    return
+  }
+  try {
+    isSavingSettings.value = true
+    await adminStore.updateSettings({
+      registration_enabled: settingsForm.value.registration_enabled,
+      default_quota_bytes: quotaMB * 1024 * 1024,
+    })
+    syncSettingsForm()
+    alert('系统设置已保存')
+  } catch (error) {
+    alert('保存失败：' + (error.response?.data?.detail || error.message))
+  } finally {
+    isSavingSettings.value = false
+  }
+}
 
 const openCreateInviteModal = () => {
   inviteForm.value = {
@@ -170,6 +213,13 @@ const copyInviteCode = (code) => {
         @click="activeTab = 'files'"
       >
         📁 文件
+      </button>
+      <button
+        class="tab"
+        :class="{ active: activeTab === 'settings' }"
+        @click="activeTab = 'settings'"
+      >
+        ⚙️ 设置
       </button>
     </div>
 
@@ -320,6 +370,47 @@ const copyInviteCode = (code) => {
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- 系统设置（admin 只读，superadmin 可修改；后端为最终防线） -->
+    <div v-if="activeTab === 'settings'" class="tab-content">
+      <div class="settings-panel">
+        <div v-if="!userStore.isSuperAdmin" class="settings-hint">
+          仅超级管理员可修改系统设置，当前为只读。
+        </div>
+
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input
+              v-model="settingsForm.registration_enabled"
+              type="checkbox"
+              :disabled="!userStore.isSuperAdmin"
+            />
+            开放注册（关闭后即使持有有效邀请码也无法注册）
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label>新用户默认配额（MB）</label>
+          <input
+            v-model.number="settingsForm.default_quota_mb"
+            type="number"
+            min="0"
+            :disabled="!userStore.isSuperAdmin"
+          />
+          <div class="form-hint">只影响之后注册的用户；已有用户的配额在「用户」页单独修改</div>
+        </div>
+
+        <div class="form-hint">
+          单文件上限、分片大小、历史保留条数等由 backend/.env 配置，需重启后端生效，不在此修改。
+        </div>
+
+        <div v-if="userStore.isSuperAdmin" class="modal-actions">
+          <button class="btn-primary" :disabled="isSavingSettings" @click="handleSaveSettings">
+            {{ isSavingSettings ? '保存中...' : '保存设置' }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -714,5 +805,32 @@ td {
   gap: 1rem;
   justify-content: flex-end;
   margin-top: 2rem;
+}
+
+.settings-panel {
+  max-width: 560px;
+  padding: 1.5rem;
+  background: #1E293B;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.settings-hint {
+  padding: 0.75rem 1rem;
+  background: rgba(250, 204, 21, 0.1);
+  border: 1px solid rgba(250, 204, 21, 0.4);
+  border-radius: 8px;
+  color: #FACC15;
+  font-size: 0.9rem;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
 }
 </style>
