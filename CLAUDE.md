@@ -9,7 +9,7 @@
 - 代码里的标识符、库名、API 路径、变量名保持英文原样，**不要翻译**。
 
 ## 技术栈
-- 以 DESIGN.md 第 2 节为准，**不得替换**：FastAPI 全异步 + SQLAlchemy 2.0 async + asyncmy + Alembic；MySQL 8.0；JWT(python-jose) + passlib[bcrypt]；Vue 3 组合式 API + Vite + Pinia + axios；原生 WebSocket。
+- 以 DESIGN.md 第 2 节为准，**不得替换**：FastAPI 全异步 + SQLAlchemy 2.0 async + aiomysql + Alembic；MySQL 8.0；JWT(python-jose) + bcrypt；Uvicorn **单 worker**；Vue 3 组合式 API + Vite + Pinia + axios；原生 WebSocket。
 
 ## 🔴 安全红线（违反即为 bug，背景见第 4、12 节）
 1. **数据隔离**：隐私数据查询强制 `WHERE user_id == 当前用户`，唯一例外是 superadmin。
