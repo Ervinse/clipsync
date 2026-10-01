@@ -66,7 +66,10 @@ yarn-error.log*
 alembic/__pycache__/
 
 # Uploaded files (production data)
+# 实际存储目录为 STORAGE_DIR（默认 backend/storage）；uploads 为旧名，保留兼容
+backend/storage/
 backend/uploads/
+storage/
 
 # Test coverage
 .coverage
