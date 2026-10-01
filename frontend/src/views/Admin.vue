@@ -23,9 +23,8 @@ onMounted(async () => {
   await adminStore.fetchStats()
   await adminStore.fetchUsers()
   await adminStore.fetchInviteCodes()
-  if (userStore.isSuperAdmin) {
-    await adminStore.fetchFiles()
-  }
+  // 文件元数据 admin 及以上均可查看（后端 /api/admin/files 同此权限），不含下载入口
+  await adminStore.fetchFiles()
 })
 
 const stats = computed(() => adminStore.stats || {})
@@ -166,7 +165,6 @@ const copyInviteCode = (code) => {
         🎫 邀请码
       </button>
       <button
-        v-if="userStore.isSuperAdmin"
         class="tab"
         :class="{ active: activeTab === 'files' }"
         @click="activeTab = 'files'"
@@ -301,8 +299,8 @@ const copyInviteCode = (code) => {
       </div>
     </div>
 
-    <!-- 文件元数据（仅超管） -->
-    <div v-if="activeTab === 'files' && userStore.isSuperAdmin" class="tab-content">
+    <!-- 文件元数据（admin 及以上；安全红线：只展示元数据，无下载入口） -->
+    <div v-if="activeTab === 'files'" class="tab-content">
       <div class="files-table">
         <table>
           <thead>
