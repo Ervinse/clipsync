@@ -61,14 +61,40 @@ async def update_clipboard(
     - 操作强制绑定 user_id
     - 历史保留策略：超出 HISTORY_KEEP 限制时自动清理最旧记录
     """
+    return await _write_clipboard(db, current_user, data.content)
+
+
+async def _write_clipboard(
+    db: AsyncSession,
+    current_user: User,
+    content: str,
+    consumed_history_id: int | None = None,
+) -> ClipboardResponse:
+    """
+    写入当前文本：归档旧内容 + upsert + 清理超额历史 + 广播。
+
+    consumed_history_id：restore 时传入，被恢复的那条历史在同一事务里删除，避免重复。
+    """
+    # 0. 锁住当前用户行，同一用户的剪贴板写操作串行化，防止并发时重复归档、丢失中间版本。
+    #    不锁 Clipboard 行：首次写入时该行不存在，会退化为 gap lock，两个 INSERT 容易死锁。
+    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+
     # 1. 查询当前文本
     result = await db.execute(
         select(Clipboard).where(Clipboard.user_id == current_user.id)
     )
     old_clipboard = result.scalar_one_or_none()
 
-    # 2. 如果有旧内容，归档到历史
-    if old_clipboard and old_clipboard.content:
+    if consumed_history_id is not None:
+        await db.execute(
+            delete(ClipboardHistory).where(
+                ClipboardHistory.id == consumed_history_id,
+                ClipboardHistory.user_id == current_user.id,
+            )
+        )
+
+    # 2. 旧内容非空且与新内容不同才归档（保存相同内容不产生重复历史）
+    if old_clipboard and old_clipboard.content and old_clipboard.content != content:
         history_entry = ClipboardHistory(
             user_id=current_user.id,
             content=old_clipboard.content,
@@ -80,11 +106,11 @@ async def update_clipboard(
     updated_at = utcnow()
     stmt = mysql_insert(Clipboard).values(
         user_id=current_user.id,
-        content=data.content,
+        content=content,
         updated_at=updated_at,
     )
     stmt = stmt.on_duplicate_key_update(
-        content=data.content,
+        content=content,
         updated_at=updated_at,
     )
     await db.execute(stmt)
@@ -105,7 +131,8 @@ async def update_clipboard(
         result = await db.execute(
             select(ClipboardHistory.id)
             .where(ClipboardHistory.user_id == current_user.id)
-            .order_by(ClipboardHistory.created_at.asc())
+            # created_at 精度只到秒，同一秒可能有多条，加 id 保证删的确实是最旧的
+            .order_by(ClipboardHistory.created_at.asc(), ClipboardHistory.id.asc())
             .limit(excess_count)
         )
         ids_to_delete = [row[0] for row in result.all()]
@@ -127,7 +154,7 @@ async def update_clipboard(
     )
 
     return ClipboardResponse(
-        content=data.content,
+        content=content,
         updated_at=updated_at,
     )
 
@@ -146,7 +173,7 @@ async def get_clipboard_history(
     result = await db.execute(
         select(ClipboardHistory)
         .where(ClipboardHistory.user_id == current_user.id)
-        .order_by(desc(ClipboardHistory.created_at))
+        .order_by(desc(ClipboardHistory.created_at), desc(ClipboardHistory.id))
     )
     history_items = result.scalars().all()
 
@@ -191,11 +218,9 @@ async def restore_clipboard_history(
             detail="历史记录不存在或无权访问",
         )
 
-    # 2. 复用更新逻辑（将历史内容设为当前）
-    return await update_clipboard(
-        data=ClipboardUpdate(content=history_item.content),
-        current_user=current_user,
-        db=db,
+    # 2. 复用写入逻辑；被恢复的那条历史在同一事务里删除，避免恢复后历史重复
+    return await _write_clipboard(
+        db, current_user, history_item.content, consumed_history_id=history_item.id
     )
 
 

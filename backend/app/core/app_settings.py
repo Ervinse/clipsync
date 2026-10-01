@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models import Setting
+from ..schemas.admin import MAX_QUOTA_BYTES
 
 
 async def _get_value(db: AsyncSession, key: str) -> str | None:
@@ -20,7 +21,13 @@ async def get_registration_enabled(db: AsyncSession) -> bool:
 async def get_default_quota_bytes(db: AsyncSession) -> int:
     """新用户默认配额"""
     value = await _get_value(db, "default_quota_bytes")
+    if value is None:
+        return settings.DEFAULT_QUOTA_BYTES
     try:
-        return int(value) if value is not None else settings.DEFAULT_QUOTA_BYTES
+        quota = int(value)
     except ValueError:
         return settings.DEFAULT_QUOTA_BYTES
+    # 库里的脏值（负数或超过 1TB）回落默认值，避免注册时写入 users.quota_bytes 越界
+    if quota < 0 or quota > MAX_QUOTA_BYTES:
+        return settings.DEFAULT_QUOTA_BYTES
+    return quota

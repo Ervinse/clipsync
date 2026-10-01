@@ -41,6 +41,12 @@ router = APIRouter()
 
 _READ_BLOCK = 64 * 1024
 
+# 单个上传的分片总数上限：chunk_size 过小会产生海量小文件与超大列表，拖垮事件循环
+MAX_TOTAL_CHUNKS = 10_000
+
+# 正在合并的 upload_id（后端单 worker，检查与加入之间无 await，在 asyncio 下是原子的）
+_completing: set[str] = set()
+
 
 async def _reserved_bytes(db: AsyncSession, user_id: int, exclude_upload_id: str | None = None) -> int:
     """
@@ -118,7 +124,14 @@ async def init_upload(
             detail=f"文件大小超过限制（最大 {settings.MAX_FILE_BYTES // (1024 * 1024)} MB）",
         )
 
-    chunk_size = min(data.chunk_size, settings.CHUNK_SIZE)
+    # 分片大小：不超过 CHUNK_SIZE，且不小于让分片数落在 MAX_TOTAL_CHUNKS 以内的最小值
+    min_chunk_size = -(-data.total_size // MAX_TOTAL_CHUNKS)  # 向上取整
+    chunk_size = min(max(data.chunk_size, min_chunk_size), settings.CHUNK_SIZE)
+    if (data.total_size + chunk_size - 1) // chunk_size > MAX_TOTAL_CHUNKS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="分片数过多",
+        )
 
     # 清理当前用户已过期的会话，避免其永久占用配额与会话名额
     expire_before = utcnow() - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS)
@@ -252,7 +265,19 @@ async def complete_upload(
     - 校验 upload_id 归属
     - 合并后实际大小必须等于声明大小（声明大小已在 init 时过配额）
     - 合并后再次按实际占用校验配额
+    - 同一 upload_id 不允许并发 complete（否则会写出两条 File 记录、重复占用配额）
     """
+    if data.upload_id in _completing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该上传正在合并中")
+    _completing.add(data.upload_id)
+    try:
+        return await _complete_upload(data, current_user, db)
+    finally:
+        _completing.discard(data.upload_id)
+
+
+async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: AsyncSession) -> FileResponse:
+    """complete 的实际逻辑（调用方负责互斥）"""
     result = await db.execute(
         select(UploadSession).where(
             UploadSession.upload_id == data.upload_id,
@@ -267,7 +292,11 @@ async def complete_upload(
     received = sorted(
         int(p.name) for p in temp_dir.iterdir() if p.is_file() and p.name.isdigit()
     ) if temp_dir.exists() else []
-    if received != list(range(session.total_chunks)):
+    # received 是排好序、不重复的非负整数（文件名唯一），长度相等且末项为 n-1 即为 0..n-1，
+    # 不构造 list(range(n))，避免分片数很大时在事件循环里占用大量内存与 CPU
+    if len(received) != session.total_chunks or (
+        received and received[-1] != session.total_chunks - 1
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"分片不完整（已收到 {len(received)} / {session.total_chunks}）",

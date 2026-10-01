@@ -5,6 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, func, delete as sql_delete, update as sql_update
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -38,6 +39,7 @@ from ..core.deps import get_current_user, require_role
 from ..core.storage import delete_user_storage, cleanup_upload_temp
 from ..core.ws_manager import manager
 from ..core.timeutil import utcnow, to_naive_utc
+from ..core.app_settings import get_default_quota_bytes, get_registration_enabled
 
 router = APIRouter()
 
@@ -289,6 +291,13 @@ async def update_user_status(
             detail="不能修改自己的状态",
         )
 
+    # 安全红线：superadmin 之间互不可禁用
+    if user.role == UserRole.SUPERADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="不能修改其他超级管理员的状态",
+        )
+
     # 3. 更新状态
     user.is_active = data.is_active
     await db.commit()
@@ -356,6 +365,13 @@ async def delete_user(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="不能删除自己",
+        )
+
+    # 安全红线：superadmin 之间互不可删除
+    if user.role == UserRole.SUPERADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="不能删除其他超级管理员",
         )
 
     # 3. 进行中的上传会话（用于清理临时目录）
@@ -564,28 +580,22 @@ async def get_system_settings(
 
     权限：admin + superadmin
     """
-    # 查询系统设置（key-value 存储）
-    from ..config import settings as app_settings
-    import json
+    return await _read_system_settings(db)
 
-    # 读取默认配额
-    result = await db.execute(
-        select(Setting).where(Setting.key == "default_quota_bytes")
-    )
-    quota_setting = result.scalar_one_or_none()
-    default_quota_bytes = int(quota_setting.value) if quota_setting else app_settings.DEFAULT_QUOTA_BYTES
 
-    # 读取注册开关
-    result = await db.execute(
-        select(Setting).where(Setting.key == "registration_enabled")
-    )
-    reg_setting = result.scalar_one_or_none()
-    registration_enabled = (reg_setting.value.lower() == "true") if reg_setting else True
-
+async def _read_system_settings(db: AsyncSession) -> SystemSettingsResponse:
+    """统一走 core/app_settings 读取：脏数据回落默认值，不会 500"""
     return SystemSettingsResponse(
-        default_quota_bytes=default_quota_bytes,
-        registration_enabled=registration_enabled,
+        default_quota_bytes=await get_default_quota_bytes(db),
+        registration_enabled=await get_registration_enabled(db),
     )
+
+
+async def _upsert_setting(db: AsyncSession, key: str, value: str) -> None:
+    """INSERT ... ON DUPLICATE KEY UPDATE：并发首次写入同一 key 不会撞主键"""
+    stmt = mysql_insert(Setting).values(key=key, value=value, updated_at=utcnow())
+    stmt = stmt.on_duplicate_key_update(value=value, updated_at=utcnow())
+    await db.execute(stmt)
 
 
 @router.patch("/settings", response_model=SystemSettingsResponse)
@@ -599,59 +609,16 @@ async def update_system_settings(
 
     权限：仅 superadmin
     """
-    # 更新默认配额
     if data.default_quota_bytes is not None:
-        result = await db.execute(
-            select(Setting).where(Setting.key == "default_quota_bytes")
-        )
-        setting = result.scalar_one_or_none()
+        await _upsert_setting(db, "default_quota_bytes", str(data.default_quota_bytes))
 
-        if setting:
-            setting.value = str(data.default_quota_bytes)
-        else:
-            setting = Setting(
-                key="default_quota_bytes",
-                value=str(data.default_quota_bytes),
-            )
-            db.add(setting)
-
-    # 更新注册开关
     if data.registration_enabled is not None:
-        result = await db.execute(
-            select(Setting).where(Setting.key == "registration_enabled")
+        await _upsert_setting(
+            db, "registration_enabled", "true" if data.registration_enabled else "false"
         )
-        setting = result.scalar_one_or_none()
-
-        if setting:
-            setting.value = "true" if data.registration_enabled else "false"
-        else:
-            setting = Setting(
-                key="registration_enabled",
-                value="true" if data.registration_enabled else "false",
-            )
-            db.add(setting)
 
     await db.commit()
-
-    # 读取最新值
-    result = await db.execute(
-        select(Setting).where(Setting.key == "default_quota_bytes")
-    )
-    quota_setting = result.scalar_one_or_none()
-
-    result = await db.execute(
-        select(Setting).where(Setting.key == "registration_enabled")
-    )
-    reg_setting = result.scalar_one_or_none()
-
-    from ..config import settings as app_settings
-    default_quota_bytes = int(quota_setting.value) if quota_setting else app_settings.DEFAULT_QUOTA_BYTES
-    registration_enabled = (reg_setting.value.lower() == "true") if reg_setting else True
-
-    return SystemSettingsResponse(
-        default_quota_bytes=default_quota_bytes,
-        registration_enabled=registration_enabled,
-    )
+    return await _read_system_settings(db)
 
 
 # ========== 文件管理（仅元数据） ==========
