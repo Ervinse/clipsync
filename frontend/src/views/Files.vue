@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useFilesStore, useUserStore } from '../stores'
 
 const filesStore = useFilesStore()
@@ -9,7 +9,13 @@ const uploadInput = ref(null)
 const isUploading = ref(false)
 
 onMounted(async () => {
+  // 先挂监听再拉列表，避免拉取期间漏掉其他终端的变更
+  filesStore.setupWebSocket()
   await filesStore.fetchFiles()
+})
+
+onUnmounted(() => {
+  filesStore.cleanupWebSocket()
 })
 
 const uploadProgress = computed(() => {

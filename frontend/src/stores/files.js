@@ -3,6 +3,7 @@
  */
 import { defineStore } from 'pinia'
 import api from '../api'
+import ws from '../utils/websocket'
 
 export const useFilesStore = defineStore('files', {
   state: () => ({
@@ -112,6 +113,30 @@ export const useFilesStore = defineStore('files', {
       } catch (error) {
         console.error('删除文件失败:', error)
         throw error
+      }
+    },
+
+    /**
+     * 监听 WebSocket：其他终端上传或删除文件后刷新列表
+     * 后端推送只带 id 等轻量信号，收到后重新拉取列表，保证与服务端一致
+     */
+    setupWebSocket() {
+      if (this._onFilesChanged) return
+      this._onFilesChanged = () => {
+        this.fetchFiles().catch(() => {})
+      }
+      ws.on('file_added', this._onFilesChanged)
+      ws.on('file_deleted', this._onFilesChanged)
+    },
+
+    /**
+     * 清理监听器
+     */
+    cleanupWebSocket() {
+      if (this._onFilesChanged) {
+        ws.off('file_added', this._onFilesChanged)
+        ws.off('file_deleted', this._onFilesChanged)
+        this._onFilesChanged = null
       }
     },
 
