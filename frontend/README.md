@@ -95,10 +95,11 @@ src/
 - 链接复制与撤销
 
 ### 管理后台 (Admin)
-- 系统统计（仅管理员）
-- 用户管理（仅超管）
-- 邀请码管理
-- 文件元数据查看（仅超管）
+- 系统统计（admin 及以上）
+- 用户列表（admin 及以上可看；改配额 / 禁用 / 删除按钮仅超管可见，与后端权限一致）
+- 邀请码管理（admin 及以上）
+- 文件元数据查看（admin 及以上，只有元数据，无下载入口）
+- 尚未实现：系统设置页（store 已封装 `settings.get/update`，但页面没有入口）
 
 ### 公共访问 (PublicAccess)
 - 免登录访问文本
@@ -130,35 +131,9 @@ server: {
 
 ### 生产环境
 
-生产环境需要将构建产物部署到 Web 服务器（如 Nginx），并配置反向代理：
+生产环境把 `npm run build` 的产物 `dist/` 交给 Nginx 托管，并反代 `/api`、`/ws`。Nginx 配置以 [deployment/nginx/clipsync.conf](../deployment/nginx/clipsync.conf)（HTTP）和 [deployment/nginx/clipsync-https.conf](../deployment/nginx/clipsync-https.conf)（HTTPS）为准，部署步骤见 [deployment/DEPLOY.md](../deployment/DEPLOY.md)。
 
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-
-    # 前端静态文件
-    location / {
-        root /path/to/clipsync/frontend/dist;
-        try_files $uri $uri/ /index.html;
-    }
-
-    # 后端 API
-    location /api {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-
-    # WebSocket
-    location /ws {
-        proxy_pass http://localhost:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-```
+> 自己写反代时必须设置 `X-Forwarded-For`，否则后端只能看到 127.0.0.1，所有用户会共用一个限流额度。
 
 ## API 请求流程
 
@@ -209,6 +184,7 @@ server {
 2. **Token 管理**：Token 存储在 `localStorage`，通过 `Authorization` header 传递
 3. **文件上传**：采用分片上传（1MB/片），支持大文件
 4. **WebSocket 事件**：
-   - `clipboard_update`：剪贴板内容更新
-   - 可根据需求扩展其他事件类型
-5. **权限控制**：前端隐藏只是体验层，后端必须做最终校验
+   - `clipboard_updated`：剪贴板已更新（只带 `updated_at` 信号，前端收到后重新拉取当前文本）
+   - `file_added` / `file_deleted`：后端会广播，但前端**尚未订阅**，其他终端的文件列表目前不会自动刷新
+5. **尚未实现**：剪贴板历史的「恢复」「删除」按钮（后端接口已有，前端未封装，点击历史只会把内容填入编辑框）
+6. **权限控制**：前端隐藏只是体验层，后端必须做最终校验

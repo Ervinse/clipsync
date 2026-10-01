@@ -37,13 +37,16 @@ echo -e "${GREEN}✓ 数据库已备份${NC}"
 
 # 步骤 3: 更新后端
 echo -e "${YELLOW}[3/6] 更新后端...${NC}"
-cd "$BACKEND_DIR"
 
-# 拉取最新代码（如果是 git 仓库）
-if [ -d ".git" ]; then
-    git pull
+# 拉取最新代码：.git 在项目根目录，必须在根目录执行
+if [ -d "$PROJECT_ROOT/.git" ]; then
+    git -C "$PROJECT_ROOT" pull --ff-only
     echo -e "${GREEN}✓ 代码已更新${NC}"
+else
+    echo -e "${YELLOW}⚠ $PROJECT_ROOT 不是 git 仓库，跳过拉取代码${NC}"
 fi
+
+cd "$BACKEND_DIR"
 
 # 更新依赖
 source venv/bin/activate
@@ -59,12 +62,7 @@ echo -e "${GREEN}✓ 数据库迁移完成${NC}"
 echo -e "${YELLOW}[4/6] 更新前端...${NC}"
 cd "$FRONTEND_DIR"
 
-# 拉取最新代码
-if [ -d ".git" ]; then
-    git pull
-fi
-
-# 更新依赖并构建
+# 更新依赖并构建（代码已在步骤 3 拉取）
 npm install
 npm run build
 echo -e "${GREEN}✓ 前端已构建${NC}"

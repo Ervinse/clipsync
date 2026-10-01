@@ -15,6 +15,16 @@ def test_clipboard_isolated_between_users(client, make_user):
     assert client.get("/api/clipboard", headers=bob.headers).json()["content"] == ""
 
 
+def test_clipboard_accepts_text_larger_than_64kb(client, make_user):
+    # content 列为 MEDIUMTEXT：超过 TEXT 上限（64KB）的文本也要能完整存取，归档到历史时同样不截断
+    user = make_user()
+    big = "x" * (70 * 1024)
+    _set_clipboard(client, user, big)
+    assert client.get("/api/clipboard", headers=user.headers).json()["content"] == big
+    _set_clipboard(client, user, "next")
+    assert client.get("/api/clipboard/history", headers=user.headers).json()["items"][0]["content"] == big
+
+
 def test_history_ids_of_other_user_are_not_accessible(client, make_user):
     alice, bob = make_user(), make_user()
     _set_clipboard(client, alice, "v1")

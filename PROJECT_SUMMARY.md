@@ -1,5 +1,8 @@
 # ClipSync 项目完成总结
 
+> ⚠️ **历史快照，不再维护**：本文是阶段 7、8 完成时（提交 `234d4e8`）的一次性总结，之后的安全修复与文档同步未反映在此，其中多处描述已与代码不符（如 `FileUpload` 模型、邀请码使用次数、`backend/README.md`、「测试待补充」「可投入生产使用」等）。
+> 当前情况请以 [DESIGN.md](DESIGN.md)（设计与接口）、[README.md](README.md)（开发与配置）、[deployment/DEPLOY.md](deployment/DEPLOY.md)（部署）为准。
+
 ## 项目概述
 
 ClipSync 是一个自托管的跨设备剪贴板与文件同步工具，支持实时文本同步、文件分片上传、快速访问码分享等功能。

@@ -2,8 +2,14 @@
 
 # ClipSync 健康检查脚本
 # 检查服务、数据库、磁盘等状态
+# 不使用 set -e：某项检查失败（如服务未运行）时仍要继续执行后续检查
 
-set -e
+ENV_FILE="/var/www/clipsync/backend/.env"
+
+# 逐行读取 .env 而不是 source，避免值里的特殊字符被 shell 执行
+read_env() {
+    grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
 
 # 颜色输出
 RED='\033[0;31m'
@@ -59,9 +65,11 @@ fi
 
 # 6. 检查数据库连接
 echo -n "数据库连接: "
-if [ -f "/var/www/clipsync/backend/.env" ]; then
-    source /var/www/clipsync/backend/.env
-    if mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" -e "USE $DB_NAME;" 2>/dev/null; then
+if [ -f "$ENV_FILE" ]; then
+    DB_HOST=$(read_env DB_HOST); DB_USER=$(read_env DB_USER)
+    DB_NAME=$(read_env DB_NAME)
+    # 密码经环境变量传给 mysql，不出现在进程参数里
+    if MYSQL_PWD="$(read_env DB_PASSWORD)" mysql -h "${DB_HOST:-localhost}" -u "$DB_USER" -e "USE \`$DB_NAME\`;" 2>/dev/null; then
         echo -e "${GREEN}✓ 正常${NC}"
     else
         echo -e "${RED}✗ 连接失败${NC}"
