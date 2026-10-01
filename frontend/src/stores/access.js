@@ -78,16 +78,5 @@ export const useAccessStore = defineStore('access', {
         throw error
       }
     },
-
-    /**
-     * 生成访问链接
-     */
-    generateLink(code) {
-      // 协议与域名取当前页面，不写死；文件码带 t=file，公开页据此走下载接口
-      const protocol = window.location.protocol
-      const host = window.location.host
-      const suffix = code.target_type === 'file' ? '?t=file' : ''
-      return `${protocol}//${host}/access/${encodeURIComponent(code.code)}${suffix}`
-    },
   },
 })

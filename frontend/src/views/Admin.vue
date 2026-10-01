@@ -2,6 +2,8 @@
 import { ref, onMounted, computed } from 'vue'
 import { useAdminStore, useUserStore } from '../stores'
 import { useRouter } from 'vue-router'
+import { formatDateTime, formatSize } from '../utils/format'
+import { copyToClipboard } from '../utils/clipboard'
 
 const router = useRouter()
 const adminStore = useAdminStore()
@@ -66,7 +68,7 @@ const handleSaveSettings = async () => {
     syncSettingsForm()
     alert('系统设置已保存')
   } catch (error) {
-    alert('保存失败：' + (error.response?.data?.detail || error.message))
+    alert('保存失败：' + error.message)
   } finally {
     isSavingSettings.value = false
   }
@@ -91,7 +93,7 @@ const handleCreateInvite = async () => {
     showCreateInviteModal.value = false
     alert('邀请码创建成功')
   } catch (error) {
-    alert('创建失败：' + (error.response?.data?.detail || error.message))
+    alert('创建失败：' + error.message)
   }
 }
 
@@ -101,7 +103,7 @@ const handleDeleteInvite = async (id) => {
   try {
     await adminStore.deleteInviteCode(id)
   } catch (error) {
-    alert('删除失败：' + (error.response?.data?.detail || error.message))
+    alert('删除失败：' + error.message)
   }
 }
 
@@ -114,7 +116,7 @@ const handleToggleUserStatus = async (user) => {
   try {
     await adminStore.updateUserStatus(user.id, !user.is_active)
   } catch (error) {
-    alert('操作失败：' + (error.response?.data?.detail || error.message))
+    alert('操作失败：' + error.message)
   }
 }
 
@@ -131,7 +133,7 @@ const handleUpdateQuota = async (user) => {
     const quotaBytes = parseInt(quotaMB) * 1024 * 1024
     await adminStore.updateUserQuota(user.id, quotaBytes)
   } catch (error) {
-    alert('更新失败：' + (error.response?.data?.detail || error.message))
+    alert('更新失败：' + error.message)
   }
 }
 
@@ -146,33 +148,20 @@ const handleDeleteUser = async (user) => {
   try {
     await adminStore.deleteUser(user.id)
   } catch (error) {
-    alert('删除失败：' + (error.response?.data?.detail || error.message))
+    alert('删除失败：' + error.message)
   }
 }
 
-const formatSize = (bytes) => {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
-}
+// 后端时间为 naive UTC，formatDateTime 内部按 UTC 解析；空值（如永久有效的邀请码）显示「永久有效」
+const formatDate = (value) => formatDateTime(value, '永久有效', false)
 
-const formatDate = (dateString) => {
-  if (!dateString) return '永久有效'
-  const date = new Date(dateString)
-  return date.toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-const copyInviteCode = (code) => {
-  navigator.clipboard.writeText(code).then(() => {
+// HTTP 部署下 navigator.clipboard 不可用，copyToClipboard 会降级
+const copyInviteCode = async (code) => {
+  if (await copyToClipboard(code)) {
     alert('邀请码已复制')
-  })
+  } else {
+    prompt('复制失败，请手动复制：', code)
+  }
 }
 </script>
 

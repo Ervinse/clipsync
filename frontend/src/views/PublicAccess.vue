@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
+import { copyToClipboard } from '../utils/clipboard'
 
 const route = useRoute()
 
@@ -33,10 +34,13 @@ onMounted(async () => {
   }
 })
 
-const copyText = () => {
-  navigator.clipboard.writeText(data.value).then(() => {
+// HTTP 部署下 navigator.clipboard 不可用，copyToClipboard 会降级
+const copyText = async () => {
+  if (await copyToClipboard(data.value)) {
     alert('文本已复制到剪贴板')
-  })
+  } else {
+    alert('复制失败，请手动选中文本复制')
+  }
 }
 
 const downloadFile = () => {

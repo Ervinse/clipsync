@@ -42,9 +42,12 @@ def is_access_code_valid(access_code: AccessCode) -> bool:
 
 
 def _build_access_url(request: Request, code: AccessCode) -> str:
-    """按请求的 scheme + host 动态拼接访问链接，不硬编码协议或域名"""
-    base = f"{request.url.scheme}://{request.headers.get('host', '')}/api/access/{code.code}"
-    return base if code.target_type == AccessCodeTargetType.TEXT else f"{base}/download"
+    """
+    按请求的 scheme + host 动态拼接前端访问页链接（SPA 路由 /access/<code>），不硬编码协议或域名。
+    文件码带 ?t=file，访问页据此走 /api/access/<code>/download。
+    """
+    base = f"{request.url.scheme}://{request.headers.get('host', '')}/access/{code.code}"
+    return f"{base}?t=file" if code.target_type == AccessCodeTargetType.FILE else base
 
 
 def _to_response(request: Request, code: AccessCode) -> AccessCodeResponse:

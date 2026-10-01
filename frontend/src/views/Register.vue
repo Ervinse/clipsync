@@ -23,8 +23,19 @@ const handleRegister = async () => {
     return
   }
 
-  if (form.value.password.length < 6) {
-    error.value = '密码长度至少 6 位'
+  // 与后端 schemas/user.py 一致：用户名 3-64 位字母数字及 _ . -，密码 8-72 字节
+  if (!/^[A-Za-z0-9_.-]{3,64}$/.test(form.value.username)) {
+    error.value = '用户名为 3-64 位，只能包含字母、数字、_ . -'
+    return
+  }
+
+  if (form.value.password.length < 8) {
+    error.value = '密码长度至少 8 位'
+    return
+  }
+
+  if (new TextEncoder().encode(form.value.password).length > 72) {
+    error.value = '密码不能超过 72 字节'
     return
   }
 
@@ -48,7 +59,7 @@ const handleRegister = async () => {
       router.push('/login')
     }, 2000)
   } catch (err) {
-    error.value = err.response?.data?.detail || '注册失败，请检查信息'
+    error.value = err.message || '注册失败，请检查信息'
   } finally {
     loading.value = false
   }
@@ -83,7 +94,7 @@ const goToLogin = () => {
           <input
             v-model="form.password"
             type="password"
-            placeholder="至少 6 位"
+            placeholder="至少 8 位"
             :disabled="loading"
           />
         </div>

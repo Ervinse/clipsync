@@ -9,7 +9,8 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
-        changeOrigin: true,
+        // 保留浏览器的 Host（localhost:3000），后端据此拼出的访问码链接才指向前端页面
+        changeOrigin: false,
       },
       '/ws': {
         target: 'ws://localhost:8000',

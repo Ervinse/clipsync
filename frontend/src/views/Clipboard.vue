@@ -1,25 +1,34 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useClipboardStore } from '../stores'
+import { formatRelative } from '../utils/format'
 
 const clipboardStore = useClipboardStore()
 
 const textContent = ref('')
+// 编辑框最近一次与服务端一致时的内容；textContent 与它不同即表示有未保存的本地编辑
+const syncedText = ref('')
 const isSaving = ref(false)
 const showHistory = ref(false)
 const saveSuccess = ref(false)
 
+// 其他终端更新后 store.currentText 变化：本地没有未保存编辑时才同步到编辑框，避免覆盖正在输入的内容
+watch(() => clipboardStore.currentText, (value) => {
+  if (textContent.value === syncedText.value) {
+    textContent.value = value
+  }
+  syncedText.value = value
+})
+
 onMounted(async () => {
-  // 获取当前内容
-  await clipboardStore.fetchCurrent()
-  textContent.value = clipboardStore.currentText
-
-  // 监听 WebSocket 实时更新
+  // 先注册监听再拉数据，拉取期间的推送也不会漏掉
   clipboardStore.setupWebSocket()
-
-  // 获取历史记录
-  if (showHistory.value) {
-    await clipboardStore.fetchHistory()
+  try {
+    await clipboardStore.fetchCurrent()
+    textContent.value = clipboardStore.currentText
+    syncedText.value = clipboardStore.currentText
+  } catch (error) {
+    alert('获取剪贴板失败：' + error.message)
   }
 })
 
@@ -31,13 +40,14 @@ const handleSave = async () => {
   try {
     isSaving.value = true
     await clipboardStore.updateText(textContent.value)
+    syncedText.value = textContent.value
 
     saveSuccess.value = true
     setTimeout(() => {
       saveSuccess.value = false
     }, 2000)
   } catch (error) {
-    alert('保存失败：' + (error.response?.data?.detail || error.message))
+    alert('保存失败：' + error.message)
   } finally {
     isSaving.value = false
   }
@@ -45,8 +55,13 @@ const handleSave = async () => {
 
 const toggleHistory = async () => {
   showHistory.value = !showHistory.value
-  if (showHistory.value && clipboardStore.history.length === 0) {
-    await clipboardStore.fetchHistory()
+  // 每次打开都重新拉取，保证看到其他终端产生的历史
+  if (showHistory.value) {
+    try {
+      await clipboardStore.fetchHistory()
+    } catch (error) {
+      alert('获取历史失败：' + error.message)
+    }
   }
 }
 
@@ -60,9 +75,11 @@ const loadHistoryItem = (content) => {
 const handleRestore = async (item) => {
   if (!confirm('将这条历史恢复为当前文本？当前文本会归档到历史。')) return
   try {
-    textContent.value = await clipboardStore.restoreHistory(item.id)
+    const restored = await clipboardStore.restoreHistory(item.id)
+    textContent.value = restored
+    syncedText.value = restored
   } catch (error) {
-    alert('恢复失败：' + (error.response?.data?.detail || error.message))
+    alert('恢复失败：' + error.message)
   }
 }
 
@@ -71,26 +88,12 @@ const handleDeleteHistory = async (item) => {
   try {
     await clipboardStore.deleteHistory(item.id)
   } catch (error) {
-    alert('删除失败：' + (error.response?.data?.detail || error.message))
+    alert('删除失败：' + error.message)
   }
 }
 
-const formatDate = (dateString) => {
-  const date = new Date(dateString)
-  const now = new Date()
-  const diff = now - date
-
-  if (diff < 60000) return '刚刚'
-  if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前'
-  if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前'
-
-  return date.toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
+// 后端时间为 naive UTC，formatRelative 内部按 UTC 解析
+const formatDate = formatRelative
 </script>
 
 <template>

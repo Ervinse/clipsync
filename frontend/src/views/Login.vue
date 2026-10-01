@@ -25,7 +25,8 @@ const handleLogin = async () => {
     await userStore.login(form.value)
     router.push('/clipboard')
   } catch (err) {
-    error.value = err.response?.data?.detail || '登录失败，请检查用户名和密码'
+    // 拦截器 reject 的是 { status, message }，后端 detail 已放进 message
+    error.value = err.message || '登录失败，请检查用户名和密码'
   } finally {
     loading.value = false
   }
