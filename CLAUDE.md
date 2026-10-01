@@ -1,7 +1,7 @@
 # ClipSync 开发约束
 
 > 本文件是编码时必须遵守的**硬规则**，Claude 每次会话自动读取。
-> 三份文档各司其职：**规格权威** → DESIGN.md（技术栈全表、数据模型字段、API 清单、目录树、机制、分阶段计划、已确认决策）；**运行 / 部署** → README.md（完整 setup、部署、配置项表、面向用户的权限说明）；**本文件** → 编码硬约束 + 指针。
+> 三份文档各司其职：**规格权威** → DESIGN.md（技术栈全表、数据模型字段、API 清单、目录树、机制、分阶段计划）；**运行 / 部署** → README.md（完整 setup、部署、配置项表、面向用户的权限说明）；**本文件** → 编码硬约束 + 指针。
 > 冲突时以本文件为准；本文件未覆盖的细节以 DESIGN.md 为准（「第 N 节」指 DESIGN.md 章节）。
 
 ## 交流语言
@@ -50,20 +50,29 @@
 - 提交前必须确保代码能运行（后端能启动、前端能构建）；测试相关改动需确保测试通过。
 - `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/uploads/`、编译产物。
 
-### 分支生命周期（开分支 → 收口 → 删分支）
-1. **从最新的 master 开分支**：`git checkout master && git checkout -b <type>/<name>`。不要从其他未合并的分支上接着开。
-   - 唯一例外：新工作必须依赖某个尚未合并的分支时，先向用户说明，并优先把那个分支合并回 master 再开新分支。
-2. **完成即收口**：分支的工作做完、测试通过、后端能启动、前端能构建后，向用户汇报，确认后用 `git merge --no-ff` 合并回 master（保留合并节点）。不要让已完成的分支长期悬空。
-3. **合并后在 master 上复验**：重跑 `pytest`（`backend/`）和 `npm run build`（`frontend/`），确认主线可用。
-4. **删除已合并的分支**：用 `git branch -d <分支>`（只删已合并分支）；**禁止**用 `-D` 强删，除非用户明确要求。
-5. **会话开始时检查分支状态**：若发现已完成但未合并回 master 的分支，先向用户报告并建议收口，再开始新工作。
-- 合并、删除分支、推送远端都属于需要先汇报的操作；有冲突时停下来向用户说明，不要自行取舍。
+### 分支生命周期（开分支 → 提交 → 等用户指令合并 → 删分支）
+1. **每次新的更新都在 `feature/*` 或 `fix/*` 分支上进行**：从最新的 master 开分支 `git checkout master && git checkout -b <type>/<name>`，不要从其他未合并的分支上接着开。
+   - 唯一例外：新工作必须依赖某个尚未合并的分支时，先向用户说明并等用户决定。
+2. **对项目的每次操作都必须提交**：每完成一项改动（代码、文档、配置、脚本）就 `git add` 指定文件 + `git commit`，不要让改动停留在未提交状态。
+3. **只有用户明确说「合并」才能合并**：分支工作完成后向用户汇报并等待指令，**禁止**自行合并到 master（即便测试已全部通过）。合并时用 `git merge --no-ff`（保留合并节点）。
+4. **合并后在 master 上复验**：重跑 `pytest`（`backend/`）和 `npm run build`（`frontend/`），确认主线可用。
+5. **删除已合并的分支**：用 `git branch -d <分支>`（只删已合并分支）；**禁止**用 `-D` 强删，除非用户明确要求。
+6. **会话开始时检查分支状态**：若有未合并的分支或未提交的改动，先向用户报告，再开始新工作。
+- 删除分支、推送远端同样需要先汇报并等用户确认；有冲突时停下来向用户说明，不要自行取舍。
+
+### 每次提交 / 合并后必须汇报 git 状态
+每次 `commit` 或 `merge` 之后，向用户汇报：
+- 当前所在分支，以及本地所有分支列表（`git branch -v`）
+- 刚产生的提交 / 合并节点（哈希 + 提交信息）
+- 工作区是否干净（`git status --short`）
+- 有哪些分支尚未合并回 master（`git branch --no-merged master`）
+- 最近的提交图（`git log --oneline --graph -n 10`）
 
 ## 工作方式
 - 按第 15 节的 8 个阶段推进，**不要跳阶段**。
 - 新增/修改接口后，同步更新前端 api 封装与对应 store。
 - 安全红线关键代码处（deps.py 角色校验、文件下载接口等）留简短中文注释标明约束意图。
-- 不确定的设计取舍先问，不要自行更改第 16 节「已确认的设计决策」。
+- 不确定的设计取舍先问，不要自行更改 DESIGN.md 中已定的设计。
 - **执行任何操作前，必须向用户汇报将要做什么；操作完成后，汇报实际做了什么、结果如何**。
 
 ## 常用命令（速查；完整 setup 与部署见 README.md）
@@ -72,4 +81,4 @@
 - 跑单个测试：`pytest tests/test_xxx.py::test_name`
 - 初始化首个超管：`python -m scripts.create_superadmin`
 - 前端：`npm run dev`（开发）/ `npm run build`（构建），在 `frontend/`
-- Git 操作：开分支 `git checkout master && git checkout -b feature/功能名`；提交用 `git add` + `git commit -m "描述"`；收口 `git checkout master && git merge --no-ff feature/功能名 && git branch -d feature/功能名`
+- Git 操作：开分支 `git checkout master && git checkout -b feature/功能名`；提交用 `git add` + `git commit -m "描述"`；收口（**仅在用户说合并后**）`git checkout master && git merge --no-ff feature/功能名 && git branch -d feature/功能名`；汇报状态 `git branch -v && git status --short && git branch --no-merged master && git log --oneline --graph -n 10`
