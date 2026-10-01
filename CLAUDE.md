@@ -44,11 +44,20 @@
 - 新增/修复接口后补测试；安全红线（归属校验、角色边界、路径穿越）务必覆盖。
 
 ## Git 工作流程
-- 所有功能开发在独立分支完成，**禁止直接提交到 main**。
+- 主线分支是 **`master`**，始终代表项目最新的正式状态；所有功能开发在独立分支完成，**禁止直接提交到 master**。
 - 分支命名规范：`feature/功能名`、`fix/问题描述`、`refactor/重构内容`。
 - 提交信息用中文，简明扼要说明改动内容；多文件改动按模块分组描述。
 - 提交前必须确保代码能运行（后端能启动、前端能构建）；测试相关改动需确保测试通过。
 - `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/uploads/`、编译产物。
+
+### 分支生命周期（开分支 → 收口 → 删分支）
+1. **从最新的 master 开分支**：`git checkout master && git checkout -b <type>/<name>`。不要从其他未合并的分支上接着开。
+   - 唯一例外：新工作必须依赖某个尚未合并的分支时，先向用户说明，并优先把那个分支合并回 master 再开新分支。
+2. **完成即收口**：分支的工作做完、测试通过、后端能启动、前端能构建后，向用户汇报，确认后用 `git merge --no-ff` 合并回 master（保留合并节点）。不要让已完成的分支长期悬空。
+3. **合并后在 master 上复验**：重跑 `pytest`（`backend/`）和 `npm run build`（`frontend/`），确认主线可用。
+4. **删除已合并的分支**：用 `git branch -d <分支>`（只删已合并分支）；**禁止**用 `-D` 强删，除非用户明确要求。
+5. **会话开始时检查分支状态**：若发现已完成但未合并回 master 的分支，先向用户报告并建议收口，再开始新工作。
+- 合并、删除分支、推送远端都属于需要先汇报的操作；有冲突时停下来向用户说明，不要自行取舍。
 
 ## 工作方式
 - 按第 15 节的 8 个阶段推进，**不要跳阶段**。
@@ -63,4 +72,4 @@
 - 跑单个测试：`pytest tests/test_xxx.py::test_name`
 - 初始化首个超管：`python -m scripts.create_superadmin`
 - 前端：`npm run dev`（开发）/ `npm run build`（构建），在 `frontend/`
-- Git 操作：功能开发前先创建分支 `git checkout -b feature/功能名`；提交用 `git add` + `git commit -m "描述"`
+- Git 操作：开分支 `git checkout master && git checkout -b feature/功能名`；提交用 `git add` + `git commit -m "描述"`；收口 `git checkout master && git merge --no-ff feature/功能名 && git branch -d feature/功能名`
