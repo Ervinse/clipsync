@@ -1,6 +1,6 @@
 # ClipSync 后端 Dockerfile
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # 设置工作目录
 WORKDIR /app
@@ -21,11 +21,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制应用代码
 COPY . .
 
-# 创建上传目录
-RUN mkdir -p uploads
+# 创建存储目录，并以非 root 用户运行
+RUN mkdir -p storage && useradd --system --no-create-home clipsync && chown -R clipsync /app
+USER clipsync
 
 # 暴露端口
 EXPOSE 8000
 
-# 启动命令
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# 启动命令（单 worker：WebSocket 与限流依赖进程内存）
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers"]

@@ -19,10 +19,14 @@ Environment="PATH=/var/www/clipsync/backend/venv/bin:$PATH"
 EnvironmentFile=/var/www/clipsync/backend/.env
 
 # 启动命令（使用 uvicorn）
+# 必须单 worker：WebSocket 连接表与限流计数都在进程内存中，多 worker 会导致实时同步与限流失效
+# 只监听 127.0.0.1：仅允许同机 Nginx 访问；uvicorn 默认只信任 127.0.0.1 发来的 X-Forwarded-For
 ExecStart=/var/www/clipsync/backend/venv/bin/uvicorn app.main:app \
-    --host 0.0.0.0 \
+    --host 127.0.0.1 \
     --port 8000 \
-    --workers 4 \
+    --workers 1 \
+    --proxy-headers \
+    --forwarded-allow-ips 127.0.0.1 \
     --log-level info \
     --access-log \
     --no-use-colors

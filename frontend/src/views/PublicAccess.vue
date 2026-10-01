@@ -11,22 +11,23 @@ const data = ref(null)
 const targetType = ref('')
 
 onMounted(async () => {
-  const code = route.params.code
+  const code = String(route.params.code || '')
+
+  // 文件码：链接带 ?t=file，直接走公开下载接口（免登录，后端限流 + 有效性校验）
+  if (route.query.t === 'file') {
+    targetType.value = 'file'
+    data.value = { download_url: `/api/access/${encodeURIComponent(code)}/download` }
+    loading.value = false
+    return
+  }
 
   try {
     loading.value = true
     const result = await api.access.accessText(code)
-
-    // 判断是文本还是文件
-    if (result.content !== undefined) {
-      targetType.value = 'text'
-      data.value = result.content
-    } else if (result.download_url) {
-      targetType.value = 'file'
-      data.value = result
-    }
+    targetType.value = 'text'
+    data.value = result.content
   } catch (err) {
-    error.value = err.response?.data?.detail || '访问码无效或已过期'
+    error.value = err.message || '访问码无效或已过期'
   } finally {
     loading.value = false
   }
@@ -90,8 +91,8 @@ const formatSize = (bytes) => {
         <div class="file-info">
           <div class="file-icon">📄</div>
           <div class="file-details">
-            <h3>{{ data.filename }}</h3>
-            <p class="file-size">{{ formatSize(data.size) }}</p>
+            <h3>文件访问码</h3>
+            <p class="file-size">点击下方按钮下载（链接失效时会提示错误）</p>
           </div>
         </div>
         <button class="btn-primary btn-large" @click="downloadFile">

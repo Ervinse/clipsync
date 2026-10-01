@@ -1,21 +1,29 @@
 """用户相关 Pydantic 模型"""
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..models import UserRole
 
 
 class UserCreate(BaseModel):
     """注册请求"""
-    username: str = Field(..., min_length=3, max_length=64, description="用户名")
-    password: str = Field(..., min_length=6, description="密码")
-    invite_code: str = Field(..., description="邀请码")
+    username: str = Field(..., min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.\-]+$", description="用户名")
+    password: str = Field(..., min_length=8, max_length=72, description="密码")
+    invite_code: str = Field(..., min_length=1, max_length=32, description="邀请码")
+
+    @field_validator("password")
+    @classmethod
+    def _password_bytes(cls, value: str) -> str:
+        # bcrypt 只处理前 72 字节，多字节字符需按字节计算
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("密码不能超过 72 字节")
+        return value
 
 
 class UserLogin(BaseModel):
     """登录请求"""
-    username: str
-    password: str
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=256)
 
 
 class Token(BaseModel):
@@ -25,7 +33,7 @@ class Token(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """用户基本信息响应"""
+    """用户基本信息响应（不含 password_hash）"""
     id: int
     username: str
     role: UserRole

@@ -1,19 +1,28 @@
 """文件相关 Pydantic 模型"""
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from ..core.http_utils import sanitize_filename
 
 
 class UploadInitRequest(BaseModel):
     """初始化分片上传请求"""
-    original_name: str = Field(..., max_length=255, description="原始文件名")
+    original_name: str = Field(..., min_length=1, max_length=255, description="原始文件名")
     total_size: int = Field(..., gt=0, description="文件总大小（字节）")
-    chunk_size: int = Field(..., gt=0, description="每个分片大小（字节）")
+    chunk_size: int = Field(..., gt=0, description="每个分片大小（字节），不得超过服务端 CHUNK_SIZE")
+
+    @field_validator("original_name")
+    @classmethod
+    def _clean_name(cls, value: str) -> str:
+        # 文件名只作展示与下载名，入库前去掉控制字符与路径分隔符
+        return sanitize_filename(value)
 
 
 class UploadInitResponse(BaseModel):
     """初始化分片上传响应"""
     upload_id: str = Field(..., description="上传会话 ID")
     total_chunks: int = Field(..., description="分片总数")
+    chunk_size: int = Field(..., description="服务端确认的分片大小")
 
 
 class UploadChunkRequest(BaseModel):
@@ -25,7 +34,7 @@ class UploadChunkRequest(BaseModel):
 
 class UploadCompleteRequest(BaseModel):
     """完成上传请求"""
-    upload_id: str
+    upload_id: str = Field(..., min_length=36, max_length=36)
 
 
 class FileResponse(BaseModel):

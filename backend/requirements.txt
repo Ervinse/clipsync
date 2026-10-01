@@ -9,6 +9,7 @@ alembic==1.14.0
 
 # 认证与安全
 python-jose[cryptography]==3.3.0
+bcrypt==5.0.0
 python-multipart==0.0.20
 
 # 限流

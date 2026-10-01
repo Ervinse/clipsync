@@ -37,8 +37,9 @@ export const useFilesStore = defineStore('files', {
     async fetchFiles() {
       try {
         this.isLoading = true
+        // 后端返回 { items, total, used_bytes, quota_bytes }
         const data = await api.files.list()
-        this.files = data || []
+        this.files = data?.items || []
       } catch (error) {
         console.error('获取文件列表失败:', error)
         throw error
@@ -51,17 +52,16 @@ export const useFilesStore = defineStore('files', {
      * 分片上传文件
      */
     async uploadFile(file) {
-      const CHUNK_SIZE = 1024 * 1024 // 1MB
-      const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
-
       try {
-        // 1. 初始化上传
+        // 1. 初始化上传（分片大小以服务端确认的 chunk_size 为准）
         const initData = await api.files.initUpload({
-          filename: file.name,
+          original_name: file.name,
           total_size: file.size,
-          total_chunks: totalChunks,
+          chunk_size: 1024 * 1024, // 期望 1MB，服务端会按上限裁剪
         })
         const uploadId = initData.upload_id
+        const CHUNK_SIZE = initData.chunk_size
+        const totalChunks = initData.total_chunks
 
         // 初始化进度
         this.uploadProgress[uploadId] = {
@@ -118,14 +118,17 @@ export const useFilesStore = defineStore('files', {
     /**
      * 下载文件
      */
-    downloadFile(fileId) {
-      const url = api.files.download(fileId)
+    async downloadFile(file) {
+      const blob = await api.files.download(file.id)
+      const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = ''
+      link.download = file.original_name || 'file'
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
+      // 延迟释放，确保浏览器已开始下载
+      setTimeout(() => URL.revokeObjectURL(url), 10000)
     },
   },
 })

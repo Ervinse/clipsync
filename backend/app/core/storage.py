@@ -1,5 +1,8 @@
-"""存储管理：文件路径解析 + 目录初始化"""
-import os
+"""存储管理：文件路径解析 + 目录初始化
+
+安全红线：磁盘路径只由服务端生成的 UUID 与整数 user_id 拼接，绝不使用用户传入的文件名；
+所有路径在返回前都校验确实位于 STORAGE_DIR 之内（防穿越的第二道防线）。
+"""
 import shutil
 import uuid
 from pathlib import Path
@@ -7,18 +10,35 @@ from pathlib import Path
 from ..config import settings
 
 
+def _base_dir() -> Path:
+    return Path(settings.STORAGE_DIR).resolve()
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        return str(uuid.UUID(value)) == value
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
+def _ensure_inside_base(path: Path) -> Path:
+    """确认路径位于存储根目录内，否则拒绝"""
+    resolved = path.resolve()
+    if not resolved.is_relative_to(_base_dir()):
+        raise ValueError("非法存储路径")
+    return resolved
+
+
 def get_user_storage_dir(user_id: int) -> Path:
     """获取用户存储目录路径"""
-    base_dir = Path(settings.STORAGE_DIR)
-    user_dir = base_dir / str(user_id)
-    return user_dir
+    return _ensure_inside_base(_base_dir() / str(int(user_id)))
 
 
 def get_upload_temp_dir(upload_id: str) -> Path:
-    """获取上传临时目录路径"""
-    base_dir = Path(settings.STORAGE_DIR)
-    temp_dir = base_dir / "tmp" / upload_id
-    return temp_dir
+    """获取上传临时目录路径（upload_id 必须是服务端生成的 UUID）"""
+    if not _is_uuid(upload_id):
+        raise ValueError("非法 upload_id")
+    return _ensure_inside_base(_base_dir() / "tmp" / upload_id)
 
 
 def ensure_user_storage_dir(user_id: int) -> Path:
@@ -41,8 +61,9 @@ def get_file_path(user_id: int, stored_name: str) -> Path:
 
     安全红线：stored_name 必须是 UUID，禁止用户传入名拼接路径。
     """
-    user_dir = get_user_storage_dir(user_id)
-    return user_dir / stored_name
+    if not _is_uuid(stored_name):
+        raise ValueError("非法 stored_name")
+    return _ensure_inside_base(get_user_storage_dir(user_id) / stored_name)
 
 
 def generate_stored_name() -> str:
@@ -52,13 +73,25 @@ def generate_stored_name() -> str:
 
 def cleanup_upload_temp(upload_id: str):
     """清理上传临时目录"""
-    temp_dir = get_upload_temp_dir(upload_id)
+    try:
+        temp_dir = get_upload_temp_dir(upload_id)
+    except ValueError:
+        return
     if temp_dir.exists():
-        shutil.rmtree(temp_dir)
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def delete_file(user_id: int, stored_name: str):
     """删除文件"""
-    file_path = get_file_path(user_id, stored_name)
-    if file_path.exists():
-        file_path.unlink()
+    try:
+        file_path = get_file_path(user_id, stored_name)
+    except ValueError:
+        return
+    file_path.unlink(missing_ok=True)
+
+
+def delete_user_storage(user_id: int):
+    """删除用户整个存储目录（删除用户时使用）"""
+    user_dir = get_user_storage_dir(user_id)
+    if user_dir.exists():
+        shutil.rmtree(user_dir, ignore_errors=True)

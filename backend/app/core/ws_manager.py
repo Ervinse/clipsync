@@ -1,60 +1,62 @@
-"""WebSocket 连接管理器：维护用户连接 + 实时广播"""
+"""WebSocket 连接管理器：维护用户连接 + 实时广播
+
+注意：连接表存在进程内存中，后端必须单 worker 运行。
+"""
 import json
 from typing import Dict, Set
+
 from fastapi import WebSocket
 
 
 class ConnectionManager:
-    """
-    WebSocket 连接管理器
-
-    维护 user_id → WebSocket 集合的映射，支持同一用户多终端在线。
-    """
+    """维护 user_id → WebSocket 集合的映射，支持同一用户多终端在线。"""
 
     def __init__(self):
-        # user_id -> set of WebSocket connections
         self.active_connections: Dict[int, Set[WebSocket]] = {}
 
-    async def connect(self, user_id: int, websocket: WebSocket):
-        """接受新连接，加入对应用户的连接集合"""
-        await websocket.accept()
-        if user_id not in self.active_connections:
-            self.active_connections[user_id] = set()
-        self.active_connections[user_id].add(websocket)
+    def register(self, user_id: int, websocket: WebSocket):
+        """登记已 accept 的连接"""
+        self.active_connections.setdefault(user_id, set()).add(websocket)
 
     def disconnect(self, user_id: int, websocket: WebSocket):
-        """断开连接，从集合中移除"""
-        if user_id in self.active_connections:
-            self.active_connections[user_id].discard(websocket)
-            # 如果该用户没有在线连接，删除 key
-            if not self.active_connections[user_id]:
-                del self.active_connections[user_id]
+        """断开连接，从集合中移除；空集合删 key，避免内存泄漏"""
+        connections = self.active_connections.get(user_id)
+        if connections is None:
+            return
+        connections.discard(websocket)
+        if not connections:
+            del self.active_connections[user_id]
+
+    async def disconnect_user(self, user_id: int, code: int = 1008):
+        """
+        主动关闭某用户的全部连接。
+        安全红线：用户被禁用或删除后，已建立的 WebSocket 不能继续接收推送。
+        """
+        connections = self.active_connections.pop(user_id, set())
+        for connection in list(connections):
+            try:
+                await connection.close(code=code)
+            except Exception:
+                pass
 
     async def broadcast_to_user(self, user_id: int, message: dict, exclude: WebSocket = None):
-        """
-        向指定用户的所有在线终端广播消息（可排除触发源）
-
-        Args:
-            user_id: 目标用户 ID
-            message: 消息字典（将序列化为 JSON）
-            exclude: 排除的连接（通常是触发本次变更的连接，避免自己收到自己的更新）
-        """
-        if user_id not in self.active_connections:
+        """向指定用户的所有在线终端广播消息（可排除触发源）"""
+        connections = self.active_connections.get(user_id)
+        if not connections:
             return
 
-        message_text = json.dumps(message)
+        message_text = json.dumps(message, ensure_ascii=False)
         disconnected = set()
 
-        for connection in self.active_connections[user_id]:
-            if connection == exclude:
+        # 复制一份再遍历：await 期间集合可能被其他协程修改
+        for connection in list(connections):
+            if connection is exclude:
                 continue
             try:
                 await connection.send_text(message_text)
             except Exception:
-                # 连接已断开，记录待清理
                 disconnected.add(connection)
 
-        # 清理失效连接
         for conn in disconnected:
             self.disconnect(user_id, conn)
 

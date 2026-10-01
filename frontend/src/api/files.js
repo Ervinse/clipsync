@@ -31,9 +31,12 @@ export default {
     return request.get('/files')
   },
 
-  // 下载文件
+  // 下载文件：必须带 Authorization 头，不能用裸 <a href>，因此以 blob 方式获取
   download(fileId) {
-    return `/api/files/${fileId}/download`
+    return request.get(`/files/${fileId}/download`, {
+      responseType: 'blob',
+      timeout: 0, // 大文件下载不设超时
+    })
   },
 
   // 删除文件

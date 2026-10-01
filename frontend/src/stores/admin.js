@@ -22,12 +22,12 @@ export const useAdminStore = defineStore('admin', {
 
     // 总存储使用量
     totalStorageUsed(state) {
-      return state.users.reduce((sum, u) => sum + (u.storage_used || 0), 0)
+      return state.users.reduce((sum, u) => sum + (u.used_bytes || 0), 0)
     },
 
-    // 有效邀请码数量
+    // 有效邀请码数量（used_at 非空即已用过，使用者被删除后 used_by 会置空）
     validInviteCount(state) {
-      return state.inviteCodes.filter(c => !c.used_by).length
+      return state.inviteCodes.filter(c => !c.used_by && !c.used_at).length
     },
   },
 
@@ -51,8 +51,9 @@ export const useAdminStore = defineStore('admin', {
     async fetchUsers(skip = 0, limit = 50) {
       try {
         this.isLoading = true
+        // 后端返回 { items, total }
         const data = await api.admin.users.list(skip, limit)
-        this.users = data || []
+        this.users = data?.items || []
       } catch (error) {
         console.error('获取用户列表失败:', error)
         throw error
@@ -106,7 +107,7 @@ export const useAdminStore = defineStore('admin', {
     async fetchInviteCodes() {
       try {
         const data = await api.admin.inviteCodes.list()
-        this.inviteCodes = data || []
+        this.inviteCodes = data?.items || []
       } catch (error) {
         console.error('获取邀请码列表失败:', error)
         throw error
@@ -171,8 +172,9 @@ export const useAdminStore = defineStore('admin', {
      */
     async fetchFiles(skip = 0, limit = 50) {
       try {
+        // 仅元数据（无下载入口）
         const data = await api.admin.files.list(skip, limit)
-        this.files = data || []
+        this.files = data?.items || []
       } catch (error) {
         console.error('获取文件列表失败:', error)
         throw error

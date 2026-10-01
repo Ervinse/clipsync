@@ -1,6 +1,4 @@
 """剪贴板路由：当前文本 + 历史版本管理"""
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, insert, delete, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +14,7 @@ from ..schemas import (
 )
 from ..core.deps import get_current_user
 from ..core.ws_manager import manager
+from ..core.timeutil import utcnow
 from ..config import settings
 
 router = APIRouter()
@@ -40,7 +39,7 @@ async def get_current_clipboard(
         # 用户首次使用，返回空内容
         return ClipboardResponse(
             content="",
-            updated_at=datetime.utcnow(),
+            updated_at=utcnow(),
         )
 
     return ClipboardResponse(
@@ -77,15 +76,16 @@ async def update_clipboard(
         )
         db.add(history_entry)
 
-    # 3. Upsert 当前文本
+    # 3. Upsert 当前文本（user_id 为主键，一人一条）
+    updated_at = utcnow()
     stmt = mysql_insert(Clipboard).values(
         user_id=current_user.id,
         content=data.content,
-        updated_at=datetime.utcnow(),
+        updated_at=updated_at,
     )
     stmt = stmt.on_duplicate_key_update(
         content=data.content,
-        updated_at=datetime.utcnow(),
+        updated_at=updated_at,
     )
     await db.execute(stmt)
 
@@ -117,8 +117,7 @@ async def update_clipboard(
 
     await db.commit()
 
-    # 5. 实时广播（排除当前连接，WebSocket 实现时传入）
-    updated_at = datetime.utcnow()
+    # 5. 实时广播（只发信号，不带正文）
     await manager.broadcast_to_user(
         user_id=current_user.id,
         message={

@@ -36,8 +36,14 @@ export const useAccessStore = defineStore('access', {
     async fetchCodes() {
       try {
         this.isLoading = true
+        // 后端返回 { items, total }；是否失效由前端按 is_revoked / expires_at 计算
         const data = await api.access.list()
-        this.codes = data || []
+        const now = Date.now()
+        this.codes = (data?.items || []).map(c => ({
+          ...c,
+          // 后端时间为 UTC（不带时区后缀），补 Z 再解析
+          is_expired: c.is_revoked || (c.expires_at && new Date(c.expires_at + 'Z').getTime() <= now),
+        }))
       } catch (error) {
         console.error('获取访问码列表失败:', error)
         throw error
@@ -66,7 +72,7 @@ export const useAccessStore = defineStore('access', {
     async revokeCode(id) {
       try {
         await api.access.revoke(id)
-        this.codes = this.codes.filter(c => c.id !== id)
+        await this.fetchCodes()
       } catch (error) {
         console.error('撤销访问码失败:', error)
         throw error
@@ -77,9 +83,11 @@ export const useAccessStore = defineStore('access', {
      * 生成访问链接
      */
     generateLink(code) {
+      // 协议与域名取当前页面，不写死；文件码带 t=file，公开页据此走下载接口
       const protocol = window.location.protocol
       const host = window.location.host
-      return `${protocol}//${host}/access/${code}`
+      const suffix = code.target_type === 'file' ? '?t=file' : ''
+      return `${protocol}//${host}/access/${encodeURIComponent(code.code)}${suffix}`
     },
   },
 })

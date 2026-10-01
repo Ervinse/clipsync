@@ -1,10 +1,12 @@
 """文件路由：分片上传 + 下载 + 删除"""
-import uuid
+import logging
 import mimetypes
-from datetime import datetime
+import uuid
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File as FastAPIFile, Form
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,15 +24,78 @@ from ..core.deps import get_current_user
 from ..core.storage import (
     ensure_user_storage_dir,
     ensure_upload_temp_dir,
+    get_upload_temp_dir,
     get_file_path,
     generate_stored_name,
     cleanup_upload_temp,
     delete_file as storage_delete_file,
 )
+from ..core.http_utils import content_disposition
+from ..core.timeutil import utcnow
 from ..core.ws_manager import manager
 from ..config import settings
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+_READ_BLOCK = 64 * 1024
+
+
+async def _reserved_bytes(db: AsyncSession, user_id: int, exclude_upload_id: str | None = None) -> int:
+    """
+    已占用配额 = 已落盘文件 + 进行中的上传会话声明大小。
+    安全红线：把未完成会话也计入，防止并发开多个会话各自通过 init 校验后超配。
+    """
+    result = await db.execute(
+        select(func.coalesce(func.sum(File.size), 0)).where(File.user_id == user_id)
+    )
+    used = int(result.scalar())
+
+    stmt = select(func.coalesce(func.sum(UploadSession.total_size), 0)).where(
+        UploadSession.user_id == user_id
+    )
+    if exclude_upload_id:
+        stmt = stmt.where(UploadSession.upload_id != exclude_upload_id)
+    result = await db.execute(stmt)
+    return used + int(result.scalar())
+
+
+def _merge_chunks(temp_dir: Path, total_chunks: int, final_path: Path) -> int:
+    """同步合并分片（在线程池中执行，避免阻塞事件循环），返回合并后字节数"""
+    written = 0
+    with open(final_path, "wb") as outfile:
+        for index in range(total_chunks):
+            with open(temp_dir / str(index), "rb") as infile:
+                while block := infile.read(_READ_BLOCK):
+                    outfile.write(block)
+                    written += len(block)
+    return written
+
+
+def _iter_file(path: Path):
+    """流式读取文件（StreamingResponse 会在线程池中迭代同步生成器）"""
+    with open(path, "rb") as f:
+        while block := f.read(_READ_BLOCK):
+            yield block
+
+
+def stream_file_response(file_record: File) -> StreamingResponse:
+    """统一的流式下载响应（登录下载与访问码下载共用）"""
+    file_path = get_file_path(file_record.user_id, file_record.stored_name)
+    if not file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件已丢失")
+
+    return StreamingResponse(
+        _iter_file(file_path),
+        media_type=file_record.mime_type,
+        headers={
+            # 安全红线：文件名来自用户，按 RFC 6266 编码，杜绝头注入
+            "Content-Disposition": content_disposition(file_record.original_name),
+            "Content-Length": str(file_path.stat().st_size),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/upload/init", response_model=UploadInitResponse)
@@ -43,59 +108,72 @@ async def init_upload(
     初始化分片上传会话
 
     安全红线：
-    - 先校验配额：已用 + 本次文件大小 <= 配额
-    - 单文件大小不超过 MAX_FILE_BYTES
+    - 单文件大小不超过 MAX_FILE_BYTES，分片大小不超过 CHUNK_SIZE
+    - 已用 + 进行中会话 + 本次大小 <= 配额
+    - 单用户进行中会话数有上限（防磁盘耗尽）
     """
-    # 1. 校验单文件大小上限
     if data.total_size > settings.MAX_FILE_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"文件大小超过限制（最大 {settings.MAX_FILE_BYTES // (1024*1024)} MB）",
+            detail=f"文件大小超过限制（最大 {settings.MAX_FILE_BYTES // (1024 * 1024)} MB）",
         )
 
-    # 2. 计算用户已用空间
-    result = await db.execute(
-        select(func.coalesce(func.sum(File.size), 0)).where(File.user_id == current_user.id)
-    )
-    used_bytes = result.scalar()
+    chunk_size = min(data.chunk_size, settings.CHUNK_SIZE)
 
-    # 3. 校验配额
-    if used_bytes + data.total_size > current_user.quota_bytes:
+    # 清理当前用户已过期的会话，避免其永久占用配额与会话名额
+    expire_before = utcnow() - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS)
+    result = await db.execute(
+        select(UploadSession.upload_id).where(
+            UploadSession.user_id == current_user.id,
+            UploadSession.created_at < expire_before,
+        )
+    )
+    expired_ids = [row[0] for row in result.all()]
+    if expired_ids:
+        await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id.in_(expired_ids)))
+        await db.commit()
+        for expired_id in expired_ids:
+            cleanup_upload_temp(expired_id)
+
+    result = await db.execute(
+        select(func.count()).select_from(UploadSession).where(UploadSession.user_id == current_user.id)
+    )
+    if result.scalar() >= settings.MAX_UPLOAD_SESSIONS_PER_USER:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="进行中的上传过多，请先完成或等待过期",
+        )
+
+    reserved = await _reserved_bytes(db, current_user.id)
+    if reserved + data.total_size > current_user.quota_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"存储配额不足（已用 {used_bytes // (1024*1024)} MB / "
-                   f"配额 {current_user.quota_bytes // (1024*1024)} MB）",
+            detail="存储配额不足",
         )
 
-    # 4. 计算分片数
-    total_chunks = (data.total_size + data.chunk_size - 1) // data.chunk_size
+    total_chunks = (data.total_size + chunk_size - 1) // chunk_size
 
-    # 5. 创建上传会话
     upload_id = str(uuid.uuid4())
-    session = UploadSession(
+    db.add(UploadSession(
         upload_id=upload_id,
         user_id=current_user.id,
         original_name=data.original_name,
         total_size=data.total_size,
         total_chunks=total_chunks,
         received_chunks=0,
-        chunk_size=data.chunk_size,
-    )
-    db.add(session)
+        chunk_size=chunk_size,
+        created_at=utcnow(),
+    ))
     await db.commit()
 
-    # 6. 创建临时目录
     ensure_upload_temp_dir(upload_id)
 
-    return UploadInitResponse(
-        upload_id=upload_id,
-        total_chunks=total_chunks,
-    )
+    return UploadInitResponse(upload_id=upload_id, total_chunks=total_chunks, chunk_size=chunk_size)
 
 
 @router.post("/upload/chunk", status_code=status.HTTP_200_OK)
 async def upload_chunk(
-    upload_id: str = Form(...),
+    upload_id: str = Form(..., min_length=36, max_length=36),
     chunk_index: int = Form(..., ge=0),
     chunk_data: UploadFile = FastAPIFile(...),
     current_user: User = Depends(get_current_user),
@@ -105,11 +183,10 @@ async def upload_chunk(
     上传单个分片
 
     安全红线：
-    - 校验 upload_id 归属于当前用户
-    - 校验 chunk_index 在有效范围内
-    - 支持断点续传（重复上传同一分片会覆盖）
+    - upload_id 必须归属当前用户（查库时带 user_id）
+    - chunk_index 在 [0, total_chunks) 内；磁盘名只用整数索引
+    - 单分片字节数不得超过会话的 chunk_size，边写边计数，超限立即中止并删除
     """
-    # 1. 查询上传会话，校验归属
     result = await db.execute(
         select(UploadSession).where(
             UploadSession.upload_id == upload_id,
@@ -117,32 +194,40 @@ async def upload_chunk(
         )
     )
     session = result.scalar_one_or_none()
-
     if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="上传会话不存在或无权访问",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或无权访问")
 
-    # 2. 校验分片索引
     if chunk_index >= session.total_chunks:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"分片索引超出范围（最大 {session.total_chunks - 1}）",
         )
 
-    # 3. 保存分片到临时目录
     temp_dir = ensure_upload_temp_dir(upload_id)
-    chunk_path = temp_dir / f"{chunk_index}"
+    chunk_path = temp_dir / str(chunk_index)
+    partial_path = temp_dir / f"{chunk_index}.part"
 
-    # 流式写入分片（避免内存占用）
-    with open(chunk_path, "wb") as f:
-        while chunk := await chunk_data.read(8192):  # 8KB 块读取
-            f.write(chunk)
+    written = 0
+    oversized = False
+    with open(partial_path, "wb") as f:
+        while block := await chunk_data.read(_READ_BLOCK):
+            written += len(block)
+            if written > session.chunk_size:
+                oversized = True
+                break
+            f.write(block)
 
-    # 4. 更新已接收分片数（如果该分片是新上传的）
-    # 简化逻辑：检查临时目录中的分片数
-    received_count = len(list(temp_dir.glob("*")))
+    if oversized:
+        partial_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="分片大小超过限制",
+        )
+
+    # 写完再原子替换，断点续传重传同一分片时不会留下半截文件
+    partial_path.replace(chunk_path)
+
+    received_count = sum(1 for p in temp_dir.iterdir() if p.is_file() and p.name.isdigit())
     session.received_chunks = received_count
     await db.commit()
 
@@ -165,110 +250,74 @@ async def complete_upload(
 
     安全红线：
     - 校验 upload_id 归属
-    - 校验所有分片已到齐
-    - 流式合并，避免内存占用
-    - 合并后再次校验配额（防止并发上传超配）
+    - 合并后实际大小必须等于声明大小（声明大小已在 init 时过配额）
+    - 合并后再次按实际占用校验配额
     """
-    # 1. 查询上传会话，校验归属
     result = await db.execute(
         select(UploadSession).where(
             UploadSession.upload_id == data.upload_id,
-            UploadSession.user_id == current_user.id,
+            UploadSession.user_id == current_user.id,  # 安全红线：归属校验
         )
     )
     session = result.scalar_one_or_none()
-
     if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="上传会话不存在或无权访问",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或无权访问")
 
-    # 2. 校验分片完整性
-    temp_dir = ensure_upload_temp_dir(data.upload_id)
-    received_chunks = sorted([int(f.name) for f in temp_dir.glob("*") if f.is_file()])
-
-    if len(received_chunks) != session.total_chunks:
+    temp_dir = get_upload_temp_dir(data.upload_id)
+    received = sorted(
+        int(p.name) for p in temp_dir.iterdir() if p.is_file() and p.name.isdigit()
+    ) if temp_dir.exists() else []
+    if received != list(range(session.total_chunks)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"分片不完整（已收到 {len(received_chunks)} / {session.total_chunks}）",
+            detail=f"分片不完整（已收到 {len(received)} / {session.total_chunks}）",
         )
 
-    expected_chunks = list(range(session.total_chunks))
-    if received_chunks != expected_chunks:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="分片索引不连续",
-        )
-
-    # 3. 生成存储文件名（UUID）
     stored_name = generate_stored_name()
-    user_dir = ensure_user_storage_dir(current_user.id)
-    final_path = user_dir / stored_name
+    final_path = ensure_user_storage_dir(current_user.id) / stored_name
 
-    # 4. 流式合并分片（追加模式）
     try:
-        with open(final_path, "wb") as outfile:
-            for chunk_index in range(session.total_chunks):
-                chunk_path = temp_dir / str(chunk_index)
-                with open(chunk_path, "rb") as infile:
-                    while chunk := infile.read(8192):
-                        outfile.write(chunk)
-    except Exception as e:
-        # 合并失败，清理临时文件和目标文件
-        if final_path.exists():
-            final_path.unlink()
+        actual_size = await run_in_threadpool(_merge_chunks, temp_dir, session.total_chunks, final_path)
+    except OSError:
+        logger.exception("合并分片失败 upload_id=%s", data.upload_id)
+        final_path.unlink(missing_ok=True)
         cleanup_upload_temp(data.upload_id)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"文件合并失败: {str(e)}",
-        )
+        await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id))
+        await db.commit()
+        # 安全红线：不把底层异常细节（路径等）回传客户端
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="文件合并失败")
 
-    # 5. 获取实际文件大小（可能与声明不完全一致）
-    actual_size = final_path.stat().st_size
-
-    # 6. 再次校验配额（防止并发上传超配）
-    result = await db.execute(
-        select(func.coalesce(func.sum(File.size), 0)).where(File.user_id == current_user.id)
-    )
-    used_bytes = result.scalar()
-
-    if used_bytes + actual_size > current_user.quota_bytes:
-        # 超配，删除刚合并的文件
-        final_path.unlink()
+    async def _abort(detail: str):
+        final_path.unlink(missing_ok=True)
         cleanup_upload_temp(data.upload_id)
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="存储配额不足（并发上传导致超配）",
-        )
+        await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id))
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=detail)
 
-    # 7. 推断 MIME 类型
+    if actual_size != session.total_size:
+        await _abort("文件实际大小与声明不符")
+
+    reserved = await _reserved_bytes(db, current_user.id, exclude_upload_id=data.upload_id)
+    if reserved + actual_size > current_user.quota_bytes:
+        await _abort("存储配额不足")
+
     mime_type, _ = mimetypes.guess_type(session.original_name)
-    if not mime_type:
-        mime_type = "application/octet-stream"
 
-    # 8. 写入文件记录
     file_record = File(
         user_id=current_user.id,
         original_name=session.original_name,
         stored_name=stored_name,
         size=actual_size,
-        mime_type=mime_type,
+        mime_type=mime_type or "application/octet-stream",
+        created_at=utcnow(),
     )
     db.add(file_record)
-
-    # 9. 删除上传会话
-    await db.execute(
-        sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id)
-    )
-
+    await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id))
     await db.commit()
     await db.refresh(file_record)
 
-    # 10. 清理临时目录
     cleanup_upload_temp(data.upload_id)
 
-    # 11. 实时广播
     await manager.broadcast_to_user(
         user_id=current_user.id,
         message={
@@ -300,16 +349,12 @@ async def list_files(
 
     安全红线：查询强制按 user_id 过滤
     """
-    # 1. 查询文件列表
     result = await db.execute(
         select(File)
         .where(File.user_id == current_user.id)
         .order_by(File.created_at.desc())
     )
     files = result.scalars().all()
-
-    # 2. 计算已用空间
-    used_bytes = sum(f.size for f in files)
 
     return FileListResponse(
         items=[
@@ -323,7 +368,7 @@ async def list_files(
             for f in files
         ],
         total=len(files),
-        used_bytes=used_bytes,
+        used_bytes=sum(f.size for f in files),
         quota_bytes=current_user.quota_bytes,
     )
 
@@ -338,52 +383,20 @@ async def download_file(
     下载文件（流式响应）
 
     安全红线：
-    - 仅允许文件归属者与 superadmin 下载
-    - 使用 stored_name 拼接路径，防穿越
+    - 仅允许文件归属者与 superadmin 下载；admin 不可下载他人文件
+    - 按 file_id 查库取 stored_name 拼路径，防穿越
     """
-    # 1. 查询文件记录
     result = await db.execute(select(File).where(File.id == file_id))
     file_record = result.scalar_one_or_none()
 
-    if not file_record:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="文件不存在",
-        )
-
-    # 2. 权限校验（安全红线）
-    is_owner = file_record.user_id == current_user.id
+    is_owner = file_record is not None and file_record.user_id == current_user.id
     is_superadmin = current_user.role == UserRole.SUPERADMIN
 
-    if not (is_owner or is_superadmin):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="无权访问该文件",
-        )
+    if file_record is None or not (is_owner or is_superadmin):
+        # 不存在与无权限统一 404，不暴露他人文件 ID 是否存在
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在")
 
-    # 3. 获取文件路径（使用 UUID stored_name，防穿越）
-    file_path = get_file_path(file_record.user_id, file_record.stored_name)
-
-    if not file_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="文件已丢失",
-        )
-
-    # 4. 流式响应
-    def iterfile():
-        with open(file_path, "rb") as f:
-            while chunk := f.read(8192):
-                yield chunk
-
-    return StreamingResponse(
-        iterfile(),
-        media_type=file_record.mime_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{file_record.original_name}"',
-            "Content-Length": str(file_record.size),
-        },
-    )
+    return stream_file_response(file_record)
 
 
 @router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -393,13 +406,12 @@ async def delete_file_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    删除文件：记录 + 磁盘 + 级联撤销访问码 + 广播
+    删除文件：记录 + 磁盘 + 级联删除访问码 + 广播
 
     安全红线：
-    - 校验归属（仅归属者可删除，superadmin 不可越权删除）
-    - 级联撤销该文件的访问码
+    - 仅归属者可删除（superadmin 也不越权删除他人文件）
+    - 同时删除指向该文件的访问码，源文件删除后文件码立即失效
     """
-    # 1. 查询文件记录，校验归属
     result = await db.execute(
         select(File).where(
             File.id == file_id,
@@ -407,32 +419,18 @@ async def delete_file_endpoint(
         )
     )
     file_record = result.scalar_one_or_none()
-
     if not file_record:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="文件不存在或无权访问",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在或无权访问")
 
-    # 2. 级联撤销访问码（file_id 外键 ON DELETE CASCADE 会自动处理，这里显式撤销）
-    await db.execute(
-        sql_delete(AccessCode).where(AccessCode.file_id == file_id)
-    )
-
-    # 3. 删除数据库记录
+    await db.execute(sql_delete(AccessCode).where(AccessCode.file_id == file_id))
     await db.execute(sql_delete(File).where(File.id == file_id))
     await db.commit()
 
-    # 4. 删除磁盘文件
     storage_delete_file(file_record.user_id, file_record.stored_name)
 
-    # 5. 实时广播
     await manager.broadcast_to_user(
         user_id=current_user.id,
-        message={
-            "type": "file_deleted",
-            "data": {"id": file_id},
-        },
+        message={"type": "file_deleted", "data": {"id": file_id}},
     )
 
     return None

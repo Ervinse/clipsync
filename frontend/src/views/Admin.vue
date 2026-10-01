@@ -14,8 +14,8 @@ if (!userStore.isAdmin) {
 
 const activeTab = ref('stats')
 const showCreateInviteModal = ref(false)
+// 邀请码一次性使用，后端只接收 expires_at
 const inviteForm = ref({
-  max_uses: 1,
   expires_in_days: 7,
 })
 
@@ -32,7 +32,6 @@ const stats = computed(() => adminStore.stats || {})
 
 const openCreateInviteModal = () => {
   inviteForm.value = {
-    max_uses: 1,
     expires_in_days: 7,
   }
   showCreateInviteModal.value = true
@@ -40,7 +39,13 @@ const openCreateInviteModal = () => {
 
 const handleCreateInvite = async () => {
   try {
-    await adminStore.createInviteCode(inviteForm.value)
+    // 0 或空表示永久有效；其余换算为带时区的 ISO 时间
+    const days = Number(inviteForm.value.expires_in_days)
+    await adminStore.createInviteCode({
+      expires_at: days > 0
+        ? new Date(Date.now() + days * 86400 * 1000).toISOString()
+        : null,
+    })
     showCreateInviteModal.value = false
     alert('邀请码创建成功')
   } catch (error) {
@@ -190,7 +195,7 @@ const copyInviteCode = (code) => {
         </div>
         <div class="stat-card">
           <div class="stat-icon">💾</div>
-          <div class="stat-value">{{ formatSize(stats.total_storage || 0) }}</div>
+          <div class="stat-value">{{ formatSize(stats.total_storage_bytes || 0) }}</div>
           <div class="stat-label">总存储</div>
         </div>
       </div>
@@ -220,7 +225,7 @@ const copyInviteCode = (code) => {
                 </span>
               </td>
               <td>{{ formatSize(user.quota_bytes) }}</td>
-              <td>{{ formatSize(user.storage_used) }}</td>
+              <td>{{ formatSize(user.used_bytes || 0) }}</td>
               <td>
                 <span class="status-badge" :class="{ active: user.is_active }">
                   {{ user.is_active ? '正常' : '禁用' }}
@@ -272,8 +277,8 @@ const copyInviteCode = (code) => {
           <div class="invite-code">{{ invite.code }}</div>
           <div class="invite-info">
             <div class="info-row">
-              <span>使用次数</span>
-              <span>{{ invite.used_count }} / {{ invite.max_uses || '∞' }}</span>
+              <span>状态</span>
+              <span>{{ invite.used_at ? '已使用' : '未使用' }}</span>
             </div>
             <div class="info-row">
               <span>过期时间</span>
@@ -281,7 +286,7 @@ const copyInviteCode = (code) => {
             </div>
             <div v-if="invite.used_by" class="info-row">
               <span>使用者</span>
-              <span>{{ invite.used_by }}</span>
+              <span>{{ invite.used_by_username || invite.used_by }}</span>
             </div>
           </div>
           <div class="invite-actions">
@@ -310,9 +315,9 @@ const copyInviteCode = (code) => {
           </thead>
           <tbody>
             <tr v-for="file in adminStore.files" :key="file.id">
-              <td>{{ file.filename }}</td>
+              <td>{{ file.original_name }}</td>
               <td>{{ formatSize(file.size) }}</td>
-              <td>{{ file.user_id }}</td>
+              <td>{{ file.username }}</td>
               <td>{{ formatDate(file.created_at) }}</td>
             </tr>
           </tbody>
@@ -326,22 +331,11 @@ const copyInviteCode = (code) => {
         <h3>创建邀请码</h3>
 
         <div class="form-group">
-          <label>最大使用次数</label>
-          <input
-            v-model.number="inviteForm.max_uses"
-            type="number"
-            min="1"
-            placeholder="1"
-          />
-          <div class="form-hint">0 表示无限制</div>
-        </div>
-
-        <div class="form-group">
           <label>有效期（天）</label>
           <input
             v-model.number="inviteForm.expires_in_days"
             type="number"
-            min="1"
+            min="0"
             placeholder="7"
           />
           <div class="form-hint">0 表示永久有效</div>
