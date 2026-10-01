@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select, func, delete as sql_delete, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -381,10 +382,10 @@ async def delete_user(
     await db.execute(sql_delete(User).where(User.id == user_id))
     await db.commit()
 
-    # 5. 删除磁盘文件与临时目录
-    delete_user_storage(user_id)
+    # 5. 删除磁盘文件与临时目录（rmtree 可能涉及大量文件，放入线程池避免阻塞事件循环）
+    await run_in_threadpool(delete_user_storage, user_id)
     for upload_id in upload_ids:
-        cleanup_upload_temp(upload_id)
+        await run_in_threadpool(cleanup_upload_temp, upload_id)
 
     # 6. 断开该用户所有实时连接
     await manager.disconnect_user(user_id)

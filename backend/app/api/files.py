@@ -10,6 +10,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from ..database import get_db
 from ..models import User, UserRole, File, UploadSession, AccessCode
@@ -73,6 +74,29 @@ def _merge_chunks(temp_dir: Path, total_chunks: int, final_path: Path) -> int:
     return written
 
 
+def _save_chunk(src, partial_path: Path, limit: int) -> int:
+    """
+    同步写分片（在线程池中执行）：边写边计数。
+    超过 limit 立即停止并删除半截文件，返回 -1；否则返回写入字节数。
+    """
+    written = 0
+    with open(partial_path, "wb") as f:
+        while block := src.read(_READ_BLOCK):
+            written += len(block)
+            if written > limit:
+                break
+            f.write(block)
+    if written > limit:
+        partial_path.unlink(missing_ok=True)
+        return -1
+    return written
+
+
+def _count_chunks(temp_dir: Path) -> int:
+    """统计已落盘的分片数（只算纯数字文件名，不含 .part 临时文件）"""
+    return sum(1 for p in temp_dir.iterdir() if p.is_file() and p.name.isdigit())
+
+
 def _iter_file(path: Path):
     """流式读取文件（StreamingResponse 会在线程池中迭代同步生成器）"""
     with open(path, "rb") as f:
@@ -133,7 +157,7 @@ async def init_upload(
         await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id.in_(expired_ids)))
         await db.commit()
         for expired_id in expired_ids:
-            cleanup_upload_temp(expired_id)
+            await run_in_threadpool(cleanup_upload_temp, expired_id)
 
     result = await db.execute(
         select(func.count()).select_from(UploadSession).where(UploadSession.user_id == current_user.id)
@@ -203,33 +227,53 @@ async def upload_chunk(
             detail=f"分片索引超出范围（最大 {session.total_chunks - 1}）",
         )
 
-    temp_dir = ensure_upload_temp_dir(upload_id)
+    # 会话过期：不再接收分片，顺带清理
+    if session.created_at < utcnow() - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS):
+        await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == upload_id))
+        await db.commit()
+        await run_in_threadpool(cleanup_upload_temp, upload_id)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话已过期")
+
+    # 临时目录由 init 创建；不存在说明会话已被清理，不能用 ensure_* 重建（否则留下孤儿目录）
+    temp_dir = get_upload_temp_dir(upload_id)
+    if not temp_dir.is_dir():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或无权访问")
+
+    # 每个分片的期望大小：非最后一片等于 chunk_size，最后一片为剩余字节数
+    if chunk_index < session.total_chunks - 1:
+        expected_size = session.chunk_size
+    else:
+        expected_size = session.total_size - session.chunk_size * (session.total_chunks - 1)
+
     chunk_path = temp_dir / str(chunk_index)
-    partial_path = temp_dir / f"{chunk_index}.part"
+    # 临时名带随机后缀：同一分片并发重传时各写各的，不会互相截断
+    partial_path = temp_dir / f"{chunk_index}.{uuid.uuid4().hex}.part"
 
-    written = 0
-    oversized = False
-    with open(partial_path, "wb") as f:
-        while block := await chunk_data.read(_READ_BLOCK):
-            written += len(block)
-            if written > session.chunk_size:
-                oversized = True
-                break
-            f.write(block)
-
-    if oversized:
-        partial_path.unlink(missing_ok=True)
+    written = await run_in_threadpool(_save_chunk, chunk_data.file, partial_path, expected_size)
+    if written < 0:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="分片大小超过限制",
         )
+    if written != expected_size:
+        await run_in_threadpool(partial_path.unlink, missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"分片大小与预期不符（应为 {expected_size} 字节）",
+        )
 
     # 写完再原子替换，断点续传重传同一分片时不会留下半截文件
-    partial_path.replace(chunk_path)
+    await run_in_threadpool(partial_path.replace, chunk_path)
 
-    received_count = sum(1 for p in temp_dir.iterdir() if p.is_file() and p.name.isdigit())
+    received_count = await run_in_threadpool(_count_chunks, temp_dir)
     session.received_chunks = received_count
-    await db.commit()
+    try:
+        await db.commit()
+    except StaleDataError:
+        # 写分片期间会话被 complete / 过期清理 / 删除用户删掉了
+        await db.rollback()
+        await run_in_threadpool(cleanup_upload_temp, upload_id)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或已结束")
 
     return {
         "message": "分片上传成功",
@@ -263,6 +307,13 @@ async def complete_upload(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或无权访问")
 
+    # 会话过期：拒绝合并并清理
+    if session.created_at < utcnow() - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS):
+        await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id))
+        await db.commit()
+        await run_in_threadpool(cleanup_upload_temp, data.upload_id)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话已过期")
+
     temp_dir = get_upload_temp_dir(data.upload_id)
     received = sorted(
         int(p.name) for p in temp_dir.iterdir() if p.is_file() and p.name.isdigit()
@@ -280,16 +331,16 @@ async def complete_upload(
         actual_size = await run_in_threadpool(_merge_chunks, temp_dir, session.total_chunks, final_path)
     except OSError:
         logger.exception("合并分片失败 upload_id=%s", data.upload_id)
-        final_path.unlink(missing_ok=True)
-        cleanup_upload_temp(data.upload_id)
+        await run_in_threadpool(final_path.unlink, missing_ok=True)
+        await run_in_threadpool(cleanup_upload_temp, data.upload_id)
         await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id))
         await db.commit()
         # 安全红线：不把底层异常细节（路径等）回传客户端
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="文件合并失败")
 
     async def _abort(detail: str):
-        final_path.unlink(missing_ok=True)
-        cleanup_upload_temp(data.upload_id)
+        await run_in_threadpool(final_path.unlink, missing_ok=True)
+        await run_in_threadpool(cleanup_upload_temp, data.upload_id)
         await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id))
         await db.commit()
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=detail)
@@ -313,10 +364,15 @@ async def complete_upload(
     )
     db.add(file_record)
     await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id))
-    await db.commit()
-    await db.refresh(file_record)
+    try:
+        await db.commit()
+    except Exception:
+        # 提交失败：记录未落库，删掉已合并的文件，避免磁盘上留下不计配额的孤儿文件
+        await run_in_threadpool(final_path.unlink, missing_ok=True)
+        raise
+    # 不再 refresh：flush 后 id 已回填，created_at 显式赋值，expire_on_commit=False
 
-    cleanup_upload_temp(data.upload_id)
+    await run_in_threadpool(cleanup_upload_temp, data.upload_id)
 
     await manager.broadcast_to_user(
         user_id=current_user.id,
@@ -426,7 +482,11 @@ async def delete_file_endpoint(
     await db.execute(sql_delete(File).where(File.id == file_id))
     await db.commit()
 
-    storage_delete_file(file_record.user_id, file_record.stored_name)
+    # 记录已删除：磁盘删除失败（如 Windows 下文件正被下载占用）只记日志，不影响响应与广播
+    try:
+        await run_in_threadpool(storage_delete_file, file_record.user_id, file_record.stored_name)
+    except OSError:
+        logger.exception("删除磁盘文件失败 file_id=%s", file_id)
 
     await manager.broadcast_to_user(
         user_id=current_user.id,

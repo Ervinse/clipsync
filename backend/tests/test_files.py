@@ -79,11 +79,17 @@ def test_chunk_size_is_capped_by_server(client, make_user):
 def test_declared_size_mismatch_rejected(client, make_user):
     user = make_user()
     upload_id = _init(client, user, 20, chunk_size=10).json()["upload_id"]
-    _chunk(client, user, upload_id, 0, b"x" * 10)
-    _chunk(client, user, upload_id, 1, b"x" * 5)
+    assert _chunk(client, user, upload_id, 0, b"x" * 10).status_code == 200
+    # 分片大小按索引校验：最后一片应为 10 字节，5 字节当场拒绝，不落盘
+    assert _chunk(client, user, upload_id, 1, b"x" * 5).status_code == 400
     resp = client.post("/api/files/upload/complete", json={"upload_id": upload_id}, headers=user.headers)
-    assert resp.status_code == 413
+    assert resp.status_code == 400
     assert client.get("/api/files", headers=user.headers).json()["total"] == 0
+    # 重传正确大小的分片后可以正常完成
+    assert _chunk(client, user, upload_id, 1, b"x" * 10).status_code == 200
+    resp = client.post("/api/files/upload/complete", json={"upload_id": upload_id}, headers=user.headers)
+    assert resp.status_code == 200
+    assert resp.json()["size"] == 20
 
 
 def test_pending_uploads_count_toward_quota(client, make_user):
