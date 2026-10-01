@@ -14,8 +14,18 @@ export default {
     return request.put('/clipboard', { content })
   },
 
-  // 获取历史记录
-  history(skip = 0, limit = 20) {
-    return request.get('/clipboard/history', { params: { skip, limit } })
+  // 获取历史记录（后端返回全部，最多 HISTORY_KEEP 条，不分页）
+  history() {
+    return request.get('/clipboard/history')
+  },
+
+  // 把某条历史恢复为当前文本（后端会把旧的当前文本归档并广播）
+  restoreHistory(historyId) {
+    return request.post(`/clipboard/history/${historyId}/restore`)
+  },
+
+  // 删除某条历史
+  deleteHistory(historyId) {
+    return request.delete(`/clipboard/history/${historyId}`)
   },
 }

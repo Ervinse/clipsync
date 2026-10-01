@@ -50,9 +50,29 @@ const toggleHistory = async () => {
   }
 }
 
+// 仅把历史内容填入编辑框，不保存
 const loadHistoryItem = (content) => {
   textContent.value = content
   showHistory.value = false
+}
+
+// 恢复为当前文本：直接保存并同步到其他终端
+const handleRestore = async (item) => {
+  if (!confirm('将这条历史恢复为当前文本？当前文本会归档到历史。')) return
+  try {
+    textContent.value = await clipboardStore.restoreHistory(item.id)
+  } catch (error) {
+    alert('恢复失败：' + (error.response?.data?.detail || error.message))
+  }
+}
+
+const handleDeleteHistory = async (item) => {
+  if (!confirm('确定删除这条历史记录吗？')) return
+  try {
+    await clipboardStore.deleteHistory(item.id)
+  } catch (error) {
+    alert('删除失败：' + (error.response?.data?.detail || error.message))
+  }
 }
 
 const formatDate = (dateString) => {
@@ -130,6 +150,14 @@ const formatDate = (dateString) => {
             <div class="history-meta">
               <span class="history-time">{{ formatDate(item.created_at) }}</span>
               <span class="history-length">{{ item.content.length }} 字符</span>
+            </div>
+            <div class="history-actions">
+              <button class="btn-mini" title="恢复为当前文本并同步" @click.stop="handleRestore(item)">
+                恢复
+              </button>
+              <button class="btn-mini btn-mini-danger" title="删除这条历史" @click.stop="handleDeleteHistory(item)">
+                删除
+              </button>
             </div>
           </div>
         </div>
@@ -341,5 +369,35 @@ const formatDate = (dateString) => {
   justify-content: space-between;
   font-size: 0.8rem;
   color: #64748B;
+}
+
+.history-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.btn-mini {
+  padding: 0.25rem 0.75rem;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid #334155;
+  border-radius: 6px;
+  color: #38BDF8;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.btn-mini:hover {
+  border-color: #38BDF8;
+}
+
+.btn-mini-danger {
+  background: rgba(248, 113, 113, 0.1);
+  color: #F87171;
+}
+
+.btn-mini-danger:hover {
+  border-color: #F87171;
 }
 </style>
