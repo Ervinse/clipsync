@@ -53,9 +53,13 @@ class AdminUserDetail(BaseModel):
         from_attributes = True
 
 
+# 配额上限 1TB：远小于 BIGINT 上限，避免超大值写库越界导致 500
+MAX_QUOTA_BYTES = 1024 ** 4
+
+
 class UpdateUserQuota(BaseModel):
     """修改用户配额"""
-    quota_bytes: int = Field(..., ge=0, description="配额（字节）")
+    quota_bytes: int = Field(..., ge=0, le=MAX_QUOTA_BYTES, description="配额（字节，最大 1TB）")
 
 
 class UpdateUserStatus(BaseModel):
@@ -101,7 +105,7 @@ class SystemSettingsResponse(BaseModel):
 
 class UpdateSystemSettings(BaseModel):
     """更新系统设置"""
-    default_quota_bytes: Optional[int] = Field(None, ge=0, description="默认配额（字节）")
+    default_quota_bytes: Optional[int] = Field(None, ge=0, le=MAX_QUOTA_BYTES, description="默认配额（字节，最大 1TB）")
     registration_enabled: Optional[bool] = Field(None, description="是否开放注册")
 
 
