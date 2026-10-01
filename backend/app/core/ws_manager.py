@@ -2,10 +2,14 @@
 
 注意：连接表存在进程内存中，后端必须单 worker 运行。
 """
+import asyncio
 import json
 from typing import Dict, Set
 
 from fastapi import WebSocket
+
+# 单个连接发送超时：网络卡住的终端不能无限期阻塞广播
+SEND_TIMEOUT_SECONDS = 5
 
 
 class ConnectionManager:
@@ -46,19 +50,21 @@ class ConnectionManager:
             return
 
         message_text = json.dumps(message, ensure_ascii=False)
-        disconnected = set()
 
-        # 复制一份再遍历：await 期间集合可能被其他协程修改
-        for connection in list(connections):
-            if connection is exclude:
-                continue
+        async def _send(connection: WebSocket) -> WebSocket | None:
+            """发送成功返回 None，失败或超时返回该连接以便清理"""
             try:
-                await connection.send_text(message_text)
+                await asyncio.wait_for(connection.send_text(message_text), timeout=SEND_TIMEOUT_SECONDS)
+                return None
             except Exception:
-                disconnected.add(connection)
+                return connection
 
-        for conn in disconnected:
-            self.disconnect(user_id, conn)
+        # 复制一份再并发发送：await 期间集合可能被其他协程修改；
+        # 单个卡住的终端最多拖 SEND_TIMEOUT_SECONDS，不会拖慢触发广播的 HTTP 请求太久
+        targets = [c for c in list(connections) if c is not exclude]
+        for failed in await asyncio.gather(*(_send(c) for c in targets)):
+            if failed is not None:
+                self.disconnect(user_id, failed)
 
 
 # 全局单例

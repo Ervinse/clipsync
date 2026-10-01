@@ -1,6 +1,6 @@
 """剪贴板路由：当前文本 + 历史版本管理"""
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, insert, delete, desc, func
+from sqlalchemy import select, delete, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 

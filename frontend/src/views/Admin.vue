@@ -22,13 +22,22 @@ const inviteForm = ref({
 })
 
 onMounted(async () => {
-  await adminStore.fetchStats()
-  await adminStore.fetchUsers()
-  await adminStore.fetchInviteCodes()
+  // 并行加载，互不影响：任何一个失败都不会阻断其余数据的显示
   // 文件元数据 admin 及以上均可查看（后端 /api/admin/files 同此权限），不含下载入口
-  await adminStore.fetchFiles()
-  await adminStore.fetchSettings()
+  const tasks = [
+    ['统计', adminStore.fetchStats()],
+    ['用户', adminStore.fetchUsers()],
+    ['邀请码', adminStore.fetchInviteCodes()],
+    ['文件', adminStore.fetchFiles()],
+    ['设置', adminStore.fetchSettings()],
+  ]
+  const results = await Promise.allSettled(tasks.map(([, p]) => p))
   syncSettingsForm()
+
+  const failed = tasks.filter((_, i) => results[i].status === 'rejected').map(([name]) => name)
+  if (failed.length > 0) {
+    alert(`部分数据加载失败：${failed.join('、')}`)
+  }
 })
 
 const stats = computed(() => adminStore.stats || {})

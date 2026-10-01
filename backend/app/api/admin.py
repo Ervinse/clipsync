@@ -1,12 +1,12 @@
 """管理后台路由：统计 + 用户管理 + 邀请码 + 系统设置"""
 import secrets
-from datetime import datetime
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select, func, delete as sql_delete, update as sql_update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from ..database import get_db
 from ..models import (
@@ -35,7 +35,7 @@ from ..schemas import (
     AdminFileListItem,
     AdminFileListResponse,
 )
-from ..core.deps import get_current_user, require_role
+from ..core.deps import require_role
 from ..core.storage import delete_user_storage, cleanup_upload_temp
 from ..core.ws_manager import manager
 from ..core.timeutil import utcnow, to_naive_utc
@@ -77,8 +77,12 @@ async def get_system_stats(
     result = await db.execute(select(func.count(AccessCode.id)))
     total_access_codes = result.scalar()
 
+    # 有效 = 未撤销且未过期
     result = await db.execute(
-        select(func.count(AccessCode.id)).where(AccessCode.is_revoked == False)
+        select(func.count(AccessCode.id)).where(
+            AccessCode.is_revoked == False,  # noqa: E712
+            AccessCode.expires_at.is_(None) | (AccessCode.expires_at > utcnow()),
+        )
     )
     active_access_codes = result.scalar()
 
@@ -92,10 +96,46 @@ async def get_system_stats(
     )
 
 
-# PLACEHOLDER_1: 用户管理接口继续
-
-
 # ========== 用户管理 ==========
+
+
+async def _file_stats(db: AsyncSession, user_ids: list[int]) -> dict[int, tuple[int, int]]:
+    """一次 IN + GROUP BY 查出多个用户的（已用空间, 文件数），避免逐用户查询的 N+1"""
+    if not user_ids:
+        return {}
+    result = await db.execute(
+        select(File.user_id, func.coalesce(func.sum(File.size), 0), func.count(File.id))
+        .where(File.user_id.in_(user_ids))
+        .group_by(File.user_id)
+    )
+    return {uid: (int(used), int(count)) for uid, used, count in result.all()}
+
+
+async def _get_user_or_404(db: AsyncSession, user_id: int) -> User:
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+    return user
+
+
+async def _build_user_detail(db: AsyncSession, user: User) -> AdminUserDetail:
+    """用户详情（安全红线：只含元数据，剪贴板只给更新时间、不给内容）"""
+    used_bytes, file_count = (await _file_stats(db, [user.id])).get(user.id, (0, 0))
+    result = await db.execute(
+        select(Clipboard.updated_at).where(Clipboard.user_id == user.id)
+    )
+    return AdminUserDetail(
+        id=user.id,
+        username=user.username,
+        role=user.role,
+        is_active=user.is_active,
+        quota_bytes=user.quota_bytes,
+        used_bytes=used_bytes,
+        file_count=file_count,
+        clipboard_updated_at=result.scalar_one_or_none(),
+        created_at=user.created_at,
+    )
 
 
 @router.get("/users", response_model=AdminUserListResponse)
@@ -111,44 +151,32 @@ async def list_users(
     权限：admin + superadmin
     安全红线：仅返回元数据，不返回内容
     """
-    # 1. 查询用户
+    # id 作为第二排序键：同一秒注册的用户分页时不会重复或漏掉
     result = await db.execute(
         select(User)
-        .order_by(User.created_at.desc())
+        .order_by(User.created_at.desc(), User.id.desc())
         .offset(skip)
         .limit(limit)
     )
     users = result.scalars().all()
 
-    # 2. 查询总数
     result = await db.execute(select(func.count(User.id)))
     total = result.scalar()
 
-    # 3. 构建响应（查询每个用户的已用空间和文件数）
-    items = []
-    for user in users:
-        # 已用空间
-        result = await db.execute(
-            select(func.coalesce(func.sum(File.size), 0)).where(File.user_id == user.id)
-        )
-        used_bytes = result.scalar()
-
-        # 文件数
-        result = await db.execute(
-            select(func.count(File.id)).where(File.user_id == user.id)
-        )
-        file_count = result.scalar()
-
-        items.append(AdminUserListItem(
+    stats = await _file_stats(db, [u.id for u in users])
+    items = [
+        AdminUserListItem(
             id=user.id,
             username=user.username,
             role=user.role,
             is_active=user.is_active,
             quota_bytes=user.quota_bytes,
-            used_bytes=used_bytes,
-            file_count=file_count,
+            used_bytes=stats.get(user.id, (0, 0))[0],
+            file_count=stats.get(user.id, (0, 0))[1],
             created_at=user.created_at,
-        ))
+        )
+        for user in users
+    ]
 
     return AdminUserListResponse(items=items, total=total)
 
@@ -165,45 +193,8 @@ async def get_user_detail(
     权限：admin + superadmin
     安全红线：仅返回元数据，不返回文本内容
     """
-    # 1. 查询用户
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="用户不存在",
-        )
-
-    # 2. 已用空间
-    result = await db.execute(
-        select(func.coalesce(func.sum(File.size), 0)).where(File.user_id == user.id)
-    )
-    used_bytes = result.scalar()
-
-    # 3. 文件数
-    result = await db.execute(
-        select(func.count(File.id)).where(File.user_id == user.id)
-    )
-    file_count = result.scalar()
-
-    # 4. 剪贴板更新时间（不返回内容）
-    result = await db.execute(
-        select(Clipboard.updated_at).where(Clipboard.user_id == user.id)
-    )
-    clipboard_updated_at = result.scalar_one_or_none()
-
-    return AdminUserDetail(
-        id=user.id,
-        username=user.username,
-        role=user.role,
-        is_active=user.is_active,
-        quota_bytes=user.quota_bytes,
-        used_bytes=used_bytes,
-        file_count=file_count,
-        clipboard_updated_at=clipboard_updated_at,
-        created_at=user.created_at,
-    )
+    user = await _get_user_or_404(db, user_id)
+    return await _build_user_detail(db, user)
 
 
 @router.patch("/users/{user_id}/quota", response_model=AdminUserDetail)
@@ -218,48 +209,11 @@ async def update_user_quota(
 
     权限：仅 superadmin
     """
-    # 1. 查询用户
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="用户不存在",
-        )
-
-    # 2. 更新配额
+    user = await _get_user_or_404(db, user_id)
     user.quota_bytes = data.quota_bytes
     await db.commit()
-    await db.refresh(user)
-
-    # 3. 返回更新后的详情（复用 get_user_detail 逻辑）
-    result = await db.execute(
-        select(func.coalesce(func.sum(File.size), 0)).where(File.user_id == user.id)
-    )
-    used_bytes = result.scalar()
-
-    result = await db.execute(
-        select(func.count(File.id)).where(File.user_id == user.id)
-    )
-    file_count = result.scalar()
-
-    result = await db.execute(
-        select(Clipboard.updated_at).where(Clipboard.user_id == user.id)
-    )
-    clipboard_updated_at = result.scalar_one_or_none()
-
-    return AdminUserDetail(
-        id=user.id,
-        username=user.username,
-        role=user.role,
-        is_active=user.is_active,
-        quota_bytes=user.quota_bytes,
-        used_bytes=used_bytes,
-        file_count=file_count,
-        clipboard_updated_at=clipboard_updated_at,
-        created_at=user.created_at,
-    )
+    # expire_on_commit=False，提交后属性仍可直接读取，无需 refresh
+    return await _build_user_detail(db, user)
 
 
 @router.patch("/users/{user_id}/status", response_model=AdminUserDetail)
@@ -308,32 +262,7 @@ async def update_user_status(
         await manager.disconnect_user(user.id)
 
     # 4. 返回详情
-    result = await db.execute(
-        select(func.coalesce(func.sum(File.size), 0)).where(File.user_id == user.id)
-    )
-    used_bytes = result.scalar()
-
-    result = await db.execute(
-        select(func.count(File.id)).where(File.user_id == user.id)
-    )
-    file_count = result.scalar()
-
-    result = await db.execute(
-        select(Clipboard.updated_at).where(Clipboard.user_id == user.id)
-    )
-    clipboard_updated_at = result.scalar_one_or_none()
-
-    return AdminUserDetail(
-        id=user.id,
-        username=user.username,
-        role=user.role,
-        is_active=user.is_active,
-        quota_bytes=user.quota_bytes,
-        used_bytes=used_bytes,
-        file_count=file_count,
-        clipboard_updated_at=clipboard_updated_at,
-        created_at=user.created_at,
-    )
+    return await _build_user_detail(db, user)
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -397,18 +326,15 @@ async def delete_user(
     await db.execute(sql_delete(User).where(User.id == user_id))
     await db.commit()
 
-    # 5. 删除磁盘文件与临时目录
-    delete_user_storage(user_id)
+    # 5. 删除磁盘文件与临时目录（rmtree 可能涉及大量文件，放入线程池避免阻塞事件循环）
+    await run_in_threadpool(delete_user_storage, user_id)
     for upload_id in upload_ids:
-        cleanup_upload_temp(upload_id)
+        await run_in_threadpool(cleanup_upload_temp, upload_id)
 
     # 6. 断开该用户所有实时连接
     await manager.disconnect_user(user_id)
 
     return None
-
-
-# PLACEHOLDER_2: 邀请码管理接口继续
 
 
 # ========== 邀请码管理 ==========
@@ -465,23 +391,15 @@ async def create_invite_code(
     )
     db.add(invite_code)
     await db.commit()
-    await db.refresh(invite_code)
 
-    # 3. 查询使用者用户名（如果已使用）
-    used_by_username = None
-    if invite_code.used_by:
-        result = await db.execute(
-            select(User.username).where(User.id == invite_code.used_by)
-        )
-        used_by_username = result.scalar_one_or_none()
-
+    # 新建的码必然未被使用，不需要再查使用者
     return InviteCodeResponse(
         id=invite_code.id,
         code=invite_code.code,
         created_by=invite_code.created_by,
         created_by_username=current_user.username,
-        used_by=invite_code.used_by,
-        used_by_username=used_by_username,
+        used_by=None,
+        used_by_username=None,
         expires_at=invite_code.expires_at,
         used_at=invite_code.used_at,
         created_at=invite_code.created_at,
@@ -498,27 +416,18 @@ async def list_invite_codes(
 
     权限：admin + superadmin
     """
-    # 查询所有邀请码（按创建时间倒序），关联创建者和使用者
+    # 创建者 join、使用者 outer join，一次查完（避免逐条查使用者用户名的 N+1）
+    creator, used_by_user = aliased(User), aliased(User)
     result = await db.execute(
-        select(
-            InviteCode,
-            User.username.label("creator_username")
-        )
-        .join(User, InviteCode.created_by == User.id)
-        .order_by(InviteCode.created_at.desc())
+        select(InviteCode, creator.username, used_by_user.username)
+        .join(creator, InviteCode.created_by == creator.id)
+        .outerjoin(used_by_user, InviteCode.used_by == used_by_user.id)
+        .order_by(InviteCode.created_at.desc(), InviteCode.id.desc())
     )
     rows = result.all()
 
     items = []
-    for invite_code, creator_username in rows:
-        # 查询使用者用户名
-        used_by_username = None
-        if invite_code.used_by:
-            result_used = await db.execute(
-                select(User.username).where(User.id == invite_code.used_by)
-            )
-            used_by_username = result_used.scalar_one_or_none()
-
+    for invite_code, creator_username, used_by_username in rows:
         items.append(InviteCodeResponse(
             id=invite_code.id,
             code=invite_code.code,
@@ -557,14 +466,18 @@ async def delete_invite_code(
             detail="邀请码不存在",
         )
 
+    # 已使用的码保留作为注册审计记录，不允许删除（used_at 非空即用过，使用者被删后 used_by 会置空）
+    if invite_code.used_at is not None or invite_code.used_by is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="邀请码已被使用，不能删除",
+        )
+
     # 删除邀请码
     await db.execute(sql_delete(InviteCode).where(InviteCode.id == invite_code_id))
     await db.commit()
 
     return None
-
-
-# PLACEHOLDER_3: 系统设置接口继续
 
 
 # ========== 系统设置 ==========

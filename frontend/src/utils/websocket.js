@@ -2,11 +2,18 @@
  * WebSocket 连接管理器
  *
  * 功能：
- * - 自动重连
+ * - 自动重连（指数退避，不封顶次数；网络恢复 / 页面回到前台时立即重试）
  * - 心跳保活
- * - 消息队列
  * - 事件监听
+ *
+ * 心跳只在连接打开时发送，不入队：离线期间积压的 ping 没有意义。
  */
+const BASE_RECONNECT_DELAY = 1000
+const MAX_RECONNECT_DELAY = 30000
+const HEARTBEAT_INTERVAL = 30000
+// 服务端以 1008（policy violation）关闭：token 无效、用户被禁用或删除，重连没有意义
+const POLICY_VIOLATION = 1008
+
 class WebSocketManager {
   constructor() {
     this.ws = null
@@ -14,94 +21,105 @@ class WebSocketManager {
     this.reconnectTimer = null
     this.heartbeatTimer = null
     this.reconnectCount = 0
-    this.maxReconnectCount = 5
-    this.reconnectDelay = 3000
-    this.heartbeatInterval = 30000
     this.listeners = {}
-    this.messageQueue = []
     this.isConnected = false
+    // 主动断开（登出）后不再自动重连
+    this.manualClose = false
+
+    // 网络恢复或页面回到前台时，跳过退避立即重连
+    if (typeof window !== 'undefined') {
+      const retryNow = () => {
+        // this.ws 为空才重试：连接正在建立（CONNECTING）时不要把它拆掉重来
+        if (!this.manualClose && !this.ws && localStorage.getItem('access_token')) {
+          this.reconnectCount = 0
+          this.scheduleReconnect(0)
+        }
+      }
+      window.addEventListener('online', retryNow)
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') retryNow()
+      })
+    }
   }
 
   /**
    * 连接 WebSocket
    */
   connect(token) {
+    // 已有连接先彻底断开，避免同时存在两条连接、旧连接的 onclose 误停新连接的心跳
+    this.teardown()
+    this.manualClose = false
+
     // 根据当前协议选择 ws:// 或 wss://
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.host
     // token 不放 URL（会进 access log），通过子协议传递；服务端只回选 clipsync.v1
     this.url = `${protocol}//${host}/ws`
 
+    let ws
     try {
-      this.ws = new WebSocket(this.url, ['clipsync.v1', `bearer.${token}`])
-
-      this.ws.onopen = () => {
-        console.log('[WS] 已连接')
-        this.isConnected = true
-        this.reconnectCount = 0
-        this.startHeartbeat()
-        this.flushMessageQueue()
-        this.emit('open')
-      }
-
-      this.ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          console.log('[WS] 收到消息:', data)
-
-          // 心跳响应
-          if (data.type === 'pong') {
-            return
-          }
-
-          // 分发事件
-          this.emit('message', data)
-          if (data.type) {
-            this.emit(data.type, data.data)
-          }
-        } catch (error) {
-          console.error('[WS] 消息解析失败:', error)
-        }
-      }
-
-      this.ws.onerror = (error) => {
-        console.error('[WS] 连接错误:', error)
-        this.emit('error', error)
-      }
-
-      this.ws.onclose = () => {
-        console.log('[WS] 连接关闭')
-        this.isConnected = false
-        this.stopHeartbeat()
-        this.emit('close')
-        this.attemptReconnect()
-      }
+      ws = new WebSocket(this.url, ['clipsync.v1', `bearer.${token}`])
     } catch (error) {
       console.error('[WS] 连接失败:', error)
-      this.attemptReconnect()
+      this.scheduleReconnect()
+      return
+    }
+    this.ws = ws
+
+    ws.onopen = () => {
+      this.isConnected = true
+      this.reconnectCount = 0
+      this.startHeartbeat()
+      this.emit('open')
+    }
+
+    ws.onmessage = (event) => {
+      let data
+      try {
+        data = JSON.parse(event.data)
+      } catch (error) {
+        console.error('[WS] 消息解析失败:', error)
+        return
+      }
+      if (data.type === 'pong') return
+
+      this.emit('message', data)
+      if (data.type) {
+        this.emit(data.type, data.data)
+      }
+    }
+
+    ws.onerror = (error) => {
+      this.emit('error', error)
+    }
+
+    ws.onclose = (event) => {
+      // 只处理当前连接的关闭事件；被替换掉的旧连接晚到的 onclose 直接忽略
+      if (this.ws !== ws) return
+      this.ws = null
+      this.isConnected = false
+      this.stopHeartbeat()
+      this.emit('close', event)
+
+      if (this.manualClose) return
+      if (event.code === POLICY_VIOLATION) {
+        // 凭证失效或账号被禁用：停止重连，交给上层处理（如跳转登录）
+        this.emit('auth_failed', event)
+        return
+      }
+      this.scheduleReconnect()
     }
   }
 
   /**
-   * 发送消息
+   * 发送消息（仅在连接打开时发送，离线时丢弃并返回 false）
    */
   send(data) {
-    if (this.isConnected && this.ws.readyState === WebSocket.OPEN) {
+    if (this.isConnected && this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data))
-    } else {
-      // 离线时加入队列
-      this.messageQueue.push(data)
+      return true
     }
-  }
-
-  /**
-   * 刷新消息队列
-   */
-  flushMessageQueue() {
-    while (this.messageQueue.length > 0) {
-      const data = this.messageQueue.shift()
-      this.send(data)
-    }
+    return false
   }
 
   /**
@@ -111,7 +129,7 @@ class WebSocketManager {
     this.stopHeartbeat()
     this.heartbeatTimer = setInterval(() => {
       this.send({ type: 'ping' })
-    }, this.heartbeatInterval)
+    }, HEARTBEAT_INTERVAL)
   }
 
   /**
@@ -125,43 +143,57 @@ class WebSocketManager {
   }
 
   /**
-   * 尝试重连
+   * 安排重连：指数退避（1s、2s、4s…，最长 30s），不封顶次数
    */
-  attemptReconnect() {
-    if (this.reconnectCount >= this.maxReconnectCount) {
-      console.log('[WS] 达到最大重连次数，停止重连')
-      this.emit('reconnect_failed')
-      return
-    }
+  scheduleReconnect(delay) {
+    if (this.manualClose) return
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
 
+    const wait = delay ?? Math.min(BASE_RECONNECT_DELAY * 2 ** this.reconnectCount, MAX_RECONNECT_DELAY)
     this.reconnectCount++
-    console.log(`[WS] ${this.reconnectDelay}ms 后尝试第 ${this.reconnectCount} 次重连...`)
 
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
       const token = localStorage.getItem('access_token')
-      if (token) {
+      if (token && !this.manualClose) {
         this.connect(token)
       }
-    }, this.reconnectDelay)
+    }, wait)
   }
 
   /**
-   * 断开连接
+   * 关闭当前连接并清理定时器，不改变 manualClose
    */
-  disconnect() {
+  teardown() {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
-
     this.stopHeartbeat()
 
     if (this.ws) {
-      this.ws.close()
+      const ws = this.ws
       this.ws = null
+      // 先解绑回调，旧连接关闭时不会再触发重连或停掉新连接的心跳
+      ws.onopen = null
+      ws.onmessage = null
+      ws.onerror = null
+      ws.onclose = null
+      try {
+        ws.close()
+      } catch {
+        // 已关闭的连接忽略
+      }
     }
-
     this.isConnected = false
+  }
+
+  /**
+   * 主动断开（登出时调用），不再自动重连
+   */
+  disconnect() {
+    this.manualClose = true
+    this.teardown()
     this.reconnectCount = 0
   }
 
