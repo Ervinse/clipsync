@@ -1,18 +1,17 @@
 # ClipSync 部署指南
 
-本文档描述如何在生产环境部署 ClipSync。
+本文档是**部署的权威文档**，描述如何在生产环境直接部署 ClipSync（systemd + Nginx）。Docker 部署见 [docker/README.md](docker/README.md)，逐项核对见 [CHECKLIST.md](CHECKLIST.md)。
 
 ## 系统要求
 
-### 硬件要求
-- CPU: 2 核心及以上
-- 内存: 2GB 及以上
-- 磁盘: 20GB 及以上（根据用户数和文件存储需求调整）
+### 硬件
+- CPU 2 核及以上，内存 2GB 及以上
+- 磁盘 20GB 及以上（按用户数与文件量调整）
 
-### 软件要求
-- Ubuntu 20.04 / 22.04 或 CentOS 7 / 8
-- Python 3.9+
-- Node.js 16+
+### 软件
+- **Ubuntu 22.04 / 24.04 或 Debian 12**。脚本写死了 `apt`、`/etc/nginx/sites-available`、`www-data`，**不支持 CentOS/RHEL**。
+- **Python 3.12+**。代码使用了 3.10+ 语法，项目统一要求 3.12。
+- **Node.js 20.19+ 或 22.12+**。Vite 8 要求 `^20.19.0 || >=22.12.0`，系统 apt 源里的 Node 版本太旧，不能用。
 - MySQL 8.0+
 - Nginx 1.18+
 
@@ -20,404 +19,189 @@
 
 ### 1. 安装系统依赖
 
-**Ubuntu/Debian:**
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-pip python3-venv \
-    nodejs npm mysql-server nginx git curl
+sudo apt install -y python3 python3-pip python3-venv mysql-server nginx git curl
+
+# Node.js 22 LTS（NodeSource），不要用 apt 自带的 nodejs
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+node -v   # 确认 >= 20.19
 ```
 
-**CentOS/RHEL:**
-```bash
-sudo yum install -y python3 python3-pip python3-venv \
-    nodejs npm mysql-server nginx git curl
-```
+Ubuntu 22.04 自带 Python 3.10，需要另装 3.12（如 deadsnakes PPA），并用 `python3.12 -m venv` 建虚拟环境。
 
-### 2. 配置 MySQL
+### 2. 配置 MySQL（deploy.sh 不会建库）
 
 ```bash
-# 启动 MySQL
-sudo systemctl start mysql
-sudo systemctl enable mysql
-
-# 运行安全配置
+sudo systemctl enable --now mysql
 sudo mysql_secure_installation
-
-# 创建数据库和用户
 sudo mysql -u root -p
 ```
-
-在 MySQL 中执行：
 
 ```sql
 CREATE DATABASE clipsync CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER 'clipsync'@'localhost' IDENTIFIED BY 'your_secure_password';
 GRANT ALL PRIVILEGES ON clipsync.* TO 'clipsync'@'localhost';
 FLUSH PRIVILEGES;
-EXIT;
 ```
 
-### 3. 部署项目
+### 3. 上传项目
 
 ```bash
-# 克隆或上传项目到服务器
 sudo mkdir -p /var/www
 cd /var/www
-sudo git clone https://github.com/your-repo/clipsync.git
-# 或使用 scp/rsync 上传
-
-# 设置权限
-sudo chown -R www-data:www-data /var/www/clipsync
+sudo git clone <your-repo> clipsync   # 或 scp / rsync 上传
 ```
 
-### 4. 配置后端
+### 4. 配置后端 `.env`
 
 ```bash
 cd /var/www/clipsync/backend
-
-# 复制并编辑配置文件
 sudo cp ../deployment/.env.production.example .env
+sudo chmod 600 .env
 sudo nano .env
 ```
 
-**必须修改的配置项：**
-- `DB_PASSWORD`: 数据库密码
-- `JWT_SECRET`: 随机密钥（用 `openssl rand -hex 32` 生成；少于 32 字符或仍为示例值时后端拒绝启动）
-- `CORS_ORIGINS`: 前端域名
-- `DEPLOY_SCHEME`: http 或 https
-- `COOKIE_SECURE`: HTTPS 环境设为 true
-- `HSTS_ENABLED`: HTTPS 环境推荐启用
+必须修改的配置项：
+- `DB_USER` / `DB_PASSWORD` / `DB_NAME`：与第 2 步一致
+- `JWT_SECRET`：用 `openssl rand -hex 32` 生成。少于 32 字符或仍是示例值时，后端会拒绝启动
+- `CORS_ORIGINS`：前端访问地址（如 `http://192.168.1.10` 或 `https://your-domain.com`），不支持 `*`
+- `HSTS_ENABLED`：只在 HTTPS 阶段设为 `true`
 
-### 5. 配置前端
+`DEPLOY_SCHEME`、`COOKIE_SECURE` 目前代码里没有读取（访问码链接按请求协议动态拼接，Token 不走 cookie），保持与协议一致即可。
 
-```bash
-cd /var/www/clipsync/frontend
-
-# 如需自定义 API 地址，编辑 vite.config.js
-# 生产环境通常无需修改（通过 Nginx 代理）
-```
-
-### 6. 执行部署脚本
+### 5. 执行部署脚本
 
 ```bash
 cd /var/www/clipsync
-sudo chmod +x deployment/scripts/*.sh
 sudo bash deployment/scripts/deploy.sh
 ```
 
-脚本会自动完成：
-1. 创建虚拟环境并安装依赖
-2. 执行数据库迁移
-3. 创建超级管理员
-4. 构建前端
-5. 配置 Nginx
-6. 配置 Systemd 服务
-7. 设置定时任务
+脚本会依次完成：
+1. 检查 python3 / node / mysql / nginx 是否已安装（只检查，不安装、不建库）
+2. 创建 `backend/venv` 并安装依赖
+3. `alembic upgrade head`
+4. 交互式创建首个超级管理员
+5. 构建前端
+6. 安装 HTTP 版 Nginx 配置并执行 `nginx -t`
+7. 安装 systemd 服务
+8. 写入 cron 定时任务（备份、清理）
 
-### 7. 配置 SSL（HTTPS 部署）
+Debian/Ubuntu 自带的 `/etc/nginx/sites-enabled/default` 也监听 80 端口，可能会先接走请求。如果不需要它，请删除：`sudo rm /etc/nginx/sites-enabled/default`。
 
-**使用 Let's Encrypt 免费证书：**
+### 6. 启动服务
 
 ```bash
-# 安装 Certbot
-sudo apt install certbot python3-certbot-nginx
-
-# 获取证书（替换为你的域名）
-sudo certbot --nginx -d your-domain.com -d www.your-domain.com
-
-# 证书会自动更新，测试自动更新
-sudo certbot renew --dry-run
+sudo systemctl enable --now clipsync
+sudo systemctl reload nginx
 ```
 
-编辑 Nginx 配置 `/etc/nginx/sites-available/clipsync`，取消注释 HTTPS 部分，并修改：
-- `server_name your-domain.com;`
-- SSL 证书路径（Certbot 会自动配置）
-
-**手动证书：**
-
-将证书文件放置到服务器并在 Nginx 配置中指定路径。
-
-### 8. 启动服务
+### 7. 验证
 
 ```bash
-# 启动 ClipSync 服务
-sudo systemctl start clipsync
-sudo systemctl enable clipsync
-
-# 重启 Nginx
-sudo systemctl restart nginx
-```
-
-### 9. 验证部署
-
-```bash
-# 检查服务状态
 sudo systemctl status clipsync
-sudo systemctl status nginx
-
-# 查看日志
-sudo journalctl -u clipsync -f
-
-# 测试 API
-curl http://127.0.0.1:8000/   # 健康检查，返回 {"status":"ok",...}
-
-# 测试前端
-curl http://your-domain.com
+curl http://127.0.0.1:8000/          # 健康检查，返回 {"status":"ok",...}
+curl -I http://<服务器地址>/          # 前端页面
+sudo bash deployment/scripts/health_check.sh
 ```
 
-### 10. 创建第一个超级管理员
-
-如果部署脚本未自动创建，手动创建：
+如果部署脚本没有成功创建超级管理员，手动执行：
 
 ```bash
-cd /var/www/clipsync/backend
-source venv/bin/activate
+cd /var/www/clipsync/backend && source venv/bin/activate
 python -m scripts.create_superadmin
 ```
+
+## HTTP / HTTPS 切换
+
+`deployment/nginx/` 下有两份配置：
+
+| 文件 | 用途 |
+|------|------|
+| `clipsync.conf` | HTTP 阶段，只监听 80，deploy.sh 默认安装这一份 |
+| `clipsync-https.conf` | HTTPS 阶段：80 跳转 443，443 使用 TLS 证书 |
+
+升级到 HTTPS：
+
+```bash
+# 1. 申请证书
+sudo apt install -y certbot
+sudo certbot certonly --webroot -w /var/www/clipsync/frontend/dist -d your-domain.com
+
+# 2. 修改 clipsync-https.conf 里的 server_name 与证书路径，然后替换站点配置
+sudo cp /var/www/clipsync/deployment/nginx/clipsync-https.conf /etc/nginx/sites-available/clipsync
+sudo nginx -t && sudo systemctl reload nginx
+
+# 3. 修改 backend/.env：HSTS_ENABLED=true、CORS_ORIGINS=https://your-domain.com
+sudo systemctl restart clipsync
+```
+
+前端使用相对路径，WebSocket 按页面协议自动选择 `ws://` 或 `wss://`，切换协议后不需要重新构建前端。HSTS 响应头由后端按 `HSTS_ENABLED` 下发，Nginx 不需要再配置。
+
+> HTTP 阶段密码、Token 和内容都以明文传输，只能用于可信内网。
 
 ## 日常维护
 
 ### 更新应用
 
 ```bash
-cd /var/www/clipsync
-sudo bash deployment/scripts/update.sh
+sudo bash /var/www/clipsync/deployment/scripts/update.sh
 ```
 
-### 查看日志
-
-```bash
-# 应用日志
-sudo journalctl -u clipsync -f
-
-# Nginx 访问日志
-sudo tail -f /var/log/nginx/access.log
-
-# Nginx 错误日志
-sudo tail -f /var/log/nginx/error.log
-
-# 备份日志
-sudo tail -f /var/log/clipsync/backup.log
-
-# 清理日志
-sudo tail -f /var/log/clipsync/cleanup.log
-```
+流程：停服务 → 备份数据库 → 在项目根目录执行 `git pull --ff-only` → 更新后端依赖并执行迁移 → 构建前端 → 重启服务。
 
 ### 备份与恢复
 
-**手动备份：**
 ```bash
+# 手动备份（cron 每天 2:00 自动执行）
 sudo bash /var/www/clipsync/deployment/scripts/backup_database.sh
-```
-
-**查看备份：**
-```bash
 ls -lh /var/backups/clipsync/database/
+
+# 恢复
+gunzip < /var/backups/clipsync/database/clipsync_YYYYMMDD_HHMMSS.sql.gz | mysql -u clipsync -p clipsync
 ```
 
-**恢复备份：**
-```bash
-# 选择一个备份文件
-BACKUP_FILE="/var/backups/clipsync/database/clipsync_20250101_020000.sql.gz"
-
-# 恢复数据库
-gunzip < "$BACKUP_FILE" | mysql -u clipsync -p clipsync
-```
+备份脚本从 `backend/.env` 读取数据库连接信息，并启用了 `pipefail`。mysqldump 失败时脚本会报错退出，不会留下空的备份文件。数据库备份**不包含上传的文件**，文件在 `backend/storage/`，需要另外备份。
 
 ### 清理任务
 
-定时任务会自动执行：
-- **每天凌晨 2 点**：备份数据库
-- **每小时**：清理过期访问码和临时文件
+cron 每小时执行一次 `cleanup_expired.sh`：删除已过期的访问码，以及超过 `UPLOAD_SESSION_TTL_HOURS` 仍未完成的上传会话和对应临时目录。
 
-手动执行清理：
-```bash
-sudo bash /var/www/clipsync/deployment/scripts/cleanup_expired.sh
-```
-
-### 服务管理
+### 日志
 
 ```bash
-# 启动
-sudo systemctl start clipsync
-
-# 停止
-sudo systemctl stop clipsync
-
-# 重启
-sudo systemctl restart clipsync
-
-# 查看状态
-sudo systemctl status clipsync
-
-# 启用开机自启
-sudo systemctl enable clipsync
-
-# 禁用开机自启
-sudo systemctl disable clipsync
+sudo journalctl -u clipsync -f
+sudo tail -f /var/log/nginx/error.log
+sudo tail -f /var/log/clipsync/backup.log /var/log/clipsync/cleanup.log
 ```
 
-### 重新加载配置
+## 性能与扩容
 
-修改 `.env` 后需要重启服务：
-```bash
-sudo systemctl restart clipsync
-```
+- **保持 `--workers 1`**。WebSocket 连接表和限流计数都在进程内存中，多 worker 或多实例会导致实时同步和限流失效。如果确实要扩容，需要先引入 Redis 等跨进程 pub/sub 和共享的限流存储。
+- 后端只监听 `127.0.0.1:8000`，由同机 Nginx 反代。uvicorn 只信任 `127.0.0.1` 发来的 `X-Forwarded-For`，限流才能拿到真实客户端 IP。
+- MySQL 调优示例（`/etc/mysql/mysql.conf.d/mysqld.cnf`）：
 
-修改 Nginx 配置后：
-```bash
-sudo nginx -t  # 测试配置
-sudo systemctl reload nginx
-```
+  ```ini
+  [mysqld]
+  max_connections = 200
+  innodb_buffer_pool_size = 1G   # 按内存调整
+  ```
 
-## 性能优化
-
-### Uvicorn Workers
-
-**不要增加 worker 数量**，保持 `--workers 1`。WebSocket 连接表与限流计数都在进程内存中，多 worker 会导致实时同步与限流失效。若确需扩容，须先引入 Redis 等跨进程 pub/sub 与共享限流存储。
-
-后端只监听 `127.0.0.1`，由同机 Nginx 反代；uvicorn 默认只信任 `127.0.0.1` 发来的 `X-Forwarded-For`，限流才能拿到真实客户端 IP。
-
-### 数据库优化
-
-编辑 MySQL 配置 `/etc/mysql/mysql.conf.d/mysqld.cnf`：
-
-```ini
-[mysqld]
-max_connections = 200
-innodb_buffer_pool_size = 1G  # 根据内存调整
-innodb_log_file_size = 256M
-query_cache_size = 64M
-```
-
-重启 MySQL：
-```bash
-sudo systemctl restart mysql
-```
-
-### Nginx 缓存
-
-在 Nginx 配置中已启用静态资源缓存（30 天）。
-
-## 监控
-
-### 系统资源监控
-
-```bash
-# 查看 CPU 和内存使用
-htop
-
-# 查看磁盘使用
-df -h
-
-# 查看网络连接
-netstat -tulnp
-```
-
-### 应用监控
-
-```bash
-# 查看进程
-ps aux | grep clipsync
-
-# 查看端口监听
-sudo netstat -tulnp | grep 8000
-
-# 查看 WebSocket 连接数
-ss -tun | grep :8000 | wc -l
-```
+  MySQL 8.0 已移除 `query_cache_size`，配置里不要写这个参数，否则 MySQL 会拒绝启动。
 
 ## 故障排查
 
-### 服务无法启动
-
-1. 查看日志：`sudo journalctl -u clipsync -n 100`
-2. 检查配置：`.env` 文件是否正确
-3. 检查数据库：是否可连接
-4. 检查权限：`uploads/` 目录权限
-
-### 前端无法访问
-
-1. 检查 Nginx：`sudo nginx -t`
-2. 查看 Nginx 日志：`sudo tail -f /var/log/nginx/error.log`
-3. 检查防火墙：`sudo ufw status`
-
-### WebSocket 连接失败
-
-1. 检查 Nginx WebSocket 配置
-2. 确认 `Upgrade` 和 `Connection` header 正确
-3. 检查超时设置
-
-### 数据库连接失败
-
-1. 确认 MySQL 运行：`sudo systemctl status mysql`
-2. 测试连接：`mysql -u clipsync -p clipsync`
-3. 检查 `.env` 中的数据库配置
+| 现象 | 排查 |
+|------|------|
+| 服务起不来 | `journalctl -u clipsync -n 100`。常见原因：`JWT_SECRET` 过弱或仍是示例值、数据库连不上、`backend/storage/` 没有写权限 |
+| 页面 404 或打开的是 Nginx 默认页 | 确认已删除 `sites-enabled/default`，并且 `nginx -t` 通过 |
+| WebSocket 连不上 | 检查 Nginx `/ws` 的 `Upgrade` / `Connection` 头；token 走 `Sec-WebSocket-Protocol`，代理不能剥掉这个头 |
+| 所有人一起被限流 | 后端没拿到真实 IP，检查 Nginx 是否设置了 `X-Forwarded-For`，以及 uvicorn 的 `--forwarded-allow-ips` |
 
 ## 安全建议
 
-1. **定期更新系统**：
-   ```bash
-   sudo apt update && sudo apt upgrade
-   ```
-
-2. **配置防火墙**：
-   ```bash
-   sudo ufw allow 80/tcp
-   sudo ufw allow 443/tcp
-   sudo ufw allow 22/tcp
-   sudo ufw enable
-   ```
-
-3. **定期更换密钥**：
-   - 定期更换 `JWT_SECRET`（更换后所有已签发 token 立即失效）
-   - 定期更换数据库密码
-
-4. **监控访问日志**：
-   - 检查异常访问
-   - 监控失败的登录尝试
-
-5. **启用 HTTPS**：
-   - 使用 Let's Encrypt 或购买证书
-   - 启用 HSTS
-
-6. **限制数据库访问**：
-   - MySQL 只监听 localhost
-   - 使用强密码
-
-## 扩展部署
-
-### 多实例负载均衡
-
-使用 Nginx upstream 配置多个后端实例：
-
-```nginx
-upstream clipsync_backend {
-    server 127.0.0.1:8000;
-    server 127.0.0.1:8001;
-    server 127.0.0.1:8002;
-}
-
-location /api {
-    proxy_pass http://clipsync_backend;
-    ...
-}
-```
-
-### 使用 Redis 缓存
-
-安装 Redis 并配置后端使用 Redis 存储会话。
-
-### 对象存储
-
-将文件上传到 S3/OSS 等对象存储服务，减轻服务器磁盘压力。
-
-## 联系与支持
-
-- 文档：`/docs`
-- 问题反馈：GitHub Issues
-- 技术支持：根据实际情况填写
-
----
-
-**注意**：本文档基于 Ubuntu 22.04 编写，其他系统可能需要调整命令。
+- `.env` 权限设为 600。更换 `JWT_SECRET` 后，所有已签发的 token 会立即失效。
+- 防火墙只开放 22 / 80 / 443。后端 8000 端口和 MySQL 3306 端口只监听本机。
+- 正式环境使用 HTTPS 并开启 HSTS。
+- FastAPI 自带的 `/docs` 没有经过 Nginx 反代，外部访问不到，这是有意的。
