@@ -1,0 +1,24 @@
+# Web 框架
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# 数据库
+sqlalchemy==2.0.36
+aiomysql==0.3.2
+alembic==1.14.0
+
+# 认证与安全
+python-jose[cryptography]==3.3.0
+python-multipart==0.0.20
+
+# 限流
+slowapi==0.1.9
+
+# 配置管理
+python-dotenv==1.0.1
+pydantic-settings==2.15.0
+
+# 测试
+pytest==8.3.4
+pytest-asyncio==0.25.2
+httpx==0.28.1

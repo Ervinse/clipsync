@@ -1,0 +1,101 @@
+#!/bin/bash
+
+# ClipSync 更新脚本
+# 用于更新已部署的应用
+
+set -e
+
+# 颜色输出
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# 配置
+PROJECT_ROOT="/var/www/clipsync"
+BACKEND_DIR="$PROJECT_ROOT/backend"
+FRONTEND_DIR="$PROJECT_ROOT/frontend"
+
+echo -e "${GREEN}=== ClipSync 更新脚本 ===${NC}"
+echo
+
+# 检查是否以 root 运行
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}错误: 请使用 root 权限运行此脚本${NC}"
+    exit 1
+fi
+
+# 步骤 1: 停止服务
+echo -e "${YELLOW}[1/6] 停止服务...${NC}"
+systemctl stop clipsync
+echo -e "${GREEN}✓ 服务已停止${NC}"
+
+# 步骤 2: 备份数据库
+echo -e "${YELLOW}[2/6] 备份数据库...${NC}"
+bash "$PROJECT_ROOT/deployment/scripts/backup_database.sh"
+echo -e "${GREEN}✓ 数据库已备份${NC}"
+
+# 步骤 3: 更新后端
+echo -e "${YELLOW}[3/6] 更新后端...${NC}"
+cd "$BACKEND_DIR"
+
+# 拉取最新代码（如果是 git 仓库）
+if [ -d ".git" ]; then
+    git pull
+    echo -e "${GREEN}✓ 代码已更新${NC}"
+fi
+
+# 更新依赖
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+echo -e "${GREEN}✓ 依赖已更新${NC}"
+
+# 执行数据库迁移
+alembic upgrade head
+echo -e "${GREEN}✓ 数据库迁移完成${NC}"
+
+# 步骤 4: 更新前端
+echo -e "${YELLOW}[4/6] 更新前端...${NC}"
+cd "$FRONTEND_DIR"
+
+# 拉取最新代码
+if [ -d ".git" ]; then
+    git pull
+fi
+
+# 更新依赖并构建
+npm install
+npm run build
+echo -e "${GREEN}✓ 前端已构建${NC}"
+
+# 步骤 5: 重启服务
+echo -e "${YELLOW}[5/6] 重启服务...${NC}"
+systemctl start clipsync
+systemctl restart nginx
+echo -e "${GREEN}✓ 服务已重启${NC}"
+
+# 步骤 6: 检查状态
+echo -e "${YELLOW}[6/6] 检查服务状态...${NC}"
+sleep 3
+
+if systemctl is-active --quiet clipsync; then
+    echo -e "${GREEN}✓ ClipSync 服务运行正常${NC}"
+else
+    echo -e "${RED}✗ ClipSync 服务启动失败${NC}"
+    echo "查看日志: journalctl -u clipsync -n 50"
+    exit 1
+fi
+
+if systemctl is-active --quiet nginx; then
+    echo -e "${GREEN}✓ Nginx 运行正常${NC}"
+else
+    echo -e "${RED}✗ Nginx 启动失败${NC}"
+    exit 1
+fi
+
+echo
+echo -e "${GREEN}=== 更新完成 ===${NC}"
+echo
+echo "查看实时日志: journalctl -u clipsync -f"
+echo "查看 Nginx 日志: tail -f /var/log/nginx/error.log"
