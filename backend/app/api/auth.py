@@ -1,17 +1,23 @@
 """认证路由：注册 / 登录 / 当前用户信息"""
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..models import User, InviteCode, UserRole, File
 from ..schemas import UserCreate, UserLogin, Token, UserWithStats
-from ..core.security import hash_password, verify_password, create_access_token
+from ..core.security import (
+    hash_password,
+    verify_password,
+    burn_password_check,
+    create_access_token,
+)
 from ..core.deps import get_current_user
+from ..core.app_settings import get_registration_enabled, get_default_quota_bytes
+from ..core.timeutil import utcnow
 from ..rate_limit import limiter
-from ..config import settings
 
 router = APIRouter()
 
@@ -24,14 +30,21 @@ async def register(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    用户注册：校验邀请码，创建用户，返回 JWT。
+    用户注册：校验注册开关与邀请码，创建用户，返回 JWT。
 
     安全红线：
-    - 邀请码必须有效（未使用、未过期）
-    - 用户名唯一性校验
+    - 注册开关关闭时一律拒绝（即便持有有效邀请码）
+    - 邀请码必须有效（未使用、未过期），加行锁防止并发重复使用
     - 密码仅存哈希
     """
-    # 1. 校验用户名是否已存在
+    # 1. 注册开关（安全红线：后台关闭注册后必须真正生效）
+    if not await get_registration_enabled(db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="系统已关闭注册",
+        )
+
+    # 2. 校验用户名是否已存在
     result = await db.execute(select(User).where(User.username == user_in.username))
     if result.scalar_one_or_none():
         raise HTTPException(
@@ -39,12 +52,16 @@ async def register(
             detail="用户名已被注册",
         )
 
-    # 2. 校验邀请码
+    # 3. 校验邀请码（FOR UPDATE：同一邀请码并发注册时只有一个能成功）
     result = await db.execute(
-        select(InviteCode).where(
+        select(InviteCode)
+        .where(
             InviteCode.code == user_in.invite_code,
-            InviteCode.used_by.is_(None),  # 未使用
+            InviteCode.used_by.is_(None),
+            # used_at 非空即已用过（使用者被删除后 used_by 会置空，不能据此复用）
+            InviteCode.used_at.is_(None),
         )
+        .with_for_update()
     )
     invite = result.scalar_one_or_none()
 
@@ -54,34 +71,39 @@ async def register(
             detail="邀请码无效或已被使用",
         )
 
-    # 检查过期
-    if invite.expires_at and invite.expires_at < datetime.utcnow():
+    if invite.expires_at and invite.expires_at <= utcnow():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="邀请码已过期",
         )
 
-    # 3. 创建用户
+    # 4. 创建用户（bcrypt 为 CPU 密集操作，放入线程池避免阻塞事件循环）
+    password_hash = await run_in_threadpool(hash_password, user_in.password)
     new_user = User(
         username=user_in.username,
-        password_hash=hash_password(user_in.password),
-        role=UserRole.USER,
-        quota_bytes=settings.DEFAULT_QUOTA_BYTES,
+        password_hash=password_hash,
+        role=UserRole.USER,  # 安全红线：注册只能得到普通用户
+        quota_bytes=await get_default_quota_bytes(db),
         is_active=True,
     )
     db.add(new_user)
-    await db.flush()  # 获取 new_user.id
+    try:
+        await db.flush()
+    except IntegrityError:
+        # 用户名唯一约束：并发注册同名时兜底
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="用户名已被注册",
+        )
 
-    # 4. 标记邀请码已使用
+    # 5. 标记邀请码已使用
     invite.used_by = new_user.id
-    invite.used_at = datetime.utcnow()
+    invite.used_at = utcnow()
 
     await db.commit()
-    await db.refresh(new_user)
 
-    # 5. 生成 JWT
     access_token = create_access_token(data={"sub": str(new_user.id)})
-
     return Token(access_token=access_token)
 
 
@@ -97,14 +119,21 @@ async def login(
 
     安全红线：
     - 限流防爆破
-    - 密码校验失败不泄露用户是否存在
+    - 不泄露用户是否存在（错误信息一致，耗时一致）
     """
-    # 查询用户
     result = await db.execute(select(User).where(User.username == credentials.username))
     user = result.scalar_one_or_none()
 
-    # 统一错误消息，不泄露用户名是否存在
-    if not user or not verify_password(credentials.password, user.password_hash):
+    if user is None:
+        # 用户不存在也跑一次 bcrypt，避免按响应时间枚举用户名
+        await run_in_threadpool(burn_password_check, credentials.password)
+        password_ok = False
+    else:
+        password_ok = await run_in_threadpool(
+            verify_password, credentials.password, user.password_hash
+        )
+
+    if not password_ok:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码错误",
@@ -116,9 +145,7 @@ async def login(
             detail="用户已被禁用",
         )
 
-    # 生成 JWT
     access_token = create_access_token(data={"sub": str(user.id)})
-
     return Token(access_token=access_token)
 
 
@@ -132,7 +159,6 @@ async def get_current_user_info(
 
     安全红线：必须通过 get_current_user 依赖校验 JWT。
     """
-    # 计算已用空间（该用户所有文件的大小总和）
     result = await db.execute(
         select(func.coalesce(func.sum(File.size), 0)).where(File.user_id == current_user.id)
     )

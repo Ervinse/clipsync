@@ -16,6 +16,8 @@ from ..models import (
     InviteCode,
     Setting,
     Clipboard,
+    ClipboardHistory,
+    UploadSession,
 )
 from ..schemas import (
     SystemStats,
@@ -33,7 +35,9 @@ from ..schemas import (
     AdminFileListResponse,
 )
 from ..core.deps import get_current_user, require_role
-from ..core.storage import delete_file as storage_delete_file
+from ..core.storage import delete_user_storage, cleanup_upload_temp
+from ..core.ws_manager import manager
+from ..core.timeutil import utcnow, to_naive_utc
 
 router = APIRouter()
 
@@ -290,6 +294,10 @@ async def update_user_status(
     await db.commit()
     await db.refresh(user)
 
+    # 安全红线：禁用后立即断开其实时连接（HTTP 接口由 get_current_user 每次回库拦截）
+    if not user.is_active:
+        await manager.disconnect_user(user.id)
+
     # 4. 返回详情
     result = await db.execute(
         select(func.coalesce(func.sum(File.size), 0)).where(File.user_id == user.id)
@@ -350,17 +358,36 @@ async def delete_user(
             detail="不能删除自己",
         )
 
-    # 3. 查询用户的所有文件（用于删除磁盘文件）
-    result = await db.execute(select(File).where(File.user_id == user_id))
-    files = result.scalars().all()
+    # 3. 进行中的上传会话（用于清理临时目录）
+    result = await db.execute(select(UploadSession.upload_id).where(UploadSession.user_id == user_id))
+    upload_ids = [row[0] for row in result.all()]
 
-    # 4. 删除数据库记录（外键级联会自动删除关联数据）
+    # 4. 显式按依赖顺序删除关联数据（迁移中外键没有 ON DELETE CASCADE，不能依赖数据库级联）
+    await db.execute(sql_delete(AccessCode).where(AccessCode.owner_id == user_id))
+    await db.execute(sql_delete(UploadSession).where(UploadSession.user_id == user_id))
+    await db.execute(sql_delete(File).where(File.user_id == user_id))
+    await db.execute(sql_delete(ClipboardHistory).where(ClipboardHistory.user_id == user_id))
+    await db.execute(sql_delete(Clipboard).where(Clipboard.user_id == user_id))
+    # 邀请码：该用户用过的保留记录但解除关联；该用户创建的未使用码作废，已使用的转记到操作者名下
+    await db.execute(
+        sql_update(InviteCode).where(InviteCode.used_by == user_id).values(used_by=None)
+    )
+    await db.execute(
+        sql_delete(InviteCode).where(InviteCode.created_by == user_id, InviteCode.used_by.is_(None), InviteCode.used_at.is_(None))
+    )
+    await db.execute(
+        sql_update(InviteCode).where(InviteCode.created_by == user_id).values(created_by=current_user.id)
+    )
     await db.execute(sql_delete(User).where(User.id == user_id))
     await db.commit()
 
-    # 5. 删除磁盘文件
-    for file in files:
-        storage_delete_file(user_id, file.stored_name)
+    # 5. 删除磁盘文件与临时目录
+    delete_user_storage(user_id)
+    for upload_id in upload_ids:
+        cleanup_upload_temp(upload_id)
+
+    # 6. 断开该用户所有实时连接
+    await manager.disconnect_user(user_id)
 
     return None
 
@@ -407,11 +434,18 @@ async def create_invite_code(
             detail="邀请码生成失败，请重试",
         )
 
-    # 2. 创建邀请码
+    # 2. 创建邀请码（过期时间统一转 naive UTC，与 register 中的 utcnow() 比较口径一致）
+    expires_at = to_naive_utc(data.expires_at)
+    if expires_at is not None and expires_at <= utcnow():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="过期时间必须晚于当前时间",
+        )
     invite_code = InviteCode(
         code=code,
         created_by=current_user.id,
-        expires_at=data.expires_at,
+        expires_at=expires_at,
+        created_at=utcnow(),
     )
     db.add(invite_code)
     await db.commit()

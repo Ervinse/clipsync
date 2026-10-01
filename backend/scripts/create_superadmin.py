@@ -1,5 +1,6 @@
 """创建首个超级管理员的交互式脚本"""
 import asyncio
+import getpass
 import sys
 from pathlib import Path
 
@@ -46,12 +47,16 @@ async def create_superadmin():
             print(f"[X] Username '{username}' already exists.")
             return
 
-        password = input("Password (at least 6 chars): ").strip()
-        if len(password) < 6:
-            print("[X] Password must be at least 6 characters.")
+        # getpass：密码不回显到终端
+        password = getpass.getpass("Password (8+ chars, max 72 bytes): ")
+        if len(password) < 8:
+            print("[X] Password must be at least 8 characters.")
+            return
+        if len(password.encode("utf-8")) > 72:
+            print("[X] Password must not exceed 72 bytes.")
             return
 
-        password_confirm = input("Confirm password: ").strip()
+        password_confirm = getpass.getpass("Confirm password: ")
         if password != password_confirm:
             print("[X] Passwords do not match.")
             return
