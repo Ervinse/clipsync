@@ -1,18 +1,12 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useAdminStore, useUserStore } from '../stores'
-import { useRouter } from 'vue-router'
 import { formatDateTime, formatSize } from '../utils/format'
 import { copyToClipboard } from '../utils/clipboard'
 
-const router = useRouter()
+// 访问权限由路由守卫（meta.requiresAdmin）拦截，后端接口再做最终校验
 const adminStore = useAdminStore()
 const userStore = useUserStore()
-
-// 权限检查
-if (!userStore.isAdmin) {
-  router.push('/clipboard')
-}
 
 const activeTab = ref('stats')
 const showCreateInviteModal = ref(false)
