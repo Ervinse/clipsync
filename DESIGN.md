@@ -93,7 +93,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | 管理自己的文本/文件/访问码 | ✓ | ✓ | ✓ |
 | 进入管理后台面板 | ✗ | ✓ | ✓ |
 | 查看用户列表/详情、系统统计 | ✗ | ✓ | ✓ |
-| 生成、查看、删除邀请码 | ✗ | ✓ | ✓ |
+| 生成、查看、删除（未使用的）邀请码 | ✗ | ✓ | ✓ |
 | 读取全局系统设置 | ✗ | ✓ | ✓ |
 | 查看全站文件的**元数据** | ✗ | ✓ | ✓ |
 | 修改用户存储配额 | ✗ | ✗ | ✓ |
@@ -279,7 +279,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | DELETE | /api/admin/users/{id} | **superadmin** | 删除用户及其全部数据；不能删除自己 |
 | GET | /api/admin/invite-codes | admin+ | 邀请码列表与状态 |
 | POST | /api/admin/invite-codes | admin+ | 生成邀请码 `{expires_at?}` |
-| DELETE | /api/admin/invite-codes/{id} | admin+ | 删除邀请码 |
+| DELETE | /api/admin/invite-codes/{id} | admin+ | 删除未使用的邀请码；已使用的保留作审计记录，返回 409 |
 | GET | /api/admin/files | admin+ | 全站文件**元数据**，分页（无下载入口） |
 | GET | /api/admin/settings | admin+ | 读取系统设置 `{default_quota_bytes, registration_enabled}` |
 | PATCH | /api/admin/settings | **superadmin** | 修改上述两项设置 |
@@ -300,7 +300,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 - **踢下线**：用户被禁用或删除时，服务端主动关闭其全部连接。
 - **单进程**：连接表与限流计数都在进程内存中，后端必须单 worker 运行。
 - **断开**：从集合移除，空则删 key。
-- **广播**：`broadcast_to_user(user_id, message, exclude=触发连接)`，跳过触发本次变更的连接，避免自己收到自己的更新。
+- **广播**：`broadcast_to_user(user_id, message, exclude=触发连接)`，对该用户的所有连接并发发送，单个连接超时 5 秒；发送失败或超时的连接会被移出集合。网络卡住的终端不会拖慢触发广播的 HTTP 请求。
 
 ### 事件类型
 
@@ -314,7 +314,8 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 - 前端订阅 `clipboard_updated`（剪贴板页，收到后重新拉取 `GET /api/clipboard`）和 `file_added` / `file_deleted`（文件页，收到后重新拉取 `GET /api/files`）。监听在页面挂载时注册、卸载时清理。
 - 目前接口调用时没有传入 `exclude`，触发变更的终端也会收到广播。
-- 心跳：客户端每 30 秒发 `{"type":"ping"}`，服务端回 `{"type":"pong"}`；单条消息超过 1KB 服务端直接断开。
+- 心跳：客户端每 30 秒发 `{"type":"ping"}`，服务端回 `{"type":"pong"}`；单条消息超过 1KB 服务端直接断开。心跳只在连接打开时发送，离线时不排队。
+- 前端重连：指数退避（1s、2s、4s…，最长 30s），不限次数；网络恢复（`online`）或页面回到前台时立即重试。服务端以 1008 关闭（token 无效、用户被禁用或删除）时不再重连。登出时主动断开，不会自动重连。
 
 ### WebSocket 协议自适应（HTTP/HTTPS 通用）
 
@@ -404,16 +405,19 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
 ```
 1. init     → POST /api/files/upload/init  JSON {original_name, total_size, chunk_size}
               清理本用户过期会话 → 校验单文件上限、并发会话数、配额
-              chunk_size 取 min(请求值, CHUNK_SIZE) → 建 upload_session
-              返回 {upload_id, total_chunks, chunk_size}（以服务端返回为准）
+              chunk_size 取请求值，不超过 CHUNK_SIZE，且分片总数不超过 10000（过小时自动调大）
+              → 建 upload_session，返回 {upload_id, total_chunks, chunk_size}（以服务端返回为准）
 2. chunk×N  → POST /api/files/upload/chunk  multipart {upload_id, chunk_index, chunk_data}
-              校验归属与 chunk_index < total_chunks；边写边计数，超过 chunk_size 立即 413
-              先写 tmp/{upload_id}/{index}.part，完成后原子替换为 {index}
-              失败可重传该片（断点续传）
+              校验归属、会话未过期、chunk_index < total_chunks
+              每片大小必须等于期望值：非最后一片 = chunk_size，最后一片 = 剩余字节；超出 413，不足 400
+              线程池中写 tmp/{upload_id}/{index}.<随机>.part，完成后原子替换为 {index}
+              失败可重传该片（断点续传）；同一片并发重传不会互相截断
 3. complete → POST /api/files/upload/complete  JSON {upload_id}
+              同一 upload_id 并发 complete 返回 409；会话过期返回 404
               校验分片 0..N-1 齐全 → 线程池中按序流式合并到 storage/{user_id}/{uuid}
               实际大小必须等于 total_size → 按实际大小再校验配额
               写 files 记录 → 删会话与 tmp → 广播 file_added
+              提交失败时删除已合并的文件，不留孤儿文件
 ```
 
 - 分片大小：前端请求 1MB，服务端上限 `CHUNK_SIZE`（`.env`，默认 5MB），不能在后台修改。
