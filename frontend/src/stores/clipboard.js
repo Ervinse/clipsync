@@ -46,15 +46,34 @@ export const useClipboardStore = defineStore('clipboard', {
     /**
      * 获取历史记录
      */
-    async fetchHistory(skip = 0, limit = 50) {
+    async fetchHistory() {
       try {
-        const data = await api.clipboard.history(skip, limit)
+        const data = await api.clipboard.history()
         this.history = data.items || []
         this.historyTotal = data.total || 0
       } catch (error) {
         console.error('获取历史记录失败:', error)
         throw error
       }
+    },
+
+    /**
+     * 恢复某条历史为当前文本：后端会把原当前文本归档，所以恢复后要重新拉历史
+     */
+    async restoreHistory(historyId) {
+      const data = await api.clipboard.restoreHistory(historyId)
+      this.currentText = data.content || ''
+      await this.fetchHistory()
+      return this.currentText
+    },
+
+    /**
+     * 删除某条历史
+     */
+    async deleteHistory(historyId) {
+      await api.clipboard.deleteHistory(historyId)
+      this.history = this.history.filter(item => item.id !== historyId)
+      this.historyTotal = Math.max(0, this.historyTotal - 1)
     },
 
     /**
