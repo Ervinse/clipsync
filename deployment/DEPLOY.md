@@ -82,7 +82,7 @@ sudo nano .env
 
 **必须修改的配置项：**
 - `DB_PASSWORD`: 数据库密码
-- `JWT_SECRET_KEY`: 随机密钥（用 `openssl rand -hex 32` 生成）
+- `JWT_SECRET`: 随机密钥（用 `openssl rand -hex 32` 生成；少于 32 字符或仍为示例值时后端拒绝启动）
 - `CORS_ORIGINS`: 前端域名
 - `DEPLOY_SCHEME`: http 或 https
 - `COOKIE_SECURE`: HTTPS 环境设为 true
@@ -159,7 +159,7 @@ sudo systemctl status nginx
 sudo journalctl -u clipsync -f
 
 # 测试 API
-curl http://localhost:8000/api/health
+curl http://127.0.0.1:8000/   # 健康检查，返回 {"status":"ok",...}
 
 # 测试前端
 curl http://your-domain.com
@@ -274,21 +274,9 @@ sudo systemctl reload nginx
 
 ### Uvicorn Workers
 
-根据 CPU 核心数调整 worker 数量，编辑 `/etc/systemd/system/clipsync.service`：
+**不要增加 worker 数量**，保持 `--workers 1`。WebSocket 连接表与限流计数都在进程内存中，多 worker 会导致实时同步与限流失效。若确需扩容，须先引入 Redis 等跨进程 pub/sub 与共享限流存储。
 
-```
-ExecStart=/var/www/clipsync/backend/venv/bin/uvicorn app.main:app \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --workers 4 \  # CPU 核心数
-    ...
-```
-
-重载配置：
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart clipsync
-```
+后端只监听 `127.0.0.1`，由同机 Nginx 反代；uvicorn 默认只信任 `127.0.0.1` 发来的 `X-Forwarded-For`，限流才能拿到真实客户端 IP。
 
 ### 数据库优化
 
@@ -382,7 +370,7 @@ ss -tun | grep :8000 | wc -l
    ```
 
 3. **定期更换密钥**：
-   - 定期更换 `JWT_SECRET_KEY`
+   - 定期更换 `JWT_SECRET`（更换后所有已签发 token 立即失效）
    - 定期更换数据库密码
 
 4. **监控访问日志**：

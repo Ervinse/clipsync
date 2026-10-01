@@ -30,16 +30,15 @@
 - [ ] 已复制 `.env.production.example` 为 `.env`
 - [ ] **必填项**：
   - [ ] `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
-  - [ ] `JWT_SECRET_KEY`（用 `openssl rand -hex 32` 生成）
+  - [ ] `JWT_SECRET`（用 `openssl rand -hex 32` 生成）
   - [ ] `CORS_ORIGINS`（前端域名或 IP）
   - [ ] `DEPLOY_SCHEME`（http 或 https）
 - [ ] **安全项**（HTTPS 环境）：
   - [ ] `COOKIE_SECURE=true`
   - [ ] `HSTS_ENABLED=true`
 - [ ] **可选项**：
-  - [ ] `DEFAULT_USER_QUOTA`（默认配额）
+  - [ ] `DEFAULT_QUOTA_BYTES`（默认配额）
   - [ ] `JWT_EXPIRE_MINUTES`（Token 有效期）
-  - [ ] 限流配置
 
 ### Nginx 配置
 - [ ] 已复制 `deployment/nginx/clipsync.conf` 到 `/etc/nginx/sites-available/`
@@ -81,7 +80,7 @@
 ## 功能验证
 
 ### API 测试
-- [ ] 健康检查通过：`curl http://localhost:8000/api/health`
+- [ ] 健康检查通过：`curl http://127.0.0.1:8000/`
 - [ ] 返回 `{"status":"ok"}`
 
 ### 前端测试
@@ -139,7 +138,7 @@
 
 ## 性能优化（可选）
 
-- [ ] 已根据 CPU 核心数调整 Uvicorn workers
+- [ ] 确认 Uvicorn 为单 worker（`--workers 1`），后端只监听 127.0.0.1
 - [ ] 已优化 MySQL 配置（innodb_buffer_pool_size 等）
 - [ ] 已配置 Nginx 静态资源缓存
 - [ ] 已设置合理的文件上传大小限制

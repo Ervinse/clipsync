@@ -301,9 +301,9 @@ sudo journalctl -u clipsync -p err --since "1 hour ago"
 
 ## 性能优化
 
-1. **调整 Workers**
-   - 根据 CPU 核心数调整 Uvicorn workers
-   - 编辑 `systemd/clipsync.service`
+1. **Workers 保持为 1**
+   - WebSocket 广播与限流依赖进程内存，不要增加 Uvicorn workers
+   - 扩容前须先引入 Redis 等跨进程消息与共享限流存储
 
 2. **数据库优化**
    - 调整 MySQL buffer pool size

@@ -270,7 +270,9 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 维护 `dict[user_id, set[WebSocket]]`，同一用户多终端在线时集合里有多条连接。
 
-- **连接**：`/ws?token=<JWT>` 校验 token → 拿 user_id → 加入集合。
+- **连接**：`/ws`，token 经子协议 `Sec-WebSocket-Protocol: clipsync.v1, bearer.<JWT>` 传递（不放 URL，避免进 access log）→ 校验签名、过期、用户存在且未禁用 → 服务端只回选 `clipsync.v1` → 加入集合。
+- **踢下线**：用户被禁用或删除时，服务端主动关闭其全部连接。
+- **单进程**：连接表与限流计数都在进程内存中，后端必须单 worker 运行。
 - **断开**：从集合移除，空则删 key。
 - **广播**：`broadcast_to_user(user_id, message, exclude=触发连接)`，跳过触发本次变更的连接，避免自己收到自己的更新。
 
@@ -290,7 +292,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 ```js
 const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-const ws = new WebSocket(`${proto}//${location.host}/ws?token=${token}`)
+const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `bearer.${token}`])
 ```
 
 ---
@@ -524,7 +526,7 @@ CodeProject/
 ### 组件
 
 - **MySQL**：建库建用户，配置到 `.env`。
-- **后端**：`gunicorn -k uvicorn.workers.UvicornWorker`，systemd 托管。
+- **后端**：`uvicorn --workers 1 --host 127.0.0.1 --proxy-headers`，systemd 托管。**必须单 worker**：WebSocket 连接表与限流计数都在进程内存中，多进程会导致实时同步与限流失效。
 - **前端**：`npm run build` 产出静态文件，Nginx 托管。
 - **Nginx**：静态文件 + `/api`、`/ws` 反代，HTTP/HTTPS 两套配置切换。
 

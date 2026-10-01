@@ -20,7 +20,7 @@ nano .env
 **必须修改的配置：**
 - `DB_ROOT_PASSWORD`: MySQL root 密码
 - `DB_PASSWORD`: 数据库密码
-- `JWT_SECRET_KEY`: JWT 密钥（用 `openssl rand -hex 32` 生成）
+- `JWT_SECRET`: JWT 密钥（用 `openssl rand -hex 32` 生成；未设置时 compose 直接报错）
 
 ### 2. 启动服务
 
@@ -184,16 +184,9 @@ CORS_ORIGINS=https://your-domain.com
 
 ### 性能优化
 
-1. **调整 worker 数量**
+1. **worker 数量保持为 1**
 
-编辑 `docker-compose.yml` backend 的 command：
-```yaml
-command: >
-  sh -c "
-    alembic upgrade head &&
-    uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 8
-  "
-```
+backend 必须单 worker 运行：WebSocket 连接表与限流计数都在进程内存中，多 worker 会导致实时同步与限流失效。backend 的 `--forwarded-allow-ips` 已信任容器私有网段，限流按 Nginx 传来的真实客户端 IP 计数。
 
 2. **资源限制**
 

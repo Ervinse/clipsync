@@ -171,7 +171,7 @@ server {
 ## WebSocket 连接
 
 - **URL 构建**：根据当前协议（http/https）自动选择 `ws://` 或 `wss://`
-- **认证**：通过 URL 参数传递 Token（`/ws?token=xxx`）
+- **认证**：Token 通过子协议传递（`new WebSocket(url, ['clipsync.v1', 'bearer.<token>'])`），不放 URL，避免被 access log 记录
 - **心跳**：每 30 秒发送一次 ping
 - **重连**：断线后最多尝试 5 次，间隔 3 秒
 - **消息队列**：离线时消息会加入队列，连接恢复后自动发送
