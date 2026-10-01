@@ -80,9 +80,17 @@ export const useClipboardStore = defineStore('clipboard', {
      * 监听 WebSocket 实时更新
      */
     setupWebSocket() {
-      // 后端推送只带信号（不含正文），收到后重新拉取当前文本
-      this._onClipboardUpdated = () => {
-        this.fetchCurrent().catch(() => {})
+      if (this._onClipboardUpdated) return
+      // 后端推送只带信号（不含正文），收到后静默重新拉取：不切 isLoading，避免编辑框被禁用、失去焦点
+      this._onClipboardUpdated = async () => {
+        try {
+          const data = await api.clipboard.get()
+          this.currentText = data.content || ''
+          // 其他终端保存后旧内容会进历史，已加载过历史时一并刷新
+          if (this.history.length > 0) await this.fetchHistory()
+        } catch {
+          // 静默刷新失败不打扰用户，下次推送或手动刷新会再同步
+        }
       }
       ws.on('clipboard_updated', this._onClipboardUpdated)
     },

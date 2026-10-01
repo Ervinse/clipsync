@@ -1,6 +1,8 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useAccessStore, useFilesStore } from '../stores'
+import { formatDateTime } from '../utils/format'
+import { copyToClipboard } from '../utils/clipboard'
 
 const accessStore = useAccessStore()
 const filesStore = useFilesStore()
@@ -57,7 +59,7 @@ const handleCreate = async () => {
     await accessStore.createCode(data)
     closeCreateModal()
   } catch (error) {
-    alert('创建失败：' + (error.response?.data?.detail || error.message))
+    alert('创建失败：' + error.message)
   }
 }
 
@@ -67,29 +69,20 @@ const handleRevoke = async (code) => {
   try {
     await accessStore.revokeCode(code.id)
   } catch (error) {
-    alert('撤销失败：' + (error.response?.data?.detail || error.message))
+    alert('撤销失败：' + error.message)
   }
 }
 
-const copyLink = (code) => {
-  const link = accessStore.generateLink(code)
-  navigator.clipboard.writeText(link).then(() => {
+// 链接由后端按请求 scheme + host 拼好（access_url），前端不再自行拼接
+const copyLink = async (code) => {
+  if (await copyToClipboard(code.access_url)) {
     alert('链接已复制到剪贴板')
-  })
+  } else {
+    prompt('复制失败，请手动复制：', code.access_url)
+  }
 }
 
-const formatDate = (dateString) => {
-  if (!dateString) return '永久有效'
-  // 后端时间为 naive UTC，补 Z 按 UTC 解析后转本地显示
-  const date = new Date(/[zZ]|[+-]\d\d:\d\d$/.test(dateString) ? dateString : dateString + 'Z')
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
+const formatDate = (value) => formatDateTime(value, '永久有效')
 
 const getFileName = (fileId) => {
   const file = filesStore.files.find(f => f.id === fileId)

@@ -338,8 +338,8 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 - **文本码** → 只记录 `target_type='text'` 与 `owner_id`，**不存快照**。访问时实时读取属主的当前文本。
 - **文件码** → 记录 `target_type='file'` 与 `file_id`。
 - 可选 `expires_at`（过期时间，带时区的时间会转为 UTC 存储）。
-- 后端响应中的 `access_url` 是按请求 `scheme` + `host` 拼出的 **API 地址**（文本码 `/api/access/<code>`，文件码 `/api/access/<code>/download`）。
-- 前端「复制链接」生成的是**前端页面地址**：`http(s)://<host>/access/<code>`，文件码追加 `?t=file`。
+- 后端响应中的 `access_url` 是按请求 `scheme` + `host` 拼出的**前端访问页地址**：`http(s)://<host>/access/<code>`，文件码追加 `?t=file`。前端「复制链接」直接使用 `access_url`，不自行拼接。
+- 开发环境下 Vite 的 `/api` 代理需设 `changeOrigin: false`，保留浏览器的 Host（`localhost:3000`），否则拼出的链接会指向后端端口。
 
 ### 访问（免登录）
 

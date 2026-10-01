@@ -31,6 +31,21 @@ def test_codes_are_unique_and_random(client, make_user):
     assert len(codes) == 20
 
 
+def test_access_url_points_to_frontend_page(client, make_user):
+    """access_url 由后端按请求 scheme + host 拼出前端访问页链接，不指向 API"""
+    user = make_user()
+    text = _text_code(client, user)
+    assert text["access_url"] == f"http://testserver/access/{text['code']}"
+
+    file_id = upload(client, user, b"data").json()["id"]
+    resp = client.post(
+        "/api/access-codes", json={"target_type": "file", "file_id": file_id}, headers=user.headers
+    )
+    assert resp.status_code == 200, resp.text
+    file_code = resp.json()
+    assert file_code["access_url"] == f"http://testserver/access/{file_code['code']}?t=file"
+
+
 def test_revoked_code_is_invalid(client, make_user):
     user = make_user()
     code = _text_code(client, user)

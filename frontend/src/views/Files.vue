@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useFilesStore, useUserStore } from '../stores'
+import { formatSize, formatDateTime } from '../utils/format'
 
 const filesStore = useFilesStore()
 const userStore = useUserStore()
@@ -36,7 +37,7 @@ const handleFileChange = async (event) => {
     await filesStore.uploadFile(file)
     alert('文件上传成功')
   } catch (error) {
-    alert('上传失败：' + (error.response?.data?.detail || error.message))
+    alert('上传失败：' + error.message)
   } finally {
     isUploading.value = false
     if (uploadInput.value) {
@@ -59,28 +60,12 @@ const handleDelete = async (file) => {
   try {
     await filesStore.deleteFile(file.id)
   } catch (error) {
-    alert('删除失败：' + (error.response?.data?.detail || error.message))
+    alert('删除失败：' + error.message)
   }
 }
 
-const formatSize = (bytes) => {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
-}
-
-const formatDate = (dateString) => {
-  const date = new Date(dateString)
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
+// 后端时间为 naive UTC，formatDateTime 内部按 UTC 解析
+const formatDate = (value) => formatDateTime(value)
 </script>
 
 <template>

@@ -3,16 +3,15 @@ import { createPinia } from 'pinia'
 import router from './router'
 import App from './App.vue'
 import './style.css'
+import { useUserStore } from './stores'
 
 const app = createApp(App)
-const pinia = createPinia()
+app.use(createPinia())
 
-app.use(pinia)
-app.use(router)
-
-// 初始化用户状态
-import { useUserStore } from './stores'
+// 必须先恢复登录状态再安装路由：app.use(router) 会立即触发首次导航，
+// 若此时 isLoggedIn 还是 false，刷新受保护页面会被守卫踢回 /login。
 const userStore = useUserStore()
-userStore.init()
-
-app.mount('#app')
+userStore.init().finally(() => {
+  app.use(router)
+  app.mount('#app')
+})

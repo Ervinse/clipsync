@@ -4,6 +4,7 @@
 import { defineStore } from 'pinia'
 import api from '../api'
 import ws from '../utils/websocket'
+import { useUserStore } from './user'
 
 export const useFilesStore = defineStore('files', {
   state: () => ({
@@ -41,6 +42,12 @@ export const useFilesStore = defineStore('files', {
         // 后端返回 { items, total, used_bytes, quota_bytes }
         const data = await api.files.list()
         this.files = data?.items || []
+        // 同步配额到用户状态：侧栏与文件页都读 userStore.quota，上传/删除后需要刷新
+        const userStore = useUserStore()
+        if (userStore.userInfo && data) {
+          userStore.userInfo.used_bytes = data.used_bytes
+          userStore.userInfo.quota_bytes = data.quota_bytes
+        }
       } catch (error) {
         console.error('获取文件列表失败:', error)
         throw error
@@ -53,6 +60,7 @@ export const useFilesStore = defineStore('files', {
      * 分片上传文件
      */
     async uploadFile(file) {
+      let uploadId = null
       try {
         // 1. 初始化上传（分片大小以服务端确认的 chunk_size 为准）
         const initData = await api.files.initUpload({
@@ -60,7 +68,7 @@ export const useFilesStore = defineStore('files', {
           total_size: file.size,
           chunk_size: 1024 * 1024, // 期望 1MB，服务端会按上限裁剪
         })
-        const uploadId = initData.upload_id
+        uploadId = initData.upload_id
         const CHUNK_SIZE = initData.chunk_size
         const totalChunks = initData.total_chunks
 
@@ -90,9 +98,6 @@ export const useFilesStore = defineStore('files', {
         // 3. 完成上传
         const result = await api.files.completeUpload(uploadId)
 
-        // 清除进度
-        delete this.uploadProgress[uploadId]
-
         // 刷新列表
         await this.fetchFiles()
 
@@ -100,6 +105,9 @@ export const useFilesStore = defineStore('files', {
       } catch (error) {
         console.error('文件上传失败:', error)
         throw error
+      } finally {
+        // 成功或失败都清除进度，避免失败后进度条残留
+        if (uploadId) delete this.uploadProgress[uploadId]
       }
     },
 
