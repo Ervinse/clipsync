@@ -43,18 +43,38 @@ const copyText = async () => {
   }
 }
 
-const downloadFile = () => {
-  if (data.value?.download_url) {
-    window.location.href = data.value.download_url
-  }
-}
+const isChecking = ref(false)
 
-const formatSize = (bytes) => {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
+// 先探测状态：失效 / 限流时在页面内提示，而不是让浏览器直接显示后端的 JSON。
+// 探测成功后立即中止该请求（不读响应体），再交给浏览器原生下载，大文件不进内存。
+// 代价：每次下载多计一次公开接口限流（30 次/分钟）。
+const downloadFile = async () => {
+  const url = data.value?.download_url
+  if (!url || isChecking.value) return
+
+  isChecking.value = true
+  const controller = new AbortController()
+  try {
+    const resp = await fetch(url, { signal: controller.signal })
+    if (!resp.ok) {
+      let message = ''
+      try {
+        const body = await resp.json()
+        message = typeof body?.detail === 'string' ? body.detail : body?.error
+      } catch {
+        // 响应体不是 JSON，用下面的兜底文案
+      }
+      if (resp.status === 429) message = '操作过于频繁，请稍后再试'
+      error.value = message || '访问码无效或已失效'
+      return
+    }
+    controller.abort()
+    window.location.href = url
+  } catch (err) {
+    if (err?.name !== 'AbortError') error.value = '网络连接失败，请稍后重试'
+  } finally {
+    isChecking.value = false
+  }
 }
 </script>
 
@@ -99,8 +119,8 @@ const formatSize = (bytes) => {
             <p class="file-size">点击下方按钮下载（链接失效时会提示错误）</p>
           </div>
         </div>
-        <button class="btn-primary btn-large" @click="downloadFile">
-          ⬇️ 下载文件
+        <button class="btn-primary btn-large" :disabled="isChecking" @click="downloadFile">
+          {{ isChecking ? '检查中...' : '⬇️ 下载文件' }}
         </button>
       </div>
     </div>
