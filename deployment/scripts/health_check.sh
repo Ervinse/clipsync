@@ -41,7 +41,7 @@ fi
 
 # 4. 检查 API 健康端点
 echo -n "API 健康检查: "
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health || echo "000")
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/ || echo "000")
 if [ "$HTTP_CODE" = "200" ]; then
     echo -e "${GREEN}✓ 正常 (HTTP $HTTP_CODE)${NC}"
 else

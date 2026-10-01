@@ -8,7 +8,7 @@ echo
 
 # 1. 测试后端健康检查
 echo "1. 测试后端健康检查..."
-curl -s http://localhost:8000/api/health || echo "❌ 后端未启动"
+curl -s http://localhost:8000/ || echo "❌ 后端未启动"
 echo
 
 # 2. 测试注册接口（需要邀请码）
@@ -24,7 +24,7 @@ echo
 echo "3. 测试登录接口..."
 curl -s -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d 'username=testuser&password=testpass123' \
+  -d '{"username":"testuser","password":"testpass123"}' \
   | head -c 200
 echo
 echo

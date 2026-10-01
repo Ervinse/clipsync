@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ClipSync 清理任务脚本
-# 清理过期访问码和临时上传文件
+# 清理过期访问码、过期的上传会话及其临时分片目录
 
 set -e
 
@@ -14,63 +14,48 @@ echo "[$(date)] 开始清理过期数据..."
 
 cd "$BACKEND_DIR"
 
-# 激活虚拟环境并执行清理脚本
-"$VENV_PYTHON" - <<EOF
+"$VENV_PYTHON" - <<'EOF'
 import asyncio
-from datetime import datetime, timezone
-from sqlalchemy import select
-from app.database import async_session_maker
-from app.models import AccessCode, FileUpload
+from datetime import timedelta
+
+from sqlalchemy import select, delete
+
+from app.config import settings
+from app.database import AsyncSessionLocal
+from app.models import AccessCode, UploadSession
+from app.core.storage import cleanup_upload_temp
+from app.core.timeutil import utcnow
+
 
 async def cleanup():
-    """清理过期访问码和未完成的上传"""
-    async with async_session_maker() as session:
-        now = datetime.now(timezone.utc)
-
-        # 1. 清理过期访问码
-        result = await session.execute(
-            select(AccessCode).where(
-                AccessCode.expires_at.isnot(None),
-                AccessCode.expires_at < now
+    # 数据库时间统一为 naive UTC，用 utcnow() 比较
+    now = utcnow()
+    async with AsyncSessionLocal() as db:
+        # 1. 过期访问码（已无法使用，直接删除）
+        result = await db.execute(
+            delete(AccessCode).where(
+                AccessCode.expires_at.is_not(None),
+                AccessCode.expires_at <= now,
             )
         )
-        expired_codes = result.scalars().all()
+        print(f"删除 {result.rowcount} 个过期访问码")
 
-        for code in expired_codes:
-            await session.delete(code)
-
-        print(f"[{datetime.now()}] 删除 {len(expired_codes)} 个过期访问码")
-
-        # 2. 清理 24 小时前未完成的上传记录
-        from datetime import timedelta
-        cutoff_time = now - timedelta(hours=24)
-
-        result = await session.execute(
-            select(FileUpload).where(
-                FileUpload.status != 'completed',
-                FileUpload.created_at < cutoff_time
-            )
+        # 2. 超过 TTL 的上传会话：先取 ID 用于清理临时目录，再删记录
+        cutoff = now - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS)
+        result = await db.execute(
+            select(UploadSession.upload_id).where(UploadSession.created_at < cutoff)
         )
-        stale_uploads = result.scalars().all()
+        stale_ids = [row[0] for row in result.all()]
+        if stale_ids:
+            await db.execute(delete(UploadSession).where(UploadSession.upload_id.in_(stale_ids)))
+        await db.commit()
 
-        for upload in stale_uploads:
-            await session.delete(upload)
+    for upload_id in stale_ids:
+        cleanup_upload_temp(upload_id)
+    print(f"删除 {len(stale_ids)} 个过期上传会话及其临时分片")
 
-        print(f"[{datetime.now()}] 删除 {len(stale_uploads)} 个未完成的上传记录")
 
-        await session.commit()
-
-# 运行清理
 asyncio.run(cleanup())
-print(f"[{datetime.now()}] 清理完成")
 EOF
-
-# 清理临时上传文件（24 小时前的 .tmp 文件）
-UPLOAD_DIR="$BACKEND_DIR/uploads"
-if [ -d "$UPLOAD_DIR" ]; then
-    echo "[$(date)] 清理临时上传文件..."
-    find "$UPLOAD_DIR" -name "*.tmp" -mtime +1 -delete
-    echo "[$(date)] 临时文件清理完成"
-fi
 
 echo "[$(date)] 清理任务全部完成"
