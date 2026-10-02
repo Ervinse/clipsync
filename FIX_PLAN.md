@@ -18,25 +18,25 @@
 
 分支：`fix/concurrency-isolation`
 
-- [ ] **1.1 剪贴板并发写重复归档、丢中间版本**
+- [x] **1.1 剪贴板并发写重复归档、丢中间版本**
   - 位置：`backend/app/api/clipboard.py` `_write_clipboard`（加锁约第 80 行、读当前文本约第 84 行）；读视图在 `backend/app/core/deps.py:40` 已建立。
   - 原因：RR 下鉴权阶段的普通读固定了读视图，`FOR UPDATE` 之后的普通读仍用旧视图。
   - 做法：`_write_clipboard` 开头先 `await db.commit()`，再对 User 行 `with_for_update()`，然后读 Clipboard。`expire_on_commit=False`，`current_user` 提交后仍可用。
   - 测试：用两个独立 session 模拟并发（一个先锁住提交，另一个随后执行），断言历史里没有重复、中间版本进入历史。
 
-- [ ] **1.2 并发 init 绕过会话数上限**
+- [x] **1.2 并发 init 绕过会话数上限**
   - 位置：`backend/app/api/files.py` `init_upload`（计数、配额、插入三段）。
   - 做法：同 1.1，先 commit，再锁 User 行，之后计数、算 reserved、插入，锁持有到插入后的 commit。
 
-- [ ] **1.3 删除用户时漏清新建会话的 tmp 目录**
+- [x] **1.3 删除用户时漏清新建会话的 tmp 目录**
   - 位置：`backend/app/api/admin.py` `delete_user` 读取 `upload_ids` 处。
   - 做法：读取前先锁 User 行（或该查询改成 `with_for_update()`），保证与 1.2 的 init 串行。
 
-- [ ] **1.4 重传已存在的分片时 StaleDataError 兜底失效**（疑似，先写测试复现）
+- [x] **1.4 重传已存在的分片时 StaleDataError 兜底失效**（疑似，先写测试复现）
   - 位置：`backend/app/api/files.py` `upload_chunk` 末尾的 commit。
   - 做法：提交前显式 `UPDATE upload_sessions ... WHERE upload_id=?` 并检查 `rowcount`，为 0 时清理 tmp 返回 404。
 
-- [ ] **1.5 分片写到一半 tmp 被删返回 500**（疑似）
+- [x] **1.5 分片写到一半 tmp 被删返回 500**（疑似）
   - 做法：`_save_chunk` / `replace` 调用处捕获 `FileNotFoundError`，返回 404「上传会话不存在或已结束」。
 
 验收：`pytest` 全部通过，新增并发测试通过。
@@ -47,24 +47,24 @@
 
 分支：`fix/frontend-session-state`
 
-- [ ] **2.1 多标签页账号串用**
+- [x] **2.1 多标签页账号串用**
   - 位置：`frontend/src/stores/user.js:10`、`frontend/src/api/request.js:23`、`frontend/src/utils/websocket.js:157`。
   - 做法：在 `main.js` 监听 `storage` 事件，`access_token` 变化时 `location.reload()`；请求拦截器和 WS 重连改为读 `userStore.token`。
 
-- [ ] **2.2 账号被禁用后前端无处理**
+- [x] **2.2 账号被禁用后前端无处理**
   - 后端：`backend/app/core/deps.py` 被禁用时的 403 增加响应头 `X-Auth-Error: disabled`（机器可读，避免按中文 detail 匹配）。
   - 前端：`request.js` 遇到带该响应头的 403（且不是 `/auth/login`）按 401 处理；`user.js` 监听 WS 的 `auth_failed`，执行登出并跳转 `/login`。
   - 测试：后端补一个用例断言该响应头存在。
 
-- [ ] **2.3 WS 握手被拒收到 1006，无限重连**
+- [x] **2.3 WS 握手被拒收到 1006，无限重连**
   - 位置：`backend/app/api/ws.py:60`（accept 前 close）、`frontend/src/utils/websocket.js` `onclose` / `retryNow`。
   - 做法：前端增加 `authFailed` 标记，`retryNow`、`scheduleReconnect` 都检查它；连接从未 open 就关闭时 emit `handshake_failed`，user store 收到后调一次 `/auth/me`，401/403 则登出、不再重连，其他情况继续退避重连。登录成功后清除 `authFailed`。
 
-- [ ] **2.4 登出不清理其他 store**
+- [x] **2.4 登出不清理其他 store**
   - 位置：`frontend/src/stores/user.js` `logout`。
   - 做法：在函数内部取 clipboard、files、access、admin 四个 store，先调各自的 `cleanupWebSocket`（有的话），再 `$reset()`。注意循环引用：在函数内 `useXxxStore()`，不要在模块顶部互相 import。
 
-- [ ] **2.5 启动时任何错误都清掉 token**
+- [x] **2.5 启动时任何错误都清掉 token**
   - 位置：`frontend/src/stores/user.js` `fetchUserInfo` / `init`。
   - 做法：只在 `status` 为 401 或 403 时登出；网络错误或 5xx 保留 token，提示「暂时无法连接服务器」。
 
