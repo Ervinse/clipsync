@@ -1,0 +1,5 @@
+# 构建上下文排除：依赖在镜像内用 npm ci 安装，产物在镜像内构建
+node_modules
+dist
+.env
+.env.*

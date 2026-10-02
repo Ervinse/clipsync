@@ -521,7 +521,7 @@ CodeProject/
     │   │   └── api/              # auth / clipboard / files / access / admin / ws
     │   ├── alembic/versions/     # 278c88a5f21f 初始表结构；3f1c2a9d7b4e 文本改 MEDIUMTEXT
     │   ├── alembic.ini
-    │   ├── scripts/create_superadmin.py
+    │   ├── scripts/              # create_superadmin.py / cleanup_expired.py（定时清理，直接部署与 Docker 共用）
     │   ├── tests/                # pytest 安全测试（使用独立库 clipsync_test）
     │   ├── pytest.ini
     │   ├── requirements.txt

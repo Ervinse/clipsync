@@ -166,22 +166,23 @@
 
 分支：`fix/docker-deploy`
 
-- [ ] **6.1 compose 命令被 YAML 折叠截断，代理头参数未生效**（违反红线 7）
+- [x] **6.1 compose 命令被 YAML 折叠截断，代理头参数未生效**（违反红线 7）
   - 位置：`deployment/docker/docker-compose.yml` backend `command`。
   - 做法：`command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips '<compose 网段>'"]`。
-- [ ] **6.2 内网可伪造 XFF**：`nginx-docker.conf` 改为 `X-Forwarded-For $remote_addr`；compose 定义自定义网络并固定子网，`--forwarded-allow-ips` 只信任该子网。
-- [ ] **6.3 没有 `.dockerignore`**：在 `backend/`、`frontend/` 下新建，排除 `.env`、`.venv`、`venv`、`__pycache__`、`.pytest_cache`、`storage`、`node_modules`、`dist`。（新增文件，属于已有目录内的配置文件）
-- [ ] **6.4 compose 缺少可配置变量**：补传 `JWT_ALGORITHM`、`DEFAULT_QUOTA_BYTES`、`MAX_FILE_BYTES`、`CHUNK_SIZE`、`MAX_UPLOAD_SESSIONS_PER_USER`、`HISTORY_KEEP`、`UPLOAD_SESSION_TTL_HOURS`，同步 `docker/.env.example`。
-- [ ] **6.5 数据库密码留空静默回落弱默认值**：改为 `${DB_PASSWORD:?DB_PASSWORD 未设置}`、`${DB_ROOT_PASSWORD:?...}`。
-- [ ] **6.6 update.sh 失败后服务停着**：`trap` 保证退出时 `systemctl start clipsync`；git 操作用 `sudo -u www-data git -C ...`；用 `git update-index --chmod=+x` 把 5 个脚本提交为 `100755`。
-- [ ] **6.7 cron 依赖可执行位**：`deploy.sh` 生成的 cron 行改为 `bash /path/xxx.sh`。
-- [ ] **6.8 backup_database.sh 缺键静默退出**：`read_env` 末尾 `|| true`；临时 cnf 的 `password` 加引号。
-- [ ] **6.9 Nginx `Host $host` 丢端口**：三份配置改为 `$http_host`。
-- [ ] **6.10 SPA 页面缺安全头**：三份 Nginx 的 `location /` 加 `X-Frame-Options DENY`、`X-Content-Type-Options nosniff`、`Referrer-Policy no-referrer`；`index.html` 加 `Cache-Control: no-cache`。HSTS 仍只由后端下发，CHECKLIST 改为检查 `/api/...`。
-- [ ] **6.11 deploy.sh 用 `python3` 建 venv**：检测版本 ≥ 3.12，否则提示先用 `python3.12 -m venv backend/venv` 预建。
-- [ ] **6.12 Docker 下没有定时清理与备份**：docker/README 写明宿主机 cron 的配置方式（`docker compose exec backend ...`），并修正备份命令（在容器内用 `$MYSQL_USER`/`$MYSQL_PASSWORD`）。
-- [ ] **6.13 小问题**：`health_check.sh` HTTPS 阶段 301 误报、未用 `DB_PORT`、WS 连接数统计不准；`clipsync.service` 删除无效的 `PATH=...:$PATH` 行；`vite.config.js` 代理目标改为 `127.0.0.1:8000`。
+- [x] **6.2 内网可伪造 XFF**：`nginx-docker.conf` 改为 `X-Forwarded-For $remote_addr`；compose 定义自定义网络并固定子网，`--forwarded-allow-ips` 只信任该子网。
+- [x] **6.3 没有 `.dockerignore`**：在 `backend/`、`frontend/` 下新建，排除 `.env`、`.venv`、`venv`、`__pycache__`、`.pytest_cache`、`storage`、`node_modules`、`dist`。（新增文件，属于已有目录内的配置文件）
+- [x] **6.4 compose 缺少可配置变量**：补传 `JWT_ALGORITHM`、`DEFAULT_QUOTA_BYTES`、`MAX_FILE_BYTES`、`CHUNK_SIZE`、`MAX_UPLOAD_SESSIONS_PER_USER`、`HISTORY_KEEP`、`UPLOAD_SESSION_TTL_HOURS`，同步 `docker/.env.example`。
+- [x] **6.5 数据库密码留空静默回落弱默认值**：改为 `${DB_PASSWORD:?DB_PASSWORD 未设置}`、`${DB_ROOT_PASSWORD:?...}`。
+- [x] **6.6 update.sh 失败后服务停着**：`trap` 保证退出时 `systemctl start clipsync`；git 操作用 `sudo -u www-data git -C ...`；用 `git update-index --chmod=+x` 把 5 个脚本提交为 `100755`。
+- [x] **6.7 cron 依赖可执行位**：`deploy.sh` 生成的 cron 行改为 `bash /path/xxx.sh`。
+- [x] **6.8 backup_database.sh 缺键静默退出**：`read_env` 末尾 `|| true`；临时 cnf 的 `password` 加引号。
+- [x] **6.9 Nginx `Host $host` 丢端口**：三份配置改为 `$http_host`。
+- [x] **6.10 SPA 页面缺安全头**：三份 Nginx 的 `location /` 加 `X-Frame-Options DENY`、`X-Content-Type-Options nosniff`、`Referrer-Policy no-referrer`；`index.html` 加 `Cache-Control: no-cache`。HSTS 仍只由后端下发，CHECKLIST 改为检查 `/api/...`。
+- [x] **6.11 deploy.sh 用 `python3` 建 venv**：检测版本 ≥ 3.12，否则提示先用 `python3.12 -m venv backend/venv` 预建。
+- [x] **6.12 Docker 下没有定时清理与备份**：docker/README 写明宿主机 cron 的配置方式（`docker compose exec backend ...`），并修正备份命令（在容器内用 `$MYSQL_USER`/`$MYSQL_PASSWORD`）。
+- [x] **6.13 小问题**：`health_check.sh` HTTPS 阶段 301 误报、未用 `DB_PORT`、WS 连接数统计不准；`clipsync.service` 删除无效的 `PATH=...:$PATH` 行；`vite.config.js` 代理目标改为 `127.0.0.1:8000`。
 - [ ] **6.14 待验证**：全新卷 `compose up` 时 healthcheck 过早通过；重建 backend 后 frontend Nginx 缓存旧 IP（如复现，加 `resolver 127.0.0.11` 与变量式 `proxy_pass`）。
+  - 已做预防性修改（healthcheck 改走 TCP 并加 `start_period`；nginx-docker.conf 加 resolver 与变量式 proxy_pass），但未在 Linux 上实际复现验证，保持未勾选。
 
 验收：脚本 `bash -n` 通过；有条件时在 Linux 上实际执行一次 deploy / update / compose up。
 

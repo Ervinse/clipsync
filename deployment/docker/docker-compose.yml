@@ -1,24 +1,38 @@
 version: '3.8'
 
+# 固定子网：backend 只信任这个网段发来的 X-Forwarded-For（即前端容器的 Nginx）
+# 若与宿主机已有网段冲突，同时修改这里的 subnet 和 backend command 里的 --forwarded-allow-ips
+networks:
+  clipsync:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
 services:
   # MySQL 数据库
   db:
     image: mysql:8.0
     container_name: clipsync-db
     restart: always
+    networks: [clipsync]
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_password}
+      # 密码未设置时 compose 直接报错，不再静默回落到弱默认值
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD 未设置}
       MYSQL_DATABASE: ${DB_NAME:-clipsync}
       MYSQL_USER: ${DB_USER:-clipsync}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-clipsync_password}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 未设置}
     volumes:
       - mysql_data:/var/lib/mysql
     # 不对宿主机暴露 3306，仅容器网络内可访问
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      # 走 TCP（127.0.0.1）而不是 socket：全新卷初始化时 MySQL 先以 --skip-networking 起一个临时实例，
+      # 用 socket ping 会在初始化完成前就判定健康，backend 随后连接失败
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
 
   # 后端服务
   backend:
@@ -27,6 +41,7 @@ services:
       dockerfile: ../deployment/docker/Dockerfile.backend
     container_name: clipsync-backend
     restart: always
+    networks: [clipsync]
     depends_on:
       db:
         condition: service_healthy
@@ -34,26 +49,29 @@ services:
       DB_HOST: db
       DB_PORT: 3306
       DB_USER: ${DB_USER:-clipsync}
-      DB_PASSWORD: ${DB_PASSWORD:-clipsync_password}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 未设置}
       DB_NAME: ${DB_NAME:-clipsync}
       # 变量名必须与 backend/app/config.py 一致；JWT_SECRET 未设置时 compose 直接报错
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 未设置}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-10080}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
       DEPLOY_SCHEME: ${DEPLOY_SCHEME:-http}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       HSTS_ENABLED: ${HSTS_ENABLED:-false}
       STORAGE_DIR: /app/storage
+      DEFAULT_QUOTA_BYTES: ${DEFAULT_QUOTA_BYTES:-104857600}
+      MAX_FILE_BYTES: ${MAX_FILE_BYTES:-524288000}
+      CHUNK_SIZE: ${CHUNK_SIZE:-5242880}
+      MAX_UPLOAD_SESSIONS_PER_USER: ${MAX_UPLOAD_SESSIONS_PER_USER:-5}
+      HISTORY_KEEP: ${HISTORY_KEEP:-50}
+      UPLOAD_SESSION_TTL_HOURS: ${UPLOAD_SESSION_TTL_HOURS:-24}
     volumes:
       - storage_data:/app/storage
     # 不对宿主机暴露 8000，只经前端容器的 Nginx 访问
-    # 单 worker（WebSocket 与限流依赖进程内存）；信任容器网络内的 Nginx 发来的 X-Forwarded-For
-    command: >
-      sh -c "
-        alembic upgrade head &&
-        uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
-        --proxy-headers --forwarded-allow-ips '172.16.0.0/12,10.0.0.0/8,192.168.0.0/16'
-      "
+    # 单 worker（WebSocket 与限流依赖进程内存）；只信任本 compose 子网发来的 X-Forwarded-For。
+    # 用 exec 形式的数组：YAML 折叠写法（>）会把参数折成一行且引号处理易出错，曾导致代理头参数未生效
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips 172.28.0.0/16"]
 
   # 前端服务
   frontend:
@@ -62,6 +80,7 @@ services:
       dockerfile: ../deployment/docker/Dockerfile.frontend
     container_name: clipsync-frontend
     restart: always
+    networks: [clipsync]
     depends_on:
       - backend
     ports:

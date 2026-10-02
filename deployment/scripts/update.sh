@@ -28,6 +28,8 @@ fi
 # 步骤 1: 停止服务
 echo -e "${YELLOW}[1/6] 停止服务...${NC}"
 systemctl stop clipsync
+# 任何一步失败（set -e 退出）都要把服务拉起来，不能让线上服务一直停着
+trap 'echo -e "${RED}更新中断，尝试重新启动服务...${NC}"; systemctl start clipsync || true' EXIT
 echo -e "${GREEN}✓ 服务已停止${NC}"
 
 # 步骤 2: 备份数据库
@@ -39,8 +41,9 @@ echo -e "${GREEN}✓ 数据库已备份${NC}"
 echo -e "${YELLOW}[3/6] 更新后端...${NC}"
 
 # 拉取最新代码：.git 在项目根目录，必须在根目录执行
+# 以项目文件属主（www-data）执行：root 执行会把 .git 内新对象改成 root 所有，之后 www-data 无法再操作
 if [ -d "$PROJECT_ROOT/.git" ]; then
-    git -C "$PROJECT_ROOT" pull --ff-only
+    sudo -u www-data git -C "$PROJECT_ROOT" pull --ff-only
     echo -e "${GREEN}✓ 代码已更新${NC}"
 else
     echo -e "${YELLOW}⚠ $PROJECT_ROOT 不是 git 仓库，跳过拉取代码${NC}"
@@ -70,6 +73,8 @@ echo -e "${GREEN}✓ 前端已构建${NC}"
 # 步骤 5: 重启服务
 echo -e "${YELLOW}[5/6] 重启服务...${NC}"
 systemctl start clipsync
+# 服务已正常拉起，解除失败兜底
+trap - EXIT
 systemctl restart nginx
 echo -e "${GREEN}✓ 服务已重启${NC}"
 

@@ -34,6 +34,12 @@ mkdir -p /var/backups/clipsync/database
 # 步骤 2: 检查依赖
 echo -e "${YELLOW}[2/10] 检查系统依赖...${NC}"
 command -v python3 >/dev/null 2>&1 || { echo -e "${RED}错误: 未安装 Python 3${NC}"; exit 1; }
+# 后端要求 Python 3.12+（rmtree 的 onexc 等）；已预建 venv 时以 venv 为准，不再检查系统 python3
+if [ ! -d "$BACKEND_DIR/venv" ] && ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)'; then
+    echo -e "${RED}错误: 系统 python3 版本低于 3.12（当前 $(python3 -V 2>&1)）${NC}"
+    echo "请先安装 Python 3.12 并预建虚拟环境: python3.12 -m venv $BACKEND_DIR/venv"
+    exit 1
+fi
 command -v node >/dev/null 2>&1 || { echo -e "${RED}错误: 未安装 Node.js${NC}"; exit 1; }
 command -v mysql >/dev/null 2>&1 || { echo -e "${RED}错误: 未安装 MySQL${NC}"; exit 1; }
 command -v nginx >/dev/null 2>&1 || { echo -e "${RED}错误: 未安装 Nginx${NC}"; exit 1; }
@@ -139,11 +145,13 @@ CRON_FILE="/etc/cron.d/clipsync"
 cat > "$CRON_FILE" <<EOF
 # ClipSync 定时任务
 
+# 用 bash 显式调用，不依赖脚本的可执行位（git 检出、复制文件时可能丢失）
+
 # 每天凌晨 2 点备份数据库
-0 2 * * * root $PROJECT_ROOT/deployment/scripts/backup_database.sh >> /var/log/clipsync/backup.log 2>&1
+0 2 * * * root bash $PROJECT_ROOT/deployment/scripts/backup_database.sh >> /var/log/clipsync/backup.log 2>&1
 
 # 每小时清理过期数据
-0 * * * * root $PROJECT_ROOT/deployment/scripts/cleanup_expired.sh >> /var/log/clipsync/cleanup.log 2>&1
+0 * * * * root bash $PROJECT_ROOT/deployment/scripts/cleanup_expired.sh >> /var/log/clipsync/cleanup.log 2>&1
 EOF
 
 chmod 644 "$CRON_FILE"

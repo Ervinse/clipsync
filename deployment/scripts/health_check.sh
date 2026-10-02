@@ -59,6 +59,9 @@ echo -n "前端页面: "
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost || echo "000")
 if [ "$HTTP_CODE" = "200" ]; then
     echo -e "${GREEN}✓ 正常 (HTTP $HTTP_CODE)${NC}"
+elif [ "$HTTP_CODE" = "301" ] || [ "$HTTP_CODE" = "308" ]; then
+    # HTTPS 阶段 80 端口统一跳转到 443，属于正常配置
+    echo -e "${GREEN}✓ 正常 (HTTP $HTTP_CODE，已跳转 HTTPS)${NC}"
 else
     echo -e "${RED}✗ 异常 (HTTP $HTTP_CODE)${NC}"
 fi
@@ -66,10 +69,10 @@ fi
 # 6. 检查数据库连接
 echo -n "数据库连接: "
 if [ -f "$ENV_FILE" ]; then
-    DB_HOST=$(read_env DB_HOST); DB_USER=$(read_env DB_USER)
-    DB_NAME=$(read_env DB_NAME)
+    DB_HOST=$(read_env DB_HOST); DB_PORT=$(read_env DB_PORT)
+    DB_USER=$(read_env DB_USER); DB_NAME=$(read_env DB_NAME)
     # 密码经环境变量传给 mysql，不出现在进程参数里
-    if MYSQL_PWD="$(read_env DB_PASSWORD)" mysql -h "${DB_HOST:-localhost}" -u "$DB_USER" -e "USE \`$DB_NAME\`;" 2>/dev/null; then
+    if MYSQL_PWD="$(read_env DB_PASSWORD)" mysql -h "${DB_HOST:-localhost}" -P "${DB_PORT:-3306}" -u "$DB_USER" -e "USE \`$DB_NAME\`;" 2>/dev/null; then
         echo -e "${GREEN}✓ 正常${NC}"
     else
         echo -e "${RED}✗ 连接失败${NC}"
@@ -113,8 +116,10 @@ journalctl -u clipsync --since "1 hour ago" -p err --no-pager | tail -5 || echo 
 
 # 11. 检查 WebSocket 连接数
 echo
-echo -n "WebSocket 连接数: "
-WS_CONN=$(ss -tun | grep :8000 | wc -l)
+# 只统计后端 8000 端口上已建立的入站连接（原写法把两个方向、UDP 和非 ESTABLISHED 都算进去）。
+# 其中也含 Nginx 到后端的 HTTP 长连接，数值是近似上限
+echo -n "后端已建立连接数（含 WebSocket，近似）: "
+WS_CONN=$(ss -Htn state established '( sport = :8000 )' 2>/dev/null | wc -l)
 echo "$WS_CONN"
 
 # 12. 检查备份状态
