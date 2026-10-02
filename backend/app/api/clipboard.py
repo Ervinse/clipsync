@@ -77,6 +77,10 @@ async def _write_clipboard(
     """
     # 0. 锁住当前用户行，同一用户的剪贴板写操作串行化，防止并发时重复归档、丢失中间版本。
     #    不锁 Clipboard 行：首次写入时该行不存在，会退化为 gap lock，两个 INSERT 容易死锁。
+    #    加锁前先 commit：MySQL 默认 REPEATABLE READ，get_current_user 的鉴权读已固定了本事务的
+    #    读视图，若不结束该视图，加锁后的普通 SELECT 仍读旧快照，锁等于白加。commit 开启新读视图。
+    #    expire_on_commit=False，commit 后 current_user 仍可用。
+    await db.commit()
     await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
 
     # 1. 查询当前文本

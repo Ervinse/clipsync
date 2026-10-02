@@ -4,6 +4,8 @@
  * 拦截器 reject 的对象统一为 { status, message }，视图里读 err.message 即可。
  */
 import axios from 'axios'
+// 循环引用（user store → api → 本模块）：只在拦截器函数里调用 useUserStore()，模块顶层不调用
+import { useUserStore } from '../stores/user'
 
 // 创建 axios 实例
 const request = axios.create({
@@ -14,13 +16,13 @@ const request = axios.create({
   },
 })
 
-// 这些请求返回 401 只表示「凭证不对」，不代表已登录状态失效，不能整页跳转
-const NO_REDIRECT_ON_401 = ['/auth/login', '/auth/register']
+// 这些请求返回 401 / 403 只表示「凭证不对 / 账号已禁用」，不代表已登录状态失效，不能整页跳转
+const NO_AUTH_LOST = ['/auth/login', '/auth/register']
 
-// 请求拦截器：自动附加 Token
+// 请求拦截器：自动附加 Token（用本标签页 store 里的 token，不读 localStorage，避免多标签页串号）
 request.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('access_token')
+    const token = useUserStore().token
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -63,14 +65,12 @@ request.interceptors.response.use(
       const { status, data } = error.response
       const url = error.config?.url || ''
 
-      // 401：已登录状态失效才清 token 并跳转登录页。
-      // 登录 / 注册本身的 401 交给页面显示；公开访问页（/access/...）不跳转，避免访客被踢走。
-      if (status === 401 && !NO_REDIRECT_ON_401.some((p) => url.startsWith(p))) {
-        localStorage.removeItem('access_token')
-        if (!window.location.pathname.startsWith('/access/')
-          && window.location.pathname !== '/login') {
-          window.location.href = '/login'
-        }
+      // 401（凭证失效）或带 X-Auth-Error: disabled 的 403（账号被禁用）：已登录状态失效，登出并回登录页。
+      // 用响应头判断禁用而不是匹配中文 detail；普通「权限不足」的 403 不带该头，不受影响。
+      // 登录 / 注册本身的 401 / 403 交给页面显示；公开访问页由 handleAuthLost 判断不跳转。
+      const disabled = status === 403 && error.response.headers?.['x-auth-error'] === 'disabled'
+      if ((status === 401 || disabled) && !NO_AUTH_LOST.some((p) => url.startsWith(p))) {
+        useUserStore().handleAuthLost()
       }
 
       return Promise.reject({ status, message: await extractMessage(status, data) })

@@ -97,7 +97,17 @@ def test_rejects_forged_and_malformed_tokens(client, make_user):
 
 def test_disabled_user_token_stops_working(client, make_user):
     user = make_user(active=False)
-    assert client.get("/api/auth/me", headers=user.headers).status_code == 403
+    resp = client.get("/api/auth/me", headers=user.headers)
+    assert resp.status_code == 403
+    # 前端靠这个响应头识别「账号被禁用」并登出
+    assert resp.headers.get("x-auth-error") == "disabled"
+
+
+def test_permission_denied_403_has_no_disabled_header(client, make_user):
+    user = make_user()
+    resp = client.get("/api/admin/stats", headers=user.headers)
+    assert resp.status_code == 403
+    assert "x-auth-error" not in resp.headers
 
 
 def test_weak_jwt_secret_refused():

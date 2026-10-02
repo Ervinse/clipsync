@@ -47,9 +47,11 @@ async def get_current_user(
         )
 
     if not user.is_active:
+        # X-Auth-Error：机器可读的禁用标记，前端据此登出（与「权限不足」的 403 区分）
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="用户已被禁用",
+            headers={"X-Auth-Error": "disabled"},
         )
 
     return user

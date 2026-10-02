@@ -25,12 +25,16 @@ class WebSocketManager {
     this.isConnected = false
     // 主动断开（登出）后不再自动重连
     this.manualClose = false
+    // 本标签页的 token：重连只用它，不读 localStorage（其他标签页换账号会改写 localStorage）
+    this.token = null
+    // 服务端判定凭证失效（1008）后不再重连，直到下一次 connect（重新登录）
+    this.authFailed = false
 
     // 网络恢复或页面回到前台时，跳过退避立即重连
     if (typeof window !== 'undefined') {
       const retryNow = () => {
         // this.ws 为空才重试：连接正在建立（CONNECTING）时不要把它拆掉重来
-        if (!this.manualClose && !this.ws && localStorage.getItem('access_token')) {
+        if (!this.manualClose && !this.authFailed && !this.ws && this.token) {
           this.reconnectCount = 0
           this.scheduleReconnect(0)
         }
@@ -49,6 +53,8 @@ class WebSocketManager {
     // 已有连接先彻底断开，避免同时存在两条连接、旧连接的 onclose 误停新连接的心跳
     this.teardown()
     this.manualClose = false
+    this.authFailed = false
+    this.token = token
 
     // 根据当前协议选择 ws:// 或 wss://
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -65,8 +71,10 @@ class WebSocketManager {
       return
     }
     this.ws = ws
+    let opened = false
 
     ws.onopen = () => {
+      opened = true
       this.isConnected = true
       this.reconnectCount = 0
       this.startHeartbeat()
@@ -104,9 +112,13 @@ class WebSocketManager {
       if (this.manualClose) return
       if (event.code === POLICY_VIOLATION) {
         // 凭证失效或账号被禁用：停止重连，交给上层处理（如跳转登录）
+        this.authFailed = true
         this.emit('auth_failed', event)
         return
       }
+      // 握手阶段被服务端拒绝时浏览器只给 1006，与服务器不可达无法区分：
+      // 通知上层去确认会话（失效则登出，从而停止重连），这里照常退避重连
+      if (!opened) this.emit('handshake_failed', event)
       this.scheduleReconnect()
     }
   }
@@ -146,7 +158,7 @@ class WebSocketManager {
    * 安排重连：指数退避（1s、2s、4s…，最长 30s），不封顶次数
    */
   scheduleReconnect(delay) {
-    if (this.manualClose) return
+    if (this.manualClose || this.authFailed) return
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
 
     const wait = delay ?? Math.min(BASE_RECONNECT_DELAY * 2 ** this.reconnectCount, MAX_RECONNECT_DELAY)
@@ -154,9 +166,8 @@ class WebSocketManager {
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
-      const token = localStorage.getItem('access_token')
-      if (token && !this.manualClose) {
-        this.connect(token)
+      if (this.token && !this.manualClose && !this.authFailed) {
+        this.connect(this.token)
       }
     }, wait)
   }
@@ -195,6 +206,7 @@ class WebSocketManager {
     this.manualClose = true
     this.teardown()
     this.reconnectCount = 0
+    this.token = null
   }
 
   /**

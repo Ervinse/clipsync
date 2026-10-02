@@ -11,6 +11,15 @@ app.use(createPinia())
 // 必须先恢复登录状态再安装路由：app.use(router) 会立即触发首次导航，
 // 若此时 isLoggedIn 还是 false，刷新受保护页面会被守卫踢回 /login。
 const userStore = useUserStore()
+
+// 其他标签页登录 / 登出 / 换账号会改写 localStorage 里的 token：
+// 本页的内存状态（用户信息、各 store 数据、WS 连接）已属于旧账号，整页重载以新 token 重新初始化
+window.addEventListener('storage', (event) => {
+  if (event.key === 'access_token' && event.newValue !== userStore.token) {
+    window.location.reload()
+  }
+})
+
 userStore.init().finally(() => {
   app.use(router)
   app.mount('#app')

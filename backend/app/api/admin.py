@@ -303,7 +303,12 @@ async def delete_user(
             detail="不能删除其他超级管理员",
         )
 
-    # 3. 进行中的上传会话（用于清理临时目录）
+    # 3. 锁住被删用户行，与 init_upload 的加锁串行化：防止「读到的 upload_ids」与随后并发 init 新建的会话
+    #    之间出现空档，导致新会话的临时目录成为无主孤儿。加锁前先 commit 结束鉴权读视图（MySQL 默认 RR）。
+    await db.commit()
+    await db.execute(select(User.id).where(User.id == user_id).with_for_update())
+
+    # 进行中的上传会话（用于清理临时目录）
     result = await db.execute(select(UploadSession.upload_id).where(UploadSession.user_id == user_id))
     upload_ids = [row[0] for row in result.all()]
 
