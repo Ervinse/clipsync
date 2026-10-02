@@ -79,6 +79,10 @@ const handleLogout = () => {
             {{ (userStore.quota.used / 1024 / 1024).toFixed(1) }} MB /
             {{ (userStore.quota.total / 1024 / 1024).toFixed(0) }} MB
           </div>
+          <!-- 进行中上传的声明大小也占配额：有时单独显示，避免用户以为空间凭空少了 -->
+          <div v-if="userStore.quota.reserved > 0" class="quota-text">
+            上传中 {{ (userStore.quota.reserved / 1024 / 1024).toFixed(1) }} MB
+          </div>
         </div>
 
         <button class="btn-logout" @click="handleLogout">

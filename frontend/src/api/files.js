@@ -26,6 +26,11 @@ export default {
     return request.post('/files/upload/complete', { upload_id: uploadId })
   },
 
+  // 取消进行中的上传：删除会话并释放其占用的配额
+  cancelUpload(uploadId) {
+    return request.delete(`/files/upload/${uploadId}`)
+  },
+
   // 获取文件列表
   list() {
     return request.get('/files')

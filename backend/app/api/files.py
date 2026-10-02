@@ -1,6 +1,7 @@
 """文件路由：分片上传 + 下载 + 删除"""
 import logging
 import mimetypes
+import os
 import uuid
 from datetime import timedelta
 from pathlib import Path
@@ -57,14 +58,18 @@ async def _reserved_bytes(db: AsyncSession, user_id: int, exclude_upload_id: str
         select(func.coalesce(func.sum(File.size), 0)).where(File.user_id == user_id)
     )
     used = int(result.scalar())
+    return used + await upload_reserved_bytes(db, user_id, exclude_upload_id)
 
+
+async def upload_reserved_bytes(db: AsyncSession, user_id: int, exclude_upload_id: str | None = None) -> int:
+    """进行中上传会话的声明大小之和（「上传中」占用的配额，/auth/me 与文件列表也会返回）"""
     stmt = select(func.coalesce(func.sum(UploadSession.total_size), 0)).where(
         UploadSession.user_id == user_id
     )
     if exclude_upload_id:
         stmt = stmt.where(UploadSession.upload_id != exclude_upload_id)
     result = await db.execute(stmt)
-    return used + int(result.scalar())
+    return int(result.scalar())
 
 
 def _merge_chunks(temp_dir: Path, total_chunks: int, final_path: Path) -> int:
@@ -102,26 +107,50 @@ def _count_chunks(temp_dir: Path) -> int:
     return sum(1 for p in temp_dir.iterdir() if p.is_file() and p.name.isdigit())
 
 
-def _iter_file(path: Path):
-    """流式读取文件（StreamingResponse 会在线程池中迭代同步生成器）"""
-    with open(path, "rb") as f:
+def _list_chunk_indexes(temp_dir: Path) -> list[int]:
+    """已落盘分片的索引，升序（目录不存在返回空列表）"""
+    if not temp_dir.is_dir():
+        return []
+    return sorted(int(p.name) for p in temp_dir.iterdir() if p.is_file() and p.name.isdigit())
+
+
+def _open_for_download(path: Path):
+    """先打开再 fstat 取大小：此后文件即使被删除，已打开的句柄仍能读完，Content-Length 与实际一致"""
+    f = open(path, "rb")
+    try:
+        size = os.fstat(f.fileno()).st_size
+    except OSError:
+        f.close()
+        raise
+    return f, size
+
+
+def _iter_handle(f):
+    """流式读取已打开的文件（StreamingResponse 会在线程池中迭代同步生成器）"""
+    with f:
         while block := f.read(_READ_BLOCK):
             yield block
 
 
-def stream_file_response(file_record: File) -> StreamingResponse:
-    """统一的流式下载响应（登录下载与访问码下载共用）"""
+async def stream_file_response(file_record: File, missing_detail: str = "文件已丢失") -> StreamingResponse:
+    """
+    统一的流式下载响应（登录下载与访问码下载共用）
+
+    missing_detail：磁盘文件不存在时的提示；公开访问码路径传「访问码无效或已失效」，不暴露码本身有效。
+    """
     file_path = get_file_path(file_record.user_id, file_record.stored_name)
-    if not file_path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件已丢失")
+    try:
+        f, size = await run_in_threadpool(_open_for_download, file_path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=missing_detail)
 
     return StreamingResponse(
-        _iter_file(file_path),
+        _iter_handle(f),
         media_type=file_record.mime_type,
         headers={
             # 安全红线：文件名来自用户，按 RFC 6266 编码，杜绝头注入
             "Content-Disposition": content_disposition(file_record.original_name),
-            "Content-Length": str(file_path.stat().st_size),
+            "Content-Length": str(size),
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -208,9 +237,37 @@ async def init_upload(
     ))
     await db.commit()
 
-    ensure_upload_temp_dir(upload_id)
+    await run_in_threadpool(ensure_upload_temp_dir, upload_id)
 
     return UploadInitResponse(upload_id=upload_id, total_chunks=total_chunks, chunk_size=chunk_size)
+
+
+@router.delete("/upload/{upload_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_upload(
+    upload_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    取消进行中的上传：删除会话（立即释放其占用的配额）并清理临时分片
+
+    安全红线：删除条件带 user_id，他人会话与不存在统一 404
+    """
+    if upload_id in _completing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该上传正在合并中")
+
+    result = await db.execute(
+        sql_delete(UploadSession).where(
+            UploadSession.upload_id == upload_id,
+            UploadSession.user_id == current_user.id,  # 安全红线：归属校验
+        )
+    )
+    if result.rowcount == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或无权访问")
+    await db.commit()
+
+    await run_in_threadpool(cleanup_upload_temp, upload_id)
+    return None
 
 
 @router.post("/upload/chunk", status_code=status.HTTP_200_OK)
@@ -254,7 +311,7 @@ async def upload_chunk(
 
     # 临时目录由 init 创建；不存在说明会话已被清理，不能用 ensure_* 重建（否则留下孤儿目录）
     temp_dir = get_upload_temp_dir(upload_id)
-    if not temp_dir.is_dir():
+    if not await run_in_threadpool(temp_dir.is_dir):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或无权访问")
 
     # 每个分片的期望大小：非最后一片等于 chunk_size，最后一片为剩余字节数
@@ -364,9 +421,7 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话已过期")
 
     temp_dir = get_upload_temp_dir(data.upload_id)
-    received = sorted(
-        int(p.name) for p in temp_dir.iterdir() if p.is_file() and p.name.isdigit()
-    ) if temp_dir.exists() else []
+    received = await run_in_threadpool(_list_chunk_indexes, temp_dir)
     # received 是排好序、不重复的非负整数（文件名唯一），长度相等且末项为 n-1 即为 0..n-1，
     # 不构造 list(range(n))，避免分片数很大时在事件循环里占用大量内存与 CPU
     if len(received) != session.total_chunks or (
@@ -378,7 +433,7 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
         )
 
     stored_name = generate_stored_name()
-    final_path = ensure_user_storage_dir(current_user.id) / stored_name
+    final_path = (await run_in_threadpool(ensure_user_storage_dir, current_user.id)) / stored_name
 
     try:
         actual_size = await run_in_threadpool(_merge_chunks, temp_dir, session.total_chunks, final_path)
@@ -478,6 +533,7 @@ async def list_files(
         ],
         total=len(files),
         used_bytes=sum(f.size for f in files),
+        reserved_bytes=await upload_reserved_bytes(db, current_user.id),
         quota_bytes=current_user.quota_bytes,
     )
 
@@ -505,7 +561,7 @@ async def download_file(
         # 不存在与无权限统一 404，不暴露他人文件 ID 是否存在
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在")
 
-    return stream_file_response(file_record)
+    return await stream_file_response(file_record)
 
 
 @router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)

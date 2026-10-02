@@ -1,4 +1,5 @@
 """管理后台路由：统计 + 用户管理 + 邀请码 + 系统设置"""
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -40,6 +41,8 @@ from ..core.storage import delete_user_storage, cleanup_upload_temp
 from ..core.ws_manager import manager
 from ..core.timeutil import utcnow, to_naive_utc
 from ..core.app_settings import get_default_quota_bytes, get_registration_enabled
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -338,9 +341,16 @@ async def delete_user(
     await db.commit()
 
     # 5. 删除磁盘文件与临时目录（rmtree 可能涉及大量文件，放入线程池避免阻塞事件循环）
-    await run_in_threadpool(delete_user_storage, user_id)
+    #    记录已删除：磁盘清理失败只记日志，残留目录由 cleanup_expired.sh 的孤儿扫描兜底
+    try:
+        await run_in_threadpool(delete_user_storage, user_id)
+    except OSError:
+        logger.exception("删除用户存储目录失败 user_id=%s", user_id)
     for upload_id in upload_ids:
-        await run_in_threadpool(cleanup_upload_temp, upload_id)
+        try:
+            await run_in_threadpool(cleanup_upload_temp, upload_id)
+        except OSError:
+            logger.exception("清理上传临时目录失败 upload_id=%s", upload_id)
 
     # 6. 断开该用户所有实时连接
     await manager.disconnect_user(user_id)

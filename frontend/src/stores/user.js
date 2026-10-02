@@ -40,13 +40,15 @@ export const useUserStore = defineStore('user', {
 
     // 配额信息
     quota(state) {
+      // 后端 /auth/me 返回 used_bytes（已落盘）与 reserved_bytes（进行中上传占用）；两者都计入配额
+      const used = state.userInfo?.used_bytes || 0
+      const reserved = state.userInfo?.reserved_bytes || 0
+      const total = state.userInfo?.quota_bytes || 0
       return {
-        // 后端 /auth/me 返回 used_bytes
-        used: state.userInfo?.used_bytes || 0,
-        total: state.userInfo?.quota_bytes || 0,
-        percentage: state.userInfo?.quota_bytes
-          ? Math.round(((state.userInfo.used_bytes || 0) / state.userInfo.quota_bytes) * 100)
-          : 0,
+        used,
+        reserved,
+        total,
+        percentage: total ? Math.round(((used + reserved) / total) * 100) : 0,
       }
     },
   },

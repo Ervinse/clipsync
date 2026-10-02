@@ -47,6 +47,7 @@ export const useFilesStore = defineStore('files', {
         const userStore = useUserStore()
         if (userStore.userInfo && data) {
           userStore.userInfo.used_bytes = data.used_bytes
+          userStore.userInfo.reserved_bytes = data.reserved_bytes
           userStore.userInfo.quota_bytes = data.quota_bytes
         }
       } catch (error) {
@@ -105,6 +106,11 @@ export const useFilesStore = defineStore('files', {
         return result
       } catch (error) {
         console.error('文件上传失败:', error)
+        // 中途失败：取消会话，立即释放其占用的配额；取消本身失败（如会话已不存在）忽略
+        if (uploadId) {
+          await api.files.cancelUpload(uploadId).catch(() => {})
+          this.fetchFiles({ silent: true }).catch(() => {})
+        }
         throw error
       } finally {
         // 成功或失败都清除进度，避免失败后进度条残留
