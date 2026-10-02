@@ -1,7 +1,7 @@
 # ClipSync 开发约束
 
 > 本文件是编码时必须遵守的**硬规则**，Claude 每次会话自动读取。
-> 三份文档各司其职：**规格权威** → DESIGN.md（技术栈全表、数据模型字段、API 清单、目录树、机制、分阶段计划）；**运行 / 部署** → README.md（完整 setup、部署、配置项表、面向用户的权限说明）；**本文件** → 编码硬约束 + 指针。
+> 三份文档各司其职：**规格权威** → DESIGN.md（技术栈全表、数据模型字段、API 清单、目录树、机制、分阶段计划）；**运行** → README.md（完整 setup、配置项表、面向用户的权限说明）；**部署** → deployment/DEPLOY.md（直接部署）与 deployment/docker/README.md（Docker）；**本文件** → 编码硬约束 + 指针。
 > 冲突时以本文件为准；本文件未覆盖的细节以 DESIGN.md 为准（「第 N 节」指 DESIGN.md 章节）。
 
 ## 交流语言
@@ -28,7 +28,7 @@
 ## HTTP / HTTPS 双部署（编码要点，机制见第 11 节）
 - 前端 API 用**相对路径**（`/api/...`）；WebSocket 按 `window.location.protocol` 自动选 `ws://`/`wss://`，**禁止写死协议**。
 - 访问码链接由后端按请求的 `scheme` + `host` **动态拼接**，禁止硬编码协议或域名。
-- 安全行为读 `.env` 开关（`DEPLOY_SCHEME`/`COOKIE_SECURE`/`HSTS_ENABLED`/`CORS_ORIGINS`）；Token 走 `Authorization` header + localStorage，不依赖 cookie。
+- 安全行为读 `.env` 开关：`HSTS_ENABLED`（后端下发 HSTS 头）、`CORS_ORIGINS`（CORS 白名单）已生效；`DEPLOY_SCHEME`、`COOKIE_SECURE` 为预留项，目前代码未使用。Token 走 `Authorization` header + localStorage，不依赖 cookie。
 
 ## 目录结构（细节见第 13 节）
 - 项目根为 `clipsync/`，**所有文件都在此之下**，不得在根目录之外创建文件。
@@ -48,7 +48,7 @@
 - 分支命名规范：`feature/功能名`、`fix/问题描述`、`refactor/重构内容`。
 - 提交信息用中文，简明扼要说明改动内容；多文件改动按模块分组描述。
 - 提交前必须确保代码能运行（后端能启动、前端能构建）；测试相关改动需确保测试通过。
-- `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/uploads/`、编译产物。
+- `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/storage/`（上传文件，旧名 `uploads/` 保留兼容）、编译产物。
 
 ### 分支生命周期（开分支 → 提交 → 等用户指令合并 → 删分支）
 1. **每次新的更新都在 `feature/*` 或 `fix/*` 分支上进行**：从最新的 master 开分支 `git checkout master && git checkout -b <type>/<name>`，不要从其他未合并的分支上接着开。
@@ -75,7 +75,7 @@
 - 不确定的设计取舍先问，不要自行更改 DESIGN.md 中已定的设计。
 - **执行任何操作前，必须向用户汇报将要做什么；操作完成后，汇报实际做了什么、结果如何**。
 
-## 常用命令（速查；完整 setup 与部署见 README.md）
+## 常用命令（速查；完整 setup 见 README.md，部署见 deployment/DEPLOY.md）
 - 后端启动：`uvicorn app.main:app --reload`（在 `backend/`）
 - 应用迁移：`alembic upgrade head`；改模型后生成迁移：`alembic revision --autogenerate -m "描述"`
 - 跑单个测试：`pytest tests/test_xxx.py::test_name`

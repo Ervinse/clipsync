@@ -93,7 +93,8 @@ fi
 # 步骤 7: 构建前端
 echo -e "${YELLOW}[7/10] 构建前端...${NC}"
 cd "$FRONTEND_DIR"
-npm install
+# npm ci：严格按 package-lock.json 安装，生产环境可复现
+npm ci
 npm run build
 echo -e "${GREEN}✓ 前端构建完成${NC}"
 

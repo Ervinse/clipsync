@@ -66,7 +66,9 @@ src/
 │   ├── Admin.vue   # 管理后台页
 │   └── PublicAccess.vue # 公共访问页
 ├── utils/          # 工具函数
-│   └── websocket.js # WebSocket 管理器
+│   ├── websocket.js # WebSocket 管理器
+│   ├── clipboard.js # 复制到剪贴板（HTTP 下降级为 execCommand）
+│   └── format.js    # 文件大小、UTC 时间格式化
 ├── App.vue         # 根组件
 └── main.js         # 入口文件
 ```
@@ -84,10 +86,10 @@ src/
 - WebSocket 推送
 
 ### 文件管理 (Files)
-- 分片上传（1MB/片）
+- 分片上传（1MB/片），同一时间只允许一个上传；中途失败自动取消会话、释放配额
 - 上传进度显示
 - 文件列表与下载
-- 配额显示
+- 配额显示（已用 + 上传中）
 
 ### 访问码 (AccessCodes)
 - 创建文本/文件访问码
@@ -109,7 +111,7 @@ src/
 
 ### 开发环境
 
-Vite 开发服务器会将 `/api` 和 `/ws` 请求代理到后端（默认 `http://localhost:8000`）。
+Vite 开发服务器会将 `/api` 和 `/ws` 请求代理到后端（`http://127.0.0.1:8000`）。
 
 配置位于 `vite.config.js`：
 
@@ -118,12 +120,13 @@ server: {
   port: 3000,
   proxy: {
     '/api': {
-      target: 'http://localhost:8000',
+      // 用 127.0.0.1：后端只监听 IPv4，localhost 可能先解析成 ::1 导致代理失败
+      target: 'http://127.0.0.1:8000',
       // 保留浏览器的 Host（localhost:3000），后端据此拼出的访问码链接才指向前端页面
       changeOrigin: false,
     },
     '/ws': {
-      target: 'ws://localhost:8000',
+      target: 'ws://127.0.0.1:8000',
       ws: true,
     },
   },
@@ -138,18 +141,23 @@ server: {
 
 ## API 请求流程
 
-1. **请求拦截**：自动附加 JWT Token（从 `localStorage` 读取）
+1. **请求拦截**：自动附加 JWT Token（读本标签页 user store 里的 token，不读 localStorage，避免多标签页串号）
 2. **发起请求**：通过 Axios 发送到后端
 3. **响应拦截**：
-   - 401 错误：自动跳转到登录页
-   - 其他错误：提取 `detail` 字段返回
+   - 401，或带响应头 `X-Auth-Error: disabled` 的 403（账号被禁用）：登出并跳转登录页（登录 / 注册接口本身与公开访问页除外）
+   - 普通 403（权限不足）与其他错误：提取 `detail` 字段返回
+
+其他标签页登录、登出或换账号会改写 localStorage 中的 token，本页监听 `storage` 事件后整页重载。启动时只有 401 / 403 才清掉 token，网络错误或 5xx 保留登录状态并在登录页提示「暂时无法连接服务器」。
 
 ## WebSocket 连接
 
 - **URL 构建**：根据当前协议（http/https）自动选择 `ws://` 或 `wss://`
 - **认证**：Token 通过子协议传递（`new WebSocket(url, ['clipsync.v1', 'bearer.<token>'])`），不放 URL，避免被 access log 记录
 - **心跳**：每 30 秒发送一次 ping
-- **重连**：指数退避（1s、2s、4s…，最长 30s），不限次数；网络恢复或页面回到前台时立即重试；服务端以 1008 关闭（凭证失效、账号被禁用）时停止重连
+- **重连**：指数退避（1s、2s、4s…，最长 30s），不限次数；网络恢复或页面回到前台时立即重试；重连只用本标签页内存里的 token
+- **关闭码**：已连接后被踢下线（账号被禁用或删除）为 1008，停止重连并登出；握手被拒时浏览器只能看到 1006，此时调一次 `/api/auth/me` 确认会话，401 / 禁用 403 则登出、不再重连，其他情况继续重连
+- **补拉**：各页面同时订阅 `open`，连接（重新）建立后重拉一次数据，断线期间的变更不会漏掉
+- **广播范围**：后端发给该用户的全部连接，触发变更的终端自己也会收到
 - **离线发送**：连接未打开时 `send` 直接返回 false，不排队（客户端只发心跳，积压没有意义）
 
 ## 状态管理
@@ -184,8 +192,10 @@ server: {
 1. **协议无关**：前端使用相对路径和动态协议选择，同时支持 HTTP 和 HTTPS
 2. **Token 管理**：Token 存储在 `localStorage`，通过 `Authorization` header 传递
 3. **文件上传**：采用分片上传（1MB/片），支持大文件
-4. **WebSocket 事件**：
-   - `clipboard_updated`：剪贴板已更新（只带 `updated_at` 信号，前端收到后重新拉取当前文本）
-   - `file_added` / `file_deleted`：文件页收到后重新拉取文件列表
+4. **WebSocket 事件**（只带信号，不含正文）：
+   - `clipboard_updated`：保存、恢复或删除历史后触发；剪贴板页静默重拉当前文本，历史面板打开时一并重拉历史
+   - `file_added` / `file_deleted`：文件页静默重拉列表；访问码页在 `file_deleted` 时重拉；侧栏配额由 `Home.vue` 统一刷新
+   - `access_codes_changed`：创建或撤销访问码后触发，访问码页重拉列表
+   - `quota_updated`：超管修改配额后触发，侧栏刷新配额
 5. **剪贴板历史**：点击条目把内容填入编辑框（不保存）；「恢复」按钮直接设为当前文本并同步；「删除」按钮删除该条历史
 6. **权限控制**：前端隐藏只是体验层，后端必须做最终校验

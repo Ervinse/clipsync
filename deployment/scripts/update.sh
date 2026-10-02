@@ -66,7 +66,7 @@ echo -e "${YELLOW}[4/6] 更新前端...${NC}"
 cd "$FRONTEND_DIR"
 
 # 更新依赖并构建（代码已在步骤 3 拉取）
-npm install
+npm ci
 npm run build
 echo -e "${GREEN}✓ 前端已构建${NC}"
 
