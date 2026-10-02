@@ -252,4 +252,5 @@ async def access_file_download(
     if file_record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="访问码无效或已失效")
 
-    return stream_file_response(file_record)
+    # 磁盘文件丢失也返回同样的提示：公开路径不区分「码有效但文件没了」，不泄露码的有效性
+    return await stream_file_response(file_record, missing_detail="访问码无效或已失效")

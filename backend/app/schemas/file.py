@@ -54,4 +54,5 @@ class FileListResponse(BaseModel):
     items: list[FileResponse]
     total: int
     used_bytes: int  # 当前用户已用空间
+    reserved_bytes: int  # 进行中上传会话占用的配额
     quota_bytes: int  # 配额

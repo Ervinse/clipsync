@@ -252,6 +252,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | POST | /api/files/upload/init | 登录 | 初始化分片上传（先校验配额），返回 upload_id |
 | POST | /api/files/upload/chunk | 登录 | 上传单个分片 |
 | POST | /api/files/upload/complete | 登录 | 合并分片，写记录，广播 |
+| DELETE | /api/files/upload/{upload_id} | 归属 | 取消进行中的上传：删会话（立即释放配额）+ 清理 tmp；他人会话与不存在统一 404，正在合并返回 409 |
 | GET | /api/files/{id}/download | 归属或 superadmin | 流式下载；无权限与不存在统一返回 404 |
 | DELETE | /api/files/{id} | 归属 | 删文件记录+磁盘+指向它的访问码，广播（superadmin 也不能删他人文件） |
 
@@ -422,8 +423,11 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
 
 - 分片大小：前端请求 1MB，服务端上限 `CHUNK_SIZE`（`.env`，默认 5MB），不能在后台修改。
 - 配额：已用 = 已落盘文件 + **进行中会话的声明大小**，防止并发开会话超配；init 预校验，complete 按实际大小最终确认。
+- 取消：上传中途失败时前端调 `DELETE /api/files/upload/{upload_id}` 立即释放配额；关掉页面等无法取消的会话，靠 `/auth/me` 与 `GET /api/files` 返回的 `reserved_bytes`（侧栏显示「上传中」）让用户看见，并在 TTL 后清理。
 - 每用户进行中的上传会话不超过 `MAX_UPLOAD_SESSIONS_PER_USER`（默认 5），超出返回 429。
-- 会话过期：超过 `UPLOAD_SESSION_TTL_HOURS`（默认 24）的会话，在该用户下次 init 时清理；`deployment/scripts/cleanup_expired.sh` 定时清理全站过期会话与 tmp 目录。
+- 会话过期：超过 `UPLOAD_SESSION_TTL_HOURS`（默认 24）的会话，在该用户下次 init 时清理；`deployment/scripts/cleanup_expired.sh` 定时清理全站过期会话与 tmp 目录，并做孤儿扫描（超过 TTL 且无会话记录的 tmp 目录、用户已不存在的 `storage/<uid>` 目录）。
+- 下载：线程池中先打开文件再 `fstat` 取大小，下载途中文件被删也能读完；文件不存在返回 404（公开访问码路径统一提示「访问码无效或已失效」）。
+- 应用内磁盘删除失败只记日志（`rmtree` 用 `onexc` 回调），不影响接口结果，残留由孤儿扫描兜底。
 - 合并与下载都流式处理，不一次性读入内存。
 
 ---

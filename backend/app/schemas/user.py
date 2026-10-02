@@ -48,3 +48,4 @@ class UserResponse(BaseModel):
 class UserWithStats(UserResponse):
     """用户信息 + 存储统计"""
     used_bytes: int  # 已用空间（需要业务层计算）
+    reserved_bytes: int  # 进行中上传会话占用的配额

@@ -18,6 +18,7 @@ from ..core.deps import get_current_user
 from ..core.app_settings import get_registration_enabled, get_default_quota_bytes
 from ..core.timeutil import utcnow
 from ..rate_limit import limiter
+from .files import upload_reserved_bytes
 
 router = APIRouter()
 
@@ -172,4 +173,5 @@ async def get_current_user_info(
         is_active=current_user.is_active,
         created_at=current_user.created_at,
         used_bytes=used_bytes,
+        reserved_bytes=await upload_reserved_bytes(db, current_user.id),
     )

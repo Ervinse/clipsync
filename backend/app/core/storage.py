@@ -3,11 +3,19 @@
 安全红线：磁盘路径只由服务端生成的 UUID 与整数 user_id 拼接，绝不使用用户传入的文件名；
 所有路径在返回前都校验确实位于 STORAGE_DIR 之内（防穿越的第二道防线）。
 """
+import logging
 import shutil
 import uuid
 from pathlib import Path
 
 from ..config import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _log_rmtree_error(func, path, exc):
+    """rmtree 单个条目删除失败：记日志后继续删其余条目（不再静默吞掉错误）"""
+    logger.error("删除存储路径失败 %s（%s）: %s", path, getattr(func, "__name__", func), exc)
 
 
 def _base_dir() -> Path:
@@ -78,7 +86,7 @@ def cleanup_upload_temp(upload_id: str):
     except ValueError:
         return
     if temp_dir.exists():
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(temp_dir, onexc=_log_rmtree_error)
 
 
 def delete_file(user_id: int, stored_name: str):
@@ -94,4 +102,4 @@ def delete_user_storage(user_id: int):
     """删除用户整个存储目录（删除用户时使用）"""
     user_dir = get_user_storage_dir(user_id)
     if user_dir.exists():
-        shutil.rmtree(user_dir, ignore_errors=True)
+        shutil.rmtree(user_dir, onexc=_log_rmtree_error)

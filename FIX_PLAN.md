@@ -111,29 +111,29 @@
 
 分支：`fix/upload-quota-download`
 
-- [ ] **4.1 中断上传占用配额，无法取消**（按「已定的取舍」）
+- [x] **4.1 中断上传占用配额，无法取消**（按「已定的取舍」）
   - 后端：新增 `DELETE /api/files/upload/{upload_id}`，校验归属后删除会话并在线程池清理 tmp，返回 204；`UserWithStats` 与 `FileListResponse` 增加 `reserved_bytes`（进行中会话的声明大小之和）。
   - 前端：`api/files.js` 封装取消接口；`files.js` `uploadFile` 的 catch 里调用（忽略取消本身的失败）；配额显示改为「已用 + 上传中」。
   - 测试：取消他人会话返回 404；取消后配额释放、可立即 init。
   - 同步 DESIGN 6.3 接口表和第 10 节。
 
-- [ ] **4.2 下载时文件被删导致连接截断**
+- [x] **4.2 下载时文件被删导致连接截断**
   - 位置：`backend/app/api/files.py` `stream_file_response`。
   - 做法：线程池中先 `open` 再 `os.fstat` 取大小，把句柄交给生成器；`FileNotFoundError` 返回 404。
 
-- [ ] **4.3 async 路径里残留的同步文件系统调用**（CLAUDE.md 异步一致性）
+- [x] **4.3 async 路径里残留的同步文件系统调用**（CLAUDE.md 异步一致性）
   - `files.py`：complete 里的 `iterdir` 排序、upload_chunk 的 `is_dir()`、两处 `ensure_*_dir`、`stream_file_response` 的检查（4.2 一并处理）。
   - 做法：全部改用 `run_in_threadpool`。
 
-- [ ] **4.4 磁盘删除失败无日志、孤儿文件无人清理**
+- [x] **4.4 磁盘删除失败无日志、孤儿文件无人清理**
   - `backend/app/core/storage.py`：`rmtree` 去掉 `ignore_errors`，改用 `onexc`/`onerror` 回调记日志；`admin.py` `delete_user` 删磁盘处 `try/except OSError` 记日志。
   - `deployment/scripts/cleanup_expired.sh`：增加孤儿扫描——`storage/tmp/*` 中 mtime 超过 TTL 且不在 `upload_sessions` 的目录、`storage/<uid>` 中 uid 不在 `users` 表的目录，删除并记录。
 
-- [ ] **4.5 公开下载「文件已丢失」暴露码有效**
+- [x] **4.5 公开下载「文件已丢失」暴露码有效**
   - 位置：`stream_file_response` 被公开路径调用时。
   - 做法：公开路径统一返回「访问码无效或已失效」。
 
-- [ ] **4.6 剪贴板长度按字符校验、库按字节存**（疑似）
+- [x] **4.6 剪贴板长度按字符校验、库按字节存**（疑似）
   - 位置：`backend/app/schemas/clipboard.py`。
   - 做法：validator 按 `len(value.encode("utf-8")) <= 16777215` 校验，补测试。
 
