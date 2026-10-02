@@ -14,9 +14,6 @@ export default {
     list(skip = 0, limit = 50) {
       return request.get('/admin/users', { params: { skip, limit } })
     },
-    get(id) {
-      return request.get(`/admin/users/${id}`)
-    },
     updateQuota(id, quotaBytes) {
       return request.patch(`/admin/users/${id}/quota`, { quota_bytes: quotaBytes })
     },

@@ -39,13 +39,3 @@ class AccessTextResponse(BaseModel):
     content: str
     updated_at: datetime
     owner_username: str
-
-
-class AccessFileResponse(BaseModel):
-    """文件访问码解析响应"""
-    id: int
-    original_name: str
-    size: int
-    mime_type: str
-    created_at: datetime
-    download_url: str  # 下载地址

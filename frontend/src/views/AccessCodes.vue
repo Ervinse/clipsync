@@ -18,6 +18,9 @@ onUnmounted(() => {
   CODE_EVENTS.forEach((event) => ws.off(event, onCodesChanged))
 })
 
+// 访问码最长有效期：1 年
+const MAX_EXPIRES_HOURS = 8760
+
 const showCreateModal = ref(false)
 const createForm = ref({
   target_type: 'text',
@@ -62,8 +65,12 @@ const handleCreate = async () => {
       delete data.file_id
     }
 
-    // 后端接收 expires_at（ISO 时间，带时区）；0 或空表示永久有效
-    const hours = Number(data.expires_in_hours)
+    // 后端接收 expires_at（ISO 时间，带时区）；0 或空表示永久有效，最长 8760 小时（后端同样校验）
+    const hours = Number(data.expires_in_hours || 0)
+    if (!Number.isInteger(hours) || hours < 0 || hours > MAX_EXPIRES_HOURS) {
+      alert(`有效期必须是 0 到 ${MAX_EXPIRES_HOURS} 之间的整数（小时）`)
+      return
+    }
     delete data.expires_in_hours
     data.expires_at = hours > 0
       ? new Date(Date.now() + hours * 3600 * 1000).toISOString()
@@ -137,8 +144,8 @@ const getFileName = (fileId) => {
           <span class="code-type" :class="code.target_type">
             {{ code.target_type === 'text' ? '📋 文本' : '📁 文件' }}
           </span>
-          <span class="code-status" :class="{ expired: code.is_expired }">
-            {{ code.is_expired ? '已过期' : '有效' }}
+          <span class="code-status" :class="{ expired: code.is_invalid }">
+            {{ code.is_revoked ? '已撤销' : code.expired ? '已过期' : '有效' }}
           </span>
         </div>
 
@@ -168,14 +175,14 @@ const getFileName = (fileId) => {
           <button
             class="btn-secondary"
             @click="copyLink(code)"
-            :disabled="code.is_expired"
+            :disabled="code.is_invalid"
           >
             复制链接
           </button>
           <button
             class="btn-danger"
             @click="handleRevoke(code)"
-            :disabled="code.is_expired"
+            :disabled="code.is_invalid"
           >
             撤销
           </button>

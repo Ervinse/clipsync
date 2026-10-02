@@ -11,6 +11,8 @@ export const useFilesStore = defineStore('files', {
     files: [],
     uploadProgress: {},
     isLoading: false,
+    // 放在 store 而不是页面里：上传期间离开文件页再回来，按钮仍是禁用状态，不会并发开第二个上传
+    isUploading: false,
   }),
 
   getters: {
@@ -62,6 +64,14 @@ export const useFilesStore = defineStore('files', {
      * 分片上传文件
      */
     async uploadFile(file) {
+      // 空文件后端会以 422 拒绝（total_size 必须 > 0），提示是英文校验信息：前端先拦下
+      if (file.size === 0) {
+        throw { message: '不能上传空文件' }
+      }
+      if (this.isUploading) {
+        throw { message: '已有文件正在上传，请等待完成' }
+      }
+      this.isUploading = true
       let uploadId = null
       try {
         // 1. 初始化上传（分片大小以服务端确认的 chunk_size 为准）
@@ -115,6 +125,7 @@ export const useFilesStore = defineStore('files', {
       } finally {
         // 成功或失败都清除进度，避免失败后进度条残留
         if (uploadId) delete this.uploadProgress[uploadId]
+        this.isUploading = false
       }
     },
 

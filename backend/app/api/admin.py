@@ -575,7 +575,8 @@ async def list_all_files(
     result = await db.execute(
         select(File, User.username)
         .join(User, File.user_id == User.id)
-        .order_by(File.created_at.desc())
+        # id 作为第二排序键：同一秒上传的文件分页时不会重复或漏掉
+        .order_by(File.created_at.desc(), File.id.desc())
         .offset(skip)
         .limit(limit)
     )

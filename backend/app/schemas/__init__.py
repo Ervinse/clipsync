@@ -25,7 +25,6 @@ from .access_code import (
     AccessCodeResponse,
     AccessCodeListResponse,
     AccessTextResponse,
-    AccessFileResponse,
 )
 from .admin import (
     SystemStats,
@@ -63,7 +62,6 @@ __all__ = [
     "AccessCodeResponse",
     "AccessCodeListResponse",
     "AccessTextResponse",
-    "AccessFileResponse",
     "SystemStats",
     "AdminUserListItem",
     "AdminUserListResponse",

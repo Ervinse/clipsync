@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useAdminStore, useUserStore } from '../stores'
+import { PAGE_SIZE } from '../stores/admin'
 import { formatDateTime, formatSize } from '../utils/format'
 import { copyToClipboard } from '../utils/clipboard'
 
@@ -129,12 +130,17 @@ const handleUpdateQuota = async (user) => {
     return
   }
 
-  const quotaMB = prompt('请输入新配额（MB）', user.quota_bytes / 1024 / 1024)
-  if (!quotaMB) return
+  const input = prompt('请输入新配额（MB）', Math.round(user.quota_bytes / 1024 / 1024))
+  if (input === null || input.trim() === '') return
+  // 与系统设置同样的校验：非负整数（MB）
+  const quotaMB = Number(input.trim())
+  if (!Number.isInteger(quotaMB) || quotaMB < 0) {
+    alert('配额必须是非负整数（MB）')
+    return
+  }
 
   try {
-    const quotaBytes = parseInt(quotaMB) * 1024 * 1024
-    await adminStore.updateUserQuota(user.id, quotaBytes)
+    await adminStore.updateUserQuota(user.id, quotaMB * 1024 * 1024)
   } catch (error) {
     alert('更新失败：' + error.message)
   }
@@ -152,6 +158,40 @@ const handleDeleteUser = async (user) => {
     await adminStore.deleteUser(user.id)
   } catch (error) {
     alert('删除失败：' + error.message)
+  }
+}
+
+// 邀请码状态：used_at 非空即已用过（使用者被删除后 used_by 会置空）；未用过再看是否过期
+const inviteStatus = (invite) => {
+  if (invite.used_at || invite.used_by) return 'used'
+  // 后端时间为 UTC（不带时区后缀），补 Z 再解析
+  if (invite.expires_at && new Date(invite.expires_at + 'Z').getTime() <= Date.now()) return 'expired'
+  return 'available'
+}
+const INVITE_STATUS_LABEL = { used: '已使用', expired: '已过期', available: '可用' }
+
+// 分页：skip 为当前页起点
+const pageInfo = (skip, total) => ({
+  page: Math.floor(skip / PAGE_SIZE) + 1,
+  pages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+  hasPrev: skip > 0,
+  hasNext: skip + PAGE_SIZE < total,
+})
+const usersPage = computed(() => pageInfo(adminStore.usersSkip, adminStore.usersTotal))
+const filesPage = computed(() => pageInfo(adminStore.filesSkip, adminStore.filesTotal))
+
+const gotoUsersPage = async (delta) => {
+  try {
+    await adminStore.fetchUsers(Math.max(0, adminStore.usersSkip + delta * PAGE_SIZE))
+  } catch (error) {
+    alert('加载失败：' + error.message)
+  }
+}
+const gotoFilesPage = async (delta) => {
+  try {
+    await adminStore.fetchFiles(Math.max(0, adminStore.filesSkip + delta * PAGE_SIZE))
+  } catch (error) {
+    alert('加载失败：' + error.message)
   }
 }
 
@@ -277,7 +317,9 @@ const copyInviteCode = async (code) => {
                   <button class="btn-icon" title="修改配额" @click="handleUpdateQuota(user)">
                     💾
                   </button>
+                  <!-- superadmin 之间互不可禁用 / 删除（后端返回 403），按钮不显示 -->
                   <button
+                    v-if="user.role !== 'superadmin'"
                     class="btn-icon"
                     :title="user.is_active ? '禁用' : '启用'"
                     @click="handleToggleUserStatus(user)"
@@ -297,6 +339,11 @@ const copyInviteCode = async (code) => {
             </tr>
           </tbody>
         </table>
+      </div>
+      <div v-if="usersPage.pages > 1" class="pagination">
+        <button class="btn-secondary" :disabled="!usersPage.hasPrev" @click="gotoUsersPage(-1)">上一页</button>
+        <span>第 {{ usersPage.page }} / {{ usersPage.pages }} 页，共 {{ adminStore.usersTotal }} 个用户</span>
+        <button class="btn-secondary" :disabled="!usersPage.hasNext" @click="gotoUsersPage(1)">下一页</button>
       </div>
     </div>
 
@@ -318,7 +365,7 @@ const copyInviteCode = async (code) => {
           <div class="invite-info">
             <div class="info-row">
               <span>状态</span>
-              <span>{{ invite.used_at ? '已使用' : '未使用' }}</span>
+              <span>{{ INVITE_STATUS_LABEL[inviteStatus(invite)] }}</span>
             </div>
             <div class="info-row">
               <span>过期时间</span>
@@ -333,7 +380,12 @@ const copyInviteCode = async (code) => {
             <button class="btn-secondary" @click="copyInviteCode(invite.code)">
               复制
             </button>
-            <button class="btn-danger" @click="handleDeleteInvite(invite.id)">
+            <!-- 已使用的邀请码后端禁止删除（409），按钮不显示 -->
+            <button
+              v-if="inviteStatus(invite) !== 'used'"
+              class="btn-danger"
+              @click="handleDeleteInvite(invite.id)"
+            >
               删除
             </button>
           </div>
@@ -362,6 +414,11 @@ const copyInviteCode = async (code) => {
             </tr>
           </tbody>
         </table>
+      </div>
+      <div v-if="filesPage.pages > 1" class="pagination">
+        <button class="btn-secondary" :disabled="!filesPage.hasPrev" @click="gotoFilesPage(-1)">上一页</button>
+        <span>第 {{ filesPage.page }} / {{ filesPage.pages }} 页，共 {{ adminStore.filesTotal }} 个文件</span>
+        <button class="btn-secondary" :disabled="!filesPage.hasNext" @click="gotoFilesPage(1)">下一页</button>
       </div>
     </div>
 
@@ -817,6 +874,25 @@ td {
   border-radius: 8px;
   color: #FACC15;
   font-size: 0.9rem;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-top: 1rem;
+  color: #94A3B8;
+  font-size: 0.875rem;
+}
+
+.pagination .btn-secondary {
+  flex: none;
+}
+
+.pagination .btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .checkbox-label {
