@@ -4,32 +4,22 @@
 import { defineStore } from 'pinia'
 import api from '../api'
 
+// 列表每页条数（后端上限 100）
+export const PAGE_SIZE = 50
+
 export const useAdminStore = defineStore('admin', {
   state: () => ({
     stats: null,
     users: [],
+    usersTotal: 0,
+    usersSkip: 0,
     inviteCodes: [],
     settings: null,
     files: [],
+    filesTotal: 0,
+    filesSkip: 0,
     isLoading: false,
   }),
-
-  getters: {
-    // 活跃用户数
-    activeUserCount(state) {
-      return state.users.filter(u => u.is_active).length
-    },
-
-    // 总存储使用量
-    totalStorageUsed(state) {
-      return state.users.reduce((sum, u) => sum + (u.used_bytes || 0), 0)
-    },
-
-    // 有效邀请码数量（used_at 非空即已用过，使用者被删除后 used_by 会置空）
-    validInviteCount(state) {
-      return state.inviteCodes.filter(c => !c.used_by && !c.used_at).length
-    },
-  },
 
   actions: {
     /**
@@ -46,14 +36,20 @@ export const useAdminStore = defineStore('admin', {
     },
 
     /**
-     * 获取用户列表
+     * 获取用户列表（分页）；不传 skip 时刷新当前页
      */
-    async fetchUsers(skip = 0, limit = 50) {
+    async fetchUsers(skip = this.usersSkip) {
       try {
         this.isLoading = true
         // 后端返回 { items, total }
-        const data = await api.admin.users.list(skip, limit)
+        const data = await api.admin.users.list(skip, PAGE_SIZE)
         this.users = data?.items || []
+        this.usersTotal = data?.total || 0
+        this.usersSkip = skip
+        // 删除后当前页可能空了：退回上一页
+        if (this.users.length === 0 && skip > 0) {
+          await this.fetchUsers(Math.max(0, skip - PAGE_SIZE))
+        }
       } catch (error) {
         console.error('获取用户列表失败:', error)
         throw error
@@ -63,16 +59,24 @@ export const useAdminStore = defineStore('admin', {
     },
 
     /**
+     * 用户变更后刷新受影响的数据：统计、用户列表、文件列表（删除用户会带走其文件）
+     * 刷新失败不影响已成功的操作
+     */
+    async _refreshAfterUserChange() {
+      await Promise.allSettled([this.fetchStats(), this.fetchUsers(), this.fetchFiles()])
+    },
+
+    /**
      * 更新用户配额
      */
     async updateUserQuota(userId, quotaBytes) {
       try {
         await api.admin.users.updateQuota(userId, quotaBytes)
-        await this.fetchUsers()
       } catch (error) {
         console.error('更新配额失败:', error)
         throw error
       }
+      await this.fetchUsers().catch(() => {})
     },
 
     /**
@@ -81,11 +85,11 @@ export const useAdminStore = defineStore('admin', {
     async updateUserStatus(userId, isActive) {
       try {
         await api.admin.users.updateStatus(userId, isActive)
-        await this.fetchUsers()
       } catch (error) {
         console.error('更新用户状态失败:', error)
         throw error
       }
+      await this._refreshAfterUserChange()
     },
 
     /**
@@ -94,11 +98,11 @@ export const useAdminStore = defineStore('admin', {
     async deleteUser(userId) {
       try {
         await api.admin.users.delete(userId)
-        this.users = this.users.filter(u => u.id !== userId)
       } catch (error) {
         console.error('删除用户失败:', error)
         throw error
       }
+      await this._refreshAfterUserChange()
     },
 
     /**
@@ -168,13 +172,17 @@ export const useAdminStore = defineStore('admin', {
     },
 
     /**
-     * 获取文件元数据列表
+     * 获取文件元数据列表（分页，仅元数据、无下载入口）；不传 skip 时刷新当前页
      */
-    async fetchFiles(skip = 0, limit = 50) {
+    async fetchFiles(skip = this.filesSkip) {
       try {
-        // 仅元数据（无下载入口）
-        const data = await api.admin.files.list(skip, limit)
+        const data = await api.admin.files.list(skip, PAGE_SIZE)
         this.files = data?.items || []
+        this.filesTotal = data?.total || 0
+        this.filesSkip = skip
+        if (this.files.length === 0 && skip > 0) {
+          await this.fetchFiles(Math.max(0, skip - PAGE_SIZE))
+        }
       } catch (error) {
         console.error('获取文件列表失败:', error)
         throw error

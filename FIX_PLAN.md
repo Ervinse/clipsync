@@ -145,18 +145,18 @@
 
 分支：`fix/admin-ui-details`
 
-- [ ] **5.1 必然失败的按钮**（`frontend/src/views/Admin.vue`）
+- [x] **5.1 必然失败的按钮**（`frontend/src/views/Admin.vue`）
   - 禁用按钮对 superadmin 行隐藏（`v-if="user.role !== 'superadmin'"`）。
   - 已使用邀请码隐藏删除按钮（`v-if="!invite.used_at && !invite.used_by"`）。
-- [ ] **5.2 邀请码状态**：「未使用/有效」同时判断 `expires_at`（`stores/admin.js` `validInviteCount`、`Admin.vue` 显示处），区分已用 / 已过期 / 可用。
-- [ ] **5.3 配额输入校验**：`handleUpdateQuota` 参照 `handleSaveSettings` 做非负整数校验，默认值取整。
-- [ ] **5.4 列表只显示前 50 条**：用户和文件列表保存 `total`，加分页控件。
-- [ ] **5.5 删除/禁用用户后统计过期**：操作成功后重新拉取 `stats`、`files`。
-- [ ] **5.6 访问码状态显示**：`stores/access.js` 拆分 `revoked` 与 `expired`；8760 小时上限前后端都加校验。
-- [ ] **5.7 空文件上传提示英文**：`stores/files.js` 上传前检查 `file.size === 0`。
-- [ ] **5.8 上传期间离开文件页再回来可并发上传**：`isUploading` 改为放在 files store。
-- [ ] **5.9 `/api/admin/files` 排序缺次键**：`admin.py` `list_all_files` 加 `File.id.desc()`。
-- [ ] **5.10 残留代码清理**：删除 `HelloWorld.vue` 及 `hero.png`、`vite.svg`、`vue.svg`；删除未使用的 `api/admin.js` `users.get`、access store 的 `textCodes`/`fileCodes`、admin store 的 3 个 getter、clipboard store 的 `historyTotal`；`AccessFileResponse` 改为在公开页提供文件名和大小的元数据接口，或直接删除（倾向删除，公开页文件名展示不是必需）。
+- [x] **5.2 邀请码状态**：「未使用/有效」同时判断 `expires_at`（`stores/admin.js` `validInviteCount`、`Admin.vue` 显示处），区分已用 / 已过期 / 可用。
+- [x] **5.3 配额输入校验**：`handleUpdateQuota` 参照 `handleSaveSettings` 做非负整数校验，默认值取整。
+- [x] **5.4 列表只显示前 50 条**：用户和文件列表保存 `total`，加分页控件。
+- [x] **5.5 删除/禁用用户后统计过期**：操作成功后重新拉取 `stats`、`files`。
+- [x] **5.6 访问码状态显示**：`stores/access.js` 拆分 `revoked` 与 `expired`；8760 小时上限前后端都加校验。
+- [x] **5.7 空文件上传提示英文**：`stores/files.js` 上传前检查 `file.size === 0`。
+- [x] **5.8 上传期间离开文件页再回来可并发上传**：`isUploading` 改为放在 files store。
+- [x] **5.9 `/api/admin/files` 排序缺次键**：`admin.py` `list_all_files` 加 `File.id.desc()`。
+- [x] **5.10 残留代码清理**：删除 `HelloWorld.vue` 及 `hero.png`、`vite.svg`、`vue.svg`；删除未使用的 `api/admin.js` `users.get`、access store 的 `textCodes`/`fileCodes`、admin store 的 3 个 getter、clipboard store 的 `historyTotal`；`AccessFileResponse` 改为在公开页提供文件名和大小的元数据接口，或直接删除（倾向删除，公开页文件名展示不是必需）。
 
 验收：`npm run build` 通过，浏览器手动过一遍管理后台。
 

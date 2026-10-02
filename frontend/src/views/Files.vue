@@ -7,7 +7,8 @@ const filesStore = useFilesStore()
 const userStore = useUserStore()
 
 const uploadInput = ref(null)
-const isUploading = ref(false)
+// 上传状态在 store 中：离开页面再回来仍能看到正在上传，按钮保持禁用
+const isUploading = computed(() => filesStore.isUploading)
 
 onMounted(async () => {
   // 先挂监听再拉列表，避免拉取期间漏掉其他终端的变更
@@ -33,13 +34,11 @@ const handleFileChange = async (event) => {
   if (!file) return
 
   try {
-    isUploading.value = true
     await filesStore.uploadFile(file)
     alert('文件上传成功')
   } catch (error) {
     alert('上传失败：' + error.message)
   } finally {
-    isUploading.value = false
     if (uploadInput.value) {
       uploadInput.value.value = ''
     }

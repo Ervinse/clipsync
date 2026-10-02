@@ -558,8 +558,6 @@ CodeProject/
         └── DEPLOY.md / CHECKLIST.md / README.md
 ```
 
-> `frontend/src/components/HelloWorld.vue` 与 `assets/` 下的图片是 Vite 脚手架残留，未被使用。
-
 ---
 
 ## 14. 部署方案（直接部署）

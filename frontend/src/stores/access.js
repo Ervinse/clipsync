@@ -17,16 +17,6 @@ export const useAccessStore = defineStore('access', {
         new Date(b.created_at) - new Date(a.created_at)
       )
     },
-
-    // 文本访问码
-    textCodes(state) {
-      return state.codes.filter(c => c.target_type === 'text')
-    },
-
-    // 文件访问码
-    fileCodes(state) {
-      return state.codes.filter(c => c.target_type === 'file')
-    },
   },
 
   actions: {
@@ -39,11 +29,16 @@ export const useAccessStore = defineStore('access', {
         // 后端返回 { items, total }；是否失效由前端按 is_revoked / expires_at 计算
         const data = await api.access.list()
         const now = Date.now()
-        this.codes = (data?.items || []).map(c => ({
-          ...c,
+        this.codes = (data?.items || []).map(c => {
           // 后端时间为 UTC（不带时区后缀），补 Z 再解析
-          is_expired: c.is_revoked || (c.expires_at && new Date(c.expires_at + 'Z').getTime() <= now),
-        }))
+          const expired = !!c.expires_at && new Date(c.expires_at + 'Z').getTime() <= now
+          return {
+            ...c,
+            expired,
+            // 已撤销或已过期都算失效（不能再复制链接 / 撤销）
+            is_invalid: c.is_revoked || expired,
+          }
+        })
       } catch (error) {
         console.error('获取访问码列表失败:', error)
         throw error

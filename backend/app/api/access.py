@@ -1,5 +1,6 @@
 """访问码路由：创建 + 撤销（需登录） / 免登录访问（公开，限流）"""
 import secrets
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy import select
@@ -26,6 +27,7 @@ public_router = APIRouter()
 
 _ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 ACCESS_CODE_LENGTH = 12  # 62^12 ≈ 3.2e21，配合限流足以抵抗遍历
+MAX_EXPIRES_HOURS = 8760  # 访问码最长有效期：1 年
 
 
 def generate_access_code() -> str:
@@ -118,6 +120,9 @@ async def create_access_code(
     expires_at = to_naive_utc(data.expires_at)
     if expires_at is not None and expires_at <= utcnow():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="过期时间必须晚于当前时间")
+    # 最长有效期 1 年（前端同样校验）；留 1 分钟余量，避免前端按 8760 小时计算后因时钟误差被拒
+    if expires_at is not None and expires_at > utcnow() + timedelta(hours=MAX_EXPIRES_HOURS, minutes=1):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"有效期最长 {MAX_EXPIRES_HOURS} 小时")
 
     file_id = None
     if data.target_type == AccessCodeTargetType.FILE:

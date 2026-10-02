@@ -9,7 +9,6 @@ export const useClipboardStore = defineStore('clipboard', {
   state: () => ({
     currentText: '',
     history: [],
-    historyTotal: 0,
     isLoading: false,
     // 历史面板是否打开（由 Clipboard.vue 设置）：打开时收到推送要一并重拉历史
     historyVisible: false,
@@ -62,7 +61,6 @@ export const useClipboardStore = defineStore('clipboard', {
       try {
         const data = await api.clipboard.history()
         this.history = data.items || []
-        this.historyTotal = data.total || 0
       } catch (error) {
         console.error('获取历史记录失败:', error)
         throw error
@@ -86,7 +84,6 @@ export const useClipboardStore = defineStore('clipboard', {
     async deleteHistory(historyId) {
       await api.clipboard.deleteHistory(historyId)
       this.history = this.history.filter(item => item.id !== historyId)
-      this.historyTotal = Math.max(0, this.historyTotal - 1)
     },
 
     /**
