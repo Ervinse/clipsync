@@ -8,9 +8,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File as FastAPIFile, Form
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, delete as sql_delete
+from sqlalchemy import select, func, delete as sql_delete, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.exc import StaleDataError
 
 from ..database import get_db
 from ..models import User, UserRole, File, UploadSession, AccessCode
@@ -172,6 +171,12 @@ async def init_upload(
         for expired_id in expired_ids:
             await run_in_threadpool(cleanup_upload_temp, expired_id)
 
+    # 锁住当前用户行，把「数会话 + 算配额 + 插入新会话」串行化，防止并发 init 各自通过校验后超配、超额开会话。
+    # 加锁前先 commit：MySQL 默认 REPEATABLE READ，get_current_user 的鉴权读已固定本事务读视图，
+    # 若不先结束该视图，加锁后的 count / sum 仍读旧快照，锁形同虚设；commit 开启新读视图（expire_on_commit=False，current_user 仍可用）。
+    await db.commit()
+    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+
     result = await db.execute(
         select(func.count()).select_from(UploadSession).where(UploadSession.user_id == current_user.id)
     )
@@ -262,7 +267,12 @@ async def upload_chunk(
     # 临时名带随机后缀：同一分片并发重传时各写各的，不会互相截断
     partial_path = temp_dir / f"{chunk_index}.{uuid.uuid4().hex}.part"
 
-    written = await run_in_threadpool(_save_chunk, chunk_data.file, partial_path, expected_size)
+    # 写盘期间临时目录可能被并发的 complete / 过期清理 / 删除用户 rmtree 掉，
+    # 此时各文件操作抛 FileNotFoundError，一律按会话已结束处理（404），不留半截文件。
+    try:
+        written = await run_in_threadpool(_save_chunk, chunk_data.file, partial_path, expected_size)
+    except FileNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或已结束")
     if written < 0:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -276,17 +286,31 @@ async def upload_chunk(
         )
 
     # 写完再原子替换，断点续传重传同一分片时不会留下半截文件
-    await run_in_threadpool(partial_path.replace, chunk_path)
+    try:
+        await run_in_threadpool(partial_path.replace, chunk_path)
+    except FileNotFoundError:
+        await run_in_threadpool(partial_path.unlink, missing_ok=True)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或已结束")
 
     received_count = await run_in_threadpool(_count_chunks, temp_dir)
-    session.received_chunks = received_count
-    try:
-        await db.commit()
-    except StaleDataError:
+    # 显式 UPDATE + 校验 rowcount：重传已存在的分片时 received_chunks 可能不变，
+    # 靠 ORM 脏检查则不会发出 UPDATE，无法察觉会话已被并发删除。显式 UPDATE 的
+    # rowcount==0 才能可靠判定「会话行已不存在」（MySQL 方言启用 FOUND_ROWS，
+    # rowcount 为匹配行数而非改动行数，重传未变分片仍匹配到 1 行）。
+    result = await db.execute(
+        sql_update(UploadSession)
+        .where(
+            UploadSession.upload_id == upload_id,
+            UploadSession.user_id == current_user.id,  # 安全红线：归属校验
+        )
+        .values(received_chunks=received_count)
+    )
+    if result.rowcount == 0:
         # 写分片期间会话被 complete / 过期清理 / 删除用户删掉了
         await db.rollback()
         await run_in_threadpool(cleanup_upload_temp, upload_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或已结束")
+    await db.commit()
 
     return {
         "message": "分片上传成功",
