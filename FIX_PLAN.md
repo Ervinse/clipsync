@@ -76,31 +76,31 @@
 
 分支：`fix/realtime-coverage`
 
-- [ ] **3.1 断线重连后不补拉**
+- [x] **3.1 断线重连后不补拉**
   - 位置：`frontend/src/stores/clipboard.js`、`frontend/src/stores/files.js` 的 `setupWebSocket` / `cleanupWebSocket`。
   - 做法：同时订阅 `open`，复用已有回调；cleanup 时一并解绑。
 
-- [ ] **3.2 删除历史不广播**
+- [x] **3.2 删除历史不广播**
   - 位置：`backend/app/api/clipboard.py` `delete_clipboard_history`。
   - 做法：提交后广播 `clipboard_updated`。
 
-- [ ] **3.3 历史面板为空时其他终端保存不刷新**
+- [x] **3.3 历史面板为空时其他终端保存不刷新**
   - 位置：`frontend/src/stores/clipboard.js`（`history.length > 0` 判断）。
   - 做法：store 增加 `historyVisible`，由 `Clipboard.vue` 打开/关闭面板时设置，回调里按它判断是否重拉历史。
 
-- [ ] **3.4 访问码变更不同步**
+- [x] **3.4 访问码变更不同步**
   - 后端：`backend/app/api/access.py` 创建、撤销后广播 `access_codes_changed`；删除文件时已级联删码，`file_deleted` 足够。
   - 前端：`AccessCodes.vue` 挂载时订阅 `access_codes_changed` 和 `file_deleted`，收到后 `fetchCodes()`，卸载时解绑。
 
-- [ ] **3.5 侧栏配额刷新不全**
+- [x] **3.5 侧栏配额刷新不全**
   - 前端：把 `file_added` / `file_deleted` / `quota_updated` 的配额刷新监听放到 `Home.vue`（布局级），收到后调 `userStore.fetchUserInfo()`；`files.js` `deleteFile` 成功后主动 `fetchFiles()`。
   - 后端：`backend/app/api/admin.py` `update_user_quota` 提交后给目标用户广播 `quota_updated`。
 
-- [ ] **3.6 WS 刷新导致文件列表闪烁**
+- [x] **3.6 WS 刷新导致文件列表闪烁**
   - 位置：`frontend/src/stores/files.js` `fetchFiles`。
   - 做法：增加 `{ silent }` 参数，WS 回调用静默版本，不改 `isLoading`。
 
-- [ ] **3.7 剪贴板 WS 拉取乱序**（疑似）
+- [x] **3.7 剪贴板 WS 拉取乱序**（疑似）
   - 做法：静默刷新带递增序号，只采用最新一次请求的结果。
 
 验收：`pytest`、`npm run build` 通过；两个浏览器窗口手动验证各事件。

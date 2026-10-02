@@ -15,6 +15,7 @@ from ..schemas import (
 )
 from ..core.deps import get_current_user
 from ..core.timeutil import utcnow, to_naive_utc
+from ..core.ws_manager import manager
 from ..rate_limit import limiter
 from .files import stream_file_response
 
@@ -156,6 +157,12 @@ async def create_access_code(
     await db.commit()
     await db.refresh(access_code)
 
+    # 通知该用户其他终端刷新访问码列表（只发信号）
+    await manager.broadcast_to_user(
+        user_id=current_user.id,
+        message={"type": "access_codes_changed", "data": {}},
+    )
+
     return _to_response(request, access_code)
 
 
@@ -194,6 +201,11 @@ async def revoke_access_code(
 
     access_code.is_revoked = True
     await db.commit()
+
+    await manager.broadcast_to_user(
+        user_id=current_user.id,
+        message={"type": "access_codes_changed", "data": {}},
+    )
     return None
 
 

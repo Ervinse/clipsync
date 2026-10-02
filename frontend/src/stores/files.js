@@ -35,10 +35,11 @@ export const useFilesStore = defineStore('files', {
   actions: {
     /**
      * 获取文件列表
+     * silent：WS 推送触发的后台刷新不切 isLoading，避免列表闪成加载状态
      */
-    async fetchFiles() {
+    async fetchFiles({ silent = false } = {}) {
       try {
-        this.isLoading = true
+        if (!silent) this.isLoading = true
         // 后端返回 { items, total, used_bytes, quota_bytes }
         const data = await api.files.list()
         this.files = data?.items || []
@@ -52,7 +53,7 @@ export const useFilesStore = defineStore('files', {
         console.error('获取文件列表失败:', error)
         throw error
       } finally {
-        this.isLoading = false
+        if (!silent) this.isLoading = false
       }
     },
 
@@ -122,19 +123,23 @@ export const useFilesStore = defineStore('files', {
         console.error('删除文件失败:', error)
         throw error
       }
+      // 删除已成功：再静默拉一次，同步配额；刷新失败不影响删除结果
+      await this.fetchFiles({ silent: true }).catch(() => {})
     },
 
     /**
      * 监听 WebSocket：其他终端上传或删除文件后刷新列表
-     * 后端推送只带 id 等轻量信号，收到后重新拉取列表，保证与服务端一致
+     * 后端推送只带 id 等轻量信号，收到后重新拉取列表，保证与服务端一致；
+     * 连接（重新）建立时也补拉一次，断线期间的变更不会漏掉
      */
     setupWebSocket() {
       if (this._onFilesChanged) return
       this._onFilesChanged = () => {
-        this.fetchFiles().catch(() => {})
+        this.fetchFiles({ silent: true }).catch(() => {})
       }
       ws.on('file_added', this._onFilesChanged)
       ws.on('file_deleted', this._onFilesChanged)
+      ws.on('open', this._onFilesChanged)
     },
 
     /**
@@ -144,6 +149,7 @@ export const useFilesStore = defineStore('files', {
       if (this._onFilesChanged) {
         ws.off('file_added', this._onFilesChanged)
         ws.off('file_deleted', this._onFilesChanged)
+        ws.off('open', this._onFilesChanged)
         this._onFilesChanged = null
       }
     },

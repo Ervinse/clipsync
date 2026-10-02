@@ -259,4 +259,10 @@ async def delete_clipboard_history(
     )
     await db.commit()
 
+    # 其他终端打开着历史面板时据此重拉（只发信号）
+    await manager.broadcast_to_user(
+        user_id=current_user.id,
+        message={"type": "clipboard_updated", "data": {}},
+    )
+
     return None
