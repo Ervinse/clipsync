@@ -103,7 +103,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 **未实现**：直接创建用户（免邀请码）、重置密码、变更角色、超管查看他人文本内容。目前提升管理员只能直接改数据库，超管通过 `scripts/create_superadmin.py` 创建。
 
-> 关键区别：**管理员能看管理数据但看不到用户隐私内容**（只能看文件名、大小、时间等元数据）；**超级管理员才能下载他人文件**。这一约束在后端接口层强制：内容读取接口对 admin 与对普通用户一视同仁地做归属校验，仅 superadmin 可绕过。超管不能禁用或删除自己。
+> 关键区别：**管理员能看管理数据但看不到用户隐私内容**（只能看文件名、大小、时间等元数据）；**超级管理员才能下载他人文件**。这一约束在后端接口层强制：内容读取接口对 admin 与对普通用户一视同仁地做归属校验，仅 superadmin 可绕过。超管不能禁用或删除自己，也不能禁用或删除**其他** superadmin（返回 403）。
 
 ---
 
@@ -212,7 +212,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 目前只使用两个 key：`registration_enabled`（`true`/`false`，缺省视为开放）与 `default_quota_bytes`（缺省回落 `.env` 的 `DEFAULT_QUOTA_BYTES`）。
 
-> **外键无级联**：除 `access_codes.file_id` 外，所有外键都没有 `ON DELETE CASCADE`。删除用户时由 `DELETE /api/admin/users/{id}` 按依赖顺序显式删除访问码、上传会话、文件、历史、当前文本，处理其创建/使用过的邀请码，再删用户与磁盘目录。
+> **外键无级联**：除 `access_codes.file_id` 外，所有外键都没有 `ON DELETE CASCADE`。删除用户时由 `DELETE /api/admin/users/{id}` 按依赖顺序显式删除访问码、上传会话、文件、历史、当前文本，处理其创建/使用过的邀请码，再删用户与磁盘目录。邀请码规则：该用户**使用过**的码保留记录、`used_by` 置空（`used_at` 保留，码仍不可复用）；该用户**创建的未使用**码直接删除；该用户创建的**已使用**码保留作审计，`created_by` 转记到执行删除的超管名下（`created_by` 为 NOT NULL，不改模型）。删除前锁住被删用户行，与 `upload/init` 串行化，避免新建会话的 tmp 目录成为孤儿；磁盘清理失败只记日志，由定时清理的孤儿扫描兜底。
 
 > **时间约定**：所有 DATETIME 列存 naive UTC；数据库会话时区固定 `+00:00`，代码统一用 `utcnow()`。
 
@@ -220,7 +220,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 ## 6. API 设计
 
-除注册、登录、快速访问外，`/api/*` 都需 `Authorization: Bearer <token>`。缺少或无效 token 返回 401，用户被禁用返回 403。健康检查为 `GET /`。
+除注册、登录、快速访问外，`/api/*` 都需 `Authorization: Bearer <token>`。缺少或无效 token 返回 401，用户被禁用返回 403 并带响应头 `X-Auth-Error: disabled`（前端据此与普通「权限不足」的 403 区分并登出）。健康检查为 `GET /`。
 
 限流（slowapi，按客户端 IP，进程内存计数）：注册 5 次/分钟、登录 10 次/分钟、`/api/access/*` 每个接口 30 次/分钟。
 
@@ -230,7 +230,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 |------|------|------|------|
 | POST | /api/auth/register | 公开 | 用户名（3–64 位，字母数字及 `_.-`）+ 密码（8 位以上、不超过 72 字节）+ 邀请码；注册开关关闭时 403；新用户配额取系统设置的默认配额；返回 JWT |
 | POST | /api/auth/login | 公开 | 返回 JWT；用户不存在与密码错误返回同样的 401，耗时一致 |
-| GET | /api/auth/me | 登录 | 当前用户信息（含 role、配额、已用空间） |
+| GET | /api/auth/me | 登录 | 当前用户信息（含 role、配额、已用空间 `used_bytes`、上传中占用 `reserved_bytes`）；账号被禁用时 403 并带响应头 `X-Auth-Error: disabled` |
 
 ### 6.2 文本 `api/clipboard.py`
 
@@ -240,15 +240,15 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | PUT | /api/clipboard | 登录 | 更新当前文本（upsert），旧内容入历史，广播 |
 | GET | /api/clipboard/history | 登录 | 列出自己的全部文本历史版本（不分页，最多 `HISTORY_KEEP` 条） |
 | POST | /api/clipboard/history/{id}/restore | 归属 | 把某历史版本恢复为当前文本，广播 |
-| DELETE | /api/clipboard/history/{id} | 归属 | 删除某条历史版本 |
+| DELETE | /api/clipboard/history/{id} | 归属 | 删除某条历史版本，广播 |
 
-> 前端目前只调用前两个接口和历史列表；恢复与删除历史的接口后端已实现，前端**未接入**（点击历史只是把内容填回编辑框）。
+> 前端：点击历史条目只把内容填回编辑框（不保存）；「恢复」按钮调 restore，「删除」按钮调 delete。文本内容按 UTF-8 字节数校验，上限 16777215 字节。
 
 ### 6.3 文件 `api/files.py`
 
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
-| GET | /api/files | 登录 | 列出自己的文件 |
+| GET | /api/files | 登录 | 列出自己的文件，并返回 `used_bytes`、`reserved_bytes`、`quota_bytes`（前端配额按 已用 + 上传中 计算） |
 | POST | /api/files/upload/init | 登录 | 初始化分片上传（先校验配额），返回 upload_id |
 | POST | /api/files/upload/chunk | 登录 | 上传单个分片 |
 | POST | /api/files/upload/complete | 登录 | 合并分片，写记录，广播 |
@@ -260,9 +260,9 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
-| POST | /api/access-codes | 登录 | 为「当前文本」或「某个文件」生成访问码；`expires_at` 必须晚于当前时间 |
-| GET | /api/access-codes | 登录 | 列出自己创建的访问码（含已撤销的） |
-| DELETE | /api/access-codes/{id} | 归属 | 撤销访问码（标记 `is_revoked`，记录保留） |
+| POST | /api/access-codes | 登录 | 为「当前文本」或「某个文件」生成访问码；`expires_at` 必须晚于当前时间，且不超过 8760 小时后；广播 `access_codes_changed` |
+| GET | /api/access-codes | 登录 | 列出自己创建的访问码（含已撤销的；已过期的会被定时任务删除） |
+| DELETE | /api/access-codes/{id} | 归属 | 撤销访问码（标记 `is_revoked`，记录保留），广播 `access_codes_changed` |
 | GET | /api/access/{code} | **公开** | 免登录：**仅文本码**，返回属主当前最新文本 + 属主用户名 |
 | GET | /api/access/{code}/download | **公开** | 免登录：**仅文件码**，流式下载文件内容 |
 
@@ -275,7 +275,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | GET | /api/admin/stats | admin+ | 系统统计（用户数、活跃用户、文件数、存储占用、访问码数） |
 | GET | /api/admin/users | admin+ | 用户列表，分页 `skip`/`limit`（≤100），含配额、已用空间、文件数 |
 | GET | /api/admin/users/{id} | admin+ | 用户详情（元数据，含剪贴板更新时间，不含内容） |
-| PATCH | /api/admin/users/{id}/quota | **superadmin** | 修改配额 `{quota_bytes}` |
+| PATCH | /api/admin/users/{id}/quota | **superadmin** | 修改配额 `{quota_bytes}`，给目标用户广播 `quota_updated` |
 | PATCH | /api/admin/users/{id}/status | **superadmin** | 启用/禁用 `{is_active}`；禁用时立即断开其 WebSocket；不能操作自己 |
 | DELETE | /api/admin/users/{id} | **superadmin** | 删除用户及其全部数据；不能删除自己 |
 | GET | /api/admin/invite-codes | admin+ | 邀请码列表与状态 |
@@ -298,10 +298,11 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 维护 `dict[user_id, set[WebSocket]]`，同一用户多终端在线时集合里有多条连接。
 
 - **连接**：`/ws`，token 经子协议 `Sec-WebSocket-Protocol: clipsync.v1, bearer.<JWT>` 传递（不放 URL，避免进 access log）→ 校验签名、过期、用户存在且未禁用 → 服务端只回选 `clipsync.v1` → 加入集合。
-- **踢下线**：用户被禁用或删除时，服务端主动关闭其全部连接。
+- **握手被拒**：token 无效、用户不存在或被禁用时，服务端在 accept 之前关闭连接，浏览器只能看到 **1006**（与服务器不可达无法区分）。
+- **踢下线**：已连接的用户被禁用或删除时，服务端以 **1008** 主动关闭其全部连接。
 - **单进程**：连接表与限流计数都在进程内存中，后端必须单 worker 运行。
 - **断开**：从集合移除，空则删 key。
-- **广播**：`broadcast_to_user(user_id, message, exclude=触发连接)`，对该用户的所有连接并发发送，单个连接超时 5 秒；发送失败或超时的连接会被移出集合。网络卡住的终端不会拖慢触发广播的 HTTP 请求。
+- **广播**：`broadcast_to_user(user_id, message)`，发给该用户的**全部连接（含触发变更的终端）**，并发发送，单个连接超时 5 秒；发送失败或超时的连接会被移出集合。网络卡住的终端不会拖慢触发广播的 HTTP 请求。
 
 ### 事件类型
 
@@ -311,12 +312,21 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 { "type": "clipboard_updated", "data": { "updated_at": "..." } }
 { "type": "file_added",   "data": { "id": 1, "original_name": "...", "size": 123 } }
 { "type": "file_deleted", "data": { "id": 1 } }
+{ "type": "access_codes_changed", "data": {} }
+{ "type": "quota_updated", "data": { "quota_bytes": 104857600 } }
 ```
 
-- 前端订阅 `clipboard_updated`（剪贴板页，收到后重新拉取 `GET /api/clipboard`）和 `file_added` / `file_deleted`（文件页，收到后重新拉取 `GET /api/files`）。监听在页面挂载时注册、卸载时清理。
-- 目前接口调用时没有传入 `exclude`，触发变更的终端也会收到广播。
+| 事件 | 触发 | 前端处理 |
+|------|------|----------|
+| `clipboard_updated` | 保存 / 恢复历史 / 删除历史 | 剪贴板页静默重拉当前文本；历史面板打开时一并重拉历史（按请求序号丢弃过期结果） |
+| `file_added` / `file_deleted` | 上传完成 / 删除文件 | 文件页静默重拉列表；访问码页在 `file_deleted` 时重拉（文件码被级联删除）；布局（`Home.vue`）刷新侧栏配额 |
+| `access_codes_changed` | 创建 / 撤销访问码 | 访问码页重拉列表 |
+| `quota_updated` | 超管修改该用户配额 | 布局刷新侧栏配额 |
+
+- 页面级监听在挂载时注册、卸载时清理；各页面同时订阅 `open`，连接（重新）建立后补拉一次，断线期间的变更不会漏掉。
 - 心跳：客户端每 30 秒发 `{"type":"ping"}`，服务端回 `{"type":"pong"}`；单条消息超过 1KB 服务端直接断开。心跳只在连接打开时发送，离线时不排队。
-- 前端重连：指数退避（1s、2s、4s…，最长 30s），不限次数；网络恢复（`online`）或页面回到前台时立即重试。服务端以 1008 关闭（token 无效、用户被禁用或删除）时不再重连。登出时主动断开，不会自动重连。
+- 前端重连：指数退避（1s、2s、4s…，最长 30s），不限次数；网络恢复（`online`）或页面回到前台时立即重试。收到 1008 时停止重连并登出。连接从未打开就关闭（多为握手被拒的 1006）时，前端调一次 `/api/auth/me` 确认会话：401 / 禁用 403 则登出、不再重连，其他情况继续退避重连。登出时主动断开，不会自动重连。
+- 重连只使用本标签页内存中的 token，不读 localStorage；其他标签页换账号改写 localStorage 时，本页整页重载。
 
 ### WebSocket 协议自适应（HTTP/HTTPS 通用）
 
@@ -353,7 +363,8 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
   校验：存在 / 类型匹配 / 未撤销 / 未过期 / 属主未被禁用 / 文件仍属于属主
 ```
 
-- 撤销、过期、（文件码）源文件删除、属主被禁用，都会使访问码失效。
+- 撤销、过期、（文件码）源文件删除或磁盘文件丢失、属主被禁用，都会使访问码失效。属主被禁用只是暂时失效：重新启用后，未撤销、未过期的码自动恢复可用。
+- 有效期最长 8760 小时（1 年），前后端都校验。过期的码由定时任务 `cleanup_expired` 删除；撤销的码保留记录，前端分别显示「已撤销」「已过期」。
 - 以上任何一种失效情况都统一返回 404「访问码无效或已失效」，不暴露码是否存在。
 
 ### 安全考量
@@ -368,17 +379,16 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
 
 面向 admin / superadmin 的前端区域：`/admin` 路由，单个页面 `views/Admin.vue`，路由守卫校验 role。
 
-### 页面结构（4 个 tab）
+### 页面结构（5 个 tab）
 
 ```
 /admin
 ├── 统计      # 总用户、活跃用户、文件总数、总存储
-├── 用户      # 列表；改配额 / 启用禁用 / 删除 按钮仅超管可见
-├── 邀请码    # 生成（填有效天数，0 为永久）/ 列表 / 复制 / 删除
-└── 文件      # 全站文件【元数据】列表（admin 与 superadmin 均可见，无下载入口）
+├── 用户      # 分页列表；改配额 / 启用禁用 / 删除 按钮仅超管可见（superadmin 行不显示禁用、删除）
+├── 邀请码    # 生成（填有效天数，0 为永久）/ 列表（已使用 / 已过期 / 可用）/ 复制 / 删除（已使用的不显示删除）
+├── 文件      # 全站文件【元数据】分页列表（admin 与 superadmin 均可见，无下载入口）
+└── 设置      # 开放注册、新用户默认配额：admin 只读，superadmin 可保存
 ```
-
-「设置」tab 可查看和修改开放注册、新用户默认配额两项：admin 只读，superadmin 可保存。
 
 **未实现**：全站访问码管理、超管在后台直接下载他人文件的入口（超管可调 `/api/files/{id}/download`）。
 
@@ -536,14 +546,17 @@ CodeProject/
     │   │   ├── router/index.js   # 路由 + 登录/角色守卫
     │   │   ├── api/              # request.js(axios 封装) + auth/clipboard/files/access/admin
     │   │   ├── stores/           # user / clipboard / files / access / admin
-    │   │   ├── utils/websocket.js  # WS 客户端（协议自适应、重连、心跳）
+    │   │   ├── utils/
+    │   │   │   ├── websocket.js    # WS 客户端（协议自适应、重连、心跳）
+    │   │   │   ├── clipboard.js    # 复制到剪贴板（HTTP 下降级为 execCommand）
+    │   │   │   └── format.js       # 文件大小、UTC 时间格式化
     │   │   └── views/
     │   │       ├── Login.vue / Register.vue
     │   │       ├── Home.vue          # 登录后布局（侧边栏）
     │   │       ├── Clipboard.vue     # 文本 + 历史
     │   │       ├── Files.vue         # 文件
     │   │       ├── AccessCodes.vue   # 访问码管理
-    │   │       ├── Admin.vue         # 管理后台（4 个 tab）
+    │   │       ├── Admin.vue         # 管理后台（5 个 tab）
     │   │       └── PublicAccess.vue  # 凭访问码免登录查看 /access/:code
     │   ├── index.html
     │   ├── package.json
@@ -568,7 +581,7 @@ CodeProject/
 - **后端**：`uvicorn --workers 1 --host 127.0.0.1 --proxy-headers`，systemd 托管。**必须单 worker**：WebSocket 连接表与限流计数都在进程内存中，多进程会导致实时同步与限流失效。
 - **前端**：`npm run build` 产出静态文件，Nginx 托管。
 - **Nginx**：静态文件 + `/api`、`/ws` 反代，HTTP/HTTPS 两份配置切换。前端页面 `/access/<code>` 是 SPA 路由，由 `try_files` 回落到 `index.html`，**不要**把 `/access` 反代到后端。
-- **Docker**：`deployment/docker/docker-compose.yml`（MySQL + 后端 + 前端 Nginx），后端同样单 worker，信任容器网段的 `X-Forwarded-For`。
+- **Docker**：`deployment/docker/docker-compose.yml`（MySQL + 后端 + 前端 Nginx），后端同样单 worker，只信任 compose 固定子网 `172.28.0.0/16` 的 `X-Forwarded-For`，Nginx 用 `$remote_addr` 覆盖该头。
 
 ### 上线步骤（概要）
 
@@ -576,20 +589,21 @@ CodeProject/
 1. 建 MySQL 库/用户，填 backend/.env（JWT_SECRET 用 openssl rand -hex 32 生成）
 2. cd backend && pip install -r requirements.txt && alembic upgrade head
 3. python -m scripts.create_superadmin   # 创建首个超级管理员
-4. cd frontend && npm install && npm run build   # 需要 Node 20.19+ 或 22.12+
+4. cd frontend && npm ci && npm run build   # 需要 Node 20.19+ 或 22.12+
 5. Nginx 安装 deployment/nginx/clipsync.conf，nginx -t 后 reload
 6. systemctl enable --now clipsync
 7. （日后）证书就位 → 换 clipsync-https.conf → .env 设 HSTS_ENABLED=true、改 CORS_ORIGINS → 重启后端并 reload Nginx
 ```
 
-完整步骤见 `deployment/DEPLOY.md`；`deployment/scripts/deploy.sh` 可自动执行第 2–6 步（不会建库）。
+完整步骤见 `deployment/DEPLOY.md`；`deployment/scripts/deploy.sh` 自动执行第 2–5 步并安装 systemd 服务、写入 cron（不会建库），**不会**启用服务，第 6 步的 `systemctl enable --now clipsync` 需手动执行。
 
 ### Nginx 关注点
 
 - `location /ws` 需 `Upgrade`/`Connection` 头支持 WebSocket。
 - `client_max_body_size` 略大于单个分片大小。
-- `/api` 反代加超时设置适配上传。
-- HTTPS 配置额外含证书路径、80→443 跳转、可选 HSTS。
+- `/api` 反代加超时设置适配上传；`Host` 用 `$http_host`（保留端口，访问码链接才正确）。
+- 静态页面由 Nginx 加 `X-Frame-Options`、`X-Content-Type-Options`、`Referrer-Policy`，`index.html` 不缓存；`/api` 的安全头由后端下发。
+- HTTPS 配置额外含证书路径、80→443 跳转。**HSTS 只由后端按 `HSTS_ENABLED` 下发**，Nginx 不配置。
 
 ---
 

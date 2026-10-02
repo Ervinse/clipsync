@@ -149,7 +149,33 @@ sudo systemctl restart clipsync
 sudo bash /var/www/clipsync/deployment/scripts/update.sh
 ```
 
-流程：停服务 → 备份数据库 → 在项目根目录执行 `git pull --ff-only` → 更新后端依赖并执行迁移 → 构建前端 → 重启服务。
+流程：停服务 → 备份数据库 → 在项目根目录以 www-data 执行 `git pull --ff-only` → 更新后端依赖并执行迁移 → `npm ci` 并构建前端 → 重启服务。任何一步失败，脚本退出前都会尝试把服务重新拉起。
+
+### 回滚
+
+更新后发现问题时，回到上一个版本：
+
+```bash
+sudo systemctl stop clipsync
+
+# 1. 代码回到更新前的提交（git reflog 可查到 pull 之前的位置）
+cd /var/www/clipsync
+sudo -u www-data git reflog -n 5
+sudo -u www-data git checkout <更新前的提交>
+
+# 2. 若这次更新包含数据库迁移：先降级迁移，或用更新前的备份恢复（update.sh 第 2 步已自动备份）
+cd backend && source venv/bin/activate
+alembic downgrade <更新前的 revision>
+# 或：gunzip < /var/backups/clipsync/database/clipsync_<更新前时间>.sql.gz | mysql -u clipsync -p clipsync
+
+# 3. 依赖与前端回到对应版本
+pip install -r requirements.txt
+cd ../frontend && sudo -u www-data npm ci && sudo -u www-data npm run build
+
+sudo systemctl start clipsync
+```
+
+回滚到旧提交后仓库处于分离 HEAD 状态，问题修好后用 `git checkout master && git pull --ff-only` 回到主线。
 
 ### 备份与恢复
 

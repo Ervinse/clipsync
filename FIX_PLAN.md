@@ -1,5 +1,7 @@
 # ClipSync 审查问题修复计划
 
+> **状态**：阶段 1–7 已于 2026-10-02 完成。唯一未勾选的是 6.14（需在 Linux 上实际 `docker compose up` 验证，预防措施已加入）；各阶段的浏览器手动验证项见对应「验收」。
+
 > 来源：master @ `452cfa4` 的跨模块只读审查（后端生命周期与权限、并发与实时同步、前端状态与部署三份报告，关键结论已对照代码复核）。
 > 用法：按阶段顺序推进，每个阶段从最新的 `master` 开一个分支，做完、测试通过、前端能构建后再合并。每条修完在前面的 `[ ]` 打勾。
 > 行号以 `452cfa4` 为准，修改后可能漂移，以函数名定位为主。
@@ -192,22 +194,22 @@
 
 分支：`fix/docs-sync`（放在最后，覆盖前面各阶段带来的变化）
 
-- [ ] DESIGN 第 7 节、frontend/README：握手被拒为 1006、踢下线为 1008；广播发给用户全部连接（含触发方），删掉「exclude=触发连接」；补充新事件 `access_codes_changed`、`quota_updated`，以及重连后补拉。
-- [ ] DESIGN 第 9 节与目录树：管理后台 5 个 tab（含设置）。
-- [ ] DESIGN 6.2：删除「恢复/删除历史前端未接入」。
-- [ ] DESIGN 第 4 节：superadmin 也不能禁用或删除其他 superadmin。
-- [ ] DESIGN 第 5 节：删除用户时邀请码处理规则（未使用删除、已使用转记到操作者）。
-- [ ] DESIGN 第 8 节：属主禁用期间访问码失效，重新启用后恢复。
-- [ ] DESIGN 第 10 节、6.3：取消上传接口、`reserved_bytes`、显示口径。
-- [ ] DESIGN 6.4：过期访问码会被定时任务删除。
-- [ ] DESIGN 第 14 节：deploy.sh 自动执行第 2–5 步，服务需手动 enable；HSTS 由后端按 `HSTS_ENABLED` 下发。
-- [ ] CLAUDE.md:31：`HSTS_ENABLED`、`CORS_ORIGINS` 生效，`DEPLOY_SCHEME`、`COOKIE_SECURE` 为预留。
-- [ ] CLAUDE.md:4、:78：部署指针改为 `deployment/DEPLOY.md`。
-- [ ] CLAUDE.md:51：`.gitignore` 排除 `backend/storage/`。
-- [ ] docker/README：代理信任网段与 XFF 说明、定时任务、备份命令。
-- [ ] CHECKLIST：回滚章节（DEPLOY.md 补写）或删掉引用；统一 `npm ci`；HSTS 检查改查 `/api`。
-- [ ] DESIGN 目录树、frontend/README：补上 `utils/clipboard.js`、`utils/format.js` 等。
-- [ ] 本文件：全部完成后标注完成日期，或删除。
+- [x] DESIGN 第 7 节、frontend/README：握手被拒为 1006、踢下线为 1008；广播发给用户全部连接（含触发方），删掉「exclude=触发连接」；补充新事件 `access_codes_changed`、`quota_updated`，以及重连后补拉。
+- [x] DESIGN 第 9 节与目录树：管理后台 5 个 tab（含设置）。
+- [x] DESIGN 6.2：删除「恢复/删除历史前端未接入」。
+- [x] DESIGN 第 4 节：superadmin 也不能禁用或删除其他 superadmin。
+- [x] DESIGN 第 5 节：删除用户时邀请码处理规则（未使用删除、已使用转记到操作者）。
+- [x] DESIGN 第 8 节：属主禁用期间访问码失效，重新启用后恢复。
+- [x] DESIGN 第 10 节、6.3：取消上传接口、`reserved_bytes`、显示口径。
+- [x] DESIGN 6.4：过期访问码会被定时任务删除。
+- [x] DESIGN 第 14 节：deploy.sh 自动执行第 2–5 步，服务需手动 enable；HSTS 由后端按 `HSTS_ENABLED` 下发。
+- [x] CLAUDE.md:31：`HSTS_ENABLED`、`CORS_ORIGINS` 生效，`DEPLOY_SCHEME`、`COOKIE_SECURE` 为预留。
+- [x] CLAUDE.md:4、:78：部署指针改为 `deployment/DEPLOY.md`。
+- [x] CLAUDE.md:51：`.gitignore` 排除 `backend/storage/`。
+- [x] docker/README：代理信任网段与 XFF 说明、定时任务、备份命令。（阶段 6 已一并完成）
+- [x] CHECKLIST：回滚章节（DEPLOY.md 补写）或删掉引用；统一 `npm ci`；HSTS 检查改查 `/api`。
+- [x] DESIGN 目录树、frontend/README：补上 `utils/clipboard.js`、`utils/format.js` 等。
+- [x] 本文件：全部完成后标注完成日期，或删除。（已在文件开头标注）
 
 ---
 
