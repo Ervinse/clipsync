@@ -83,7 +83,7 @@
 - [ ] HTTPS 页面可访问，证书有效
 - [ ] HTTP 自动跳转到 HTTPS
 - [ ] WebSocket 使用 `wss://`
-- [ ] 响应头包含 `Strict-Transport-Security`
+- [ ] `/api/...` 的响应头包含 `Strict-Transport-Security`（HSTS 由后端下发，静态页面不带；例如 `curl -sI https://your-domain.com/api/auth/me | grep -i strict`）
 
 ## 定时任务
 

@@ -51,7 +51,9 @@ docker compose exec backend python -m scripts.create_superadmin
 | frontend | `../../frontend` + `Dockerfile.frontend`（Node 22 构建，Nginx 提供服务） | 80 | 挂载 `./nginx-docker.conf` |
 
 - 后端必须保持**单 worker**：WebSocket 连接表与限流计数都在进程内存中。
-- 后端只信任私有网段（`172.16.0.0/12`、`10.0.0.0/8`、`192.168.0.0/16`）发来的 `X-Forwarded-For`，即前端容器里的 Nginx，限流才能拿到真实客户端 IP。
+- compose 定义了固定子网 `172.28.0.0/16`，后端只信任这个网段发来的 `X-Forwarded-For`（即前端容器里的 Nginx）。Nginx 用 `$remote_addr` 覆盖 `X-Forwarded-For`，客户端自带的值一律丢弃，限流拿到的就是真实来源 IP。
+- 若 `172.28.0.0/16` 与宿主机已有网段冲突，同时修改 `docker-compose.yml` 里的 `subnet` 和 backend `command` 中的 `--forwarded-allow-ips`。
+- `DB_ROOT_PASSWORD`、`DB_PASSWORD`、`JWT_SECRET` 未设置时 `docker compose` 直接报错，不会回落到默认值。
 
 ## 常用命令
 
@@ -84,13 +86,16 @@ docker compose exec db mysql -u clipsync -p clipsync
 
 ### 数据库
 
+用户名、密码、库名取容器内的 `$MYSQL_USER` / `$MYSQL_PASSWORD` / `$MYSQL_DATABASE`（由 compose 注入），
+外层用单引号，变量在容器内展开，宿主机 shell 不需要知道密码：
+
 ```bash
 # 备份（-T 关闭 TTY，避免输出被破坏）
-docker compose exec -T db mysqldump -u clipsync -p"$DB_PASSWORD" \
-    --single-transaction clipsync > backup_$(date +%Y%m%d_%H%M%S).sql
+docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysqldump -u "$MYSQL_USER" --single-transaction "$MYSQL_DATABASE"' \
+    | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
 
 # 恢复
-docker compose exec -T db mysql -u clipsync -p"$DB_PASSWORD" clipsync < backup.sql
+gunzip -c backup.sql.gz | docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u "$MYSQL_USER" "$MYSQL_DATABASE"'
 ```
 
 ### 上传的文件
@@ -107,6 +112,18 @@ docker run --rm -v <实际卷名>:/data -v "$(pwd)":/backup \
 
 ```bash
 docker cp clipsync-backend:/app/storage ./storage_backup
+```
+
+## 定时任务（宿主机 cron）
+
+Docker 部署不会自动写入 cron，需要在宿主机配置。在 `/etc/cron.d/clipsync-docker` 中写入（把 `/opt/clipsync` 换成实际的项目路径）：
+
+```cron
+# 每小时清理过期访问码、过期上传会话与孤儿目录（与直接部署共用 backend/scripts/cleanup_expired.py）
+0 * * * * root cd /opt/clipsync/deployment/docker && docker compose exec -T backend python -m scripts.cleanup_expired >> /var/log/clipsync-cleanup.log 2>&1
+
+# 每天凌晨 2 点备份数据库，保留 30 天（cron 里的 % 必须写成 \%）
+0 2 * * * root mkdir -p /var/backups/clipsync && cd /opt/clipsync/deployment/docker && docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysqldump -u "$MYSQL_USER" --single-transaction "$MYSQL_DATABASE"' | gzip > /var/backups/clipsync/clipsync_$(date +\%Y\%m\%d).sql.gz && find /var/backups/clipsync -name 'clipsync_*.sql.gz' -mtime +30 -delete
 ```
 
 ## 使用 HTTPS

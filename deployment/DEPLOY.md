@@ -166,7 +166,7 @@ gunzip < /var/backups/clipsync/database/clipsync_YYYYMMDD_HHMMSS.sql.gz | mysql 
 
 ### 清理任务
 
-cron 每小时执行一次 `cleanup_expired.sh`：删除已过期的访问码，以及超过 `UPLOAD_SESSION_TTL_HOURS` 仍未完成的上传会话和对应临时目录。
+cron 每小时执行一次 `cleanup_expired.sh`（实际逻辑在 `backend/scripts/cleanup_expired.py`）：删除已过期的访问码，超过 `UPLOAD_SESSION_TTL_HOURS` 仍未完成的上传会话和对应临时目录，并做孤儿扫描（超过 TTL 且无会话记录的 tmp 目录、用户已不存在的 `storage/<uid>` 目录）。
 
 ### 日志
 

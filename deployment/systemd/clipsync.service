@@ -12,9 +12,6 @@ User=www-data
 Group=www-data
 WorkingDirectory=/var/www/clipsync/backend
 
-# 虚拟环境路径
-Environment="PATH=/var/www/clipsync/backend/venv/bin:$PATH"
-
 # 从 .env 文件加载环境变量
 EnvironmentFile=/var/www/clipsync/backend/.env
 

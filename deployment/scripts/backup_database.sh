@@ -16,7 +16,8 @@ RETENTION_DAYS=30
 read_env() {
     local key="$1"
     [ -f "$ENV_FILE" ] || return 0
-    grep -E "^${key}=" "$ENV_FILE" | tail -1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+    # || true：键不存在时 grep 返回 1，配合 set -eo pipefail 会让脚本在这里静默退出
+    grep -E "^${key}=" "$ENV_FILE" | tail -1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//" || true
 }
 
 DB_HOST="${DB_HOST:-$(read_env DB_HOST)}"
@@ -46,7 +47,7 @@ cat > "$MYSQL_CNF" <<EOF
 host=$DB_HOST
 port=$DB_PORT
 user=$DB_USER
-password=$DB_PASSWORD
+password="${DB_PASSWORD//\"/\\\"}"
 EOF
 
 echo "[$(date)] 开始备份数据库..."

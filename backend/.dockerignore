@@ -1,0 +1,9 @@
+# 构建上下文排除：密钥、本地虚拟环境、缓存与上传数据不能进镜像
+.env
+.env.*
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+storage
