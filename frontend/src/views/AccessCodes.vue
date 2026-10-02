@@ -1,11 +1,22 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useAccessStore, useFilesStore } from '../stores'
 import { formatDateTime } from '../utils/format'
 import { copyToClipboard } from '../utils/clipboard'
+import ws from '../utils/websocket'
 
 const accessStore = useAccessStore()
 const filesStore = useFilesStore()
+
+// 其他终端创建 / 撤销访问码，或删除文件（后端级联删码）后刷新列表；重连时补拉一次
+const onCodesChanged = () => {
+  accessStore.fetchCodes().catch(() => {})
+}
+const CODE_EVENTS = ['access_codes_changed', 'file_deleted', 'open']
+
+onUnmounted(() => {
+  CODE_EVENTS.forEach((event) => ws.off(event, onCodesChanged))
+})
 
 const showCreateModal = ref(false)
 const createForm = ref({
@@ -15,6 +26,8 @@ const createForm = ref({
 })
 
 onMounted(async () => {
+  // 先挂监听再拉数据，拉取期间的变更不会漏掉
+  CODE_EVENTS.forEach((event) => ws.on(event, onCodesChanged))
   await Promise.all([
     accessStore.fetchCodes(),
     filesStore.fetchFiles(),

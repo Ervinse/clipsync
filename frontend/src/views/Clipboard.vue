@@ -20,6 +20,11 @@ watch(() => clipboardStore.currentText, (value) => {
   syncedText.value = value
 })
 
+// 告诉 store 历史面板是否打开：打开时收到推送才重拉历史
+watch(showHistory, (visible) => {
+  clipboardStore.historyVisible = visible
+})
+
 onMounted(async () => {
   // 先注册监听再拉数据，拉取期间的推送也不会漏掉
   clipboardStore.setupWebSocket()
@@ -33,6 +38,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  clipboardStore.historyVisible = false
   clipboardStore.cleanupWebSocket()
 })
 

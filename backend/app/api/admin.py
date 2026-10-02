@@ -212,6 +212,12 @@ async def update_user_quota(
     user = await _get_user_or_404(db, user_id)
     user.quota_bytes = data.quota_bytes
     await db.commit()
+
+    # 通知目标用户的在线终端刷新侧栏配额
+    await manager.broadcast_to_user(
+        user_id=user_id,
+        message={"type": "quota_updated", "data": {"quota_bytes": data.quota_bytes}},
+    )
     # expire_on_commit=False，提交后属性仍可直接读取，无需 refresh
     return await _build_user_detail(db, user)
 

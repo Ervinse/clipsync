@@ -1,11 +1,20 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../stores'
+import ws from '../utils/websocket'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+
+// 侧栏配额在布局级刷新：不管当前在哪个页面，文件增删或管理员改配额后都同步
+const QUOTA_EVENTS = ['file_added', 'file_deleted', 'quota_updated']
+const onQuotaChanged = () => {
+  userStore.fetchUserInfo().catch(() => {})
+}
+onMounted(() => QUOTA_EVENTS.forEach((event) => ws.on(event, onQuotaChanged)))
+onUnmounted(() => QUOTA_EVENTS.forEach((event) => ws.off(event, onQuotaChanged)))
 
 const navItems = computed(() => {
   const items = [
