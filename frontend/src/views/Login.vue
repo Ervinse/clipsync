@@ -11,7 +11,8 @@ const form = ref({
   password: '',
 })
 const loading = ref(false)
-const error = ref('')
+// 启动时连不上服务器会被守卫带到这里：先显示原因（token 仍保留，恢复后刷新即可）
+const error = ref(userStore.connectionError)
 
 const handleLogin = async () => {
   if (!form.value.username || !form.value.password) {

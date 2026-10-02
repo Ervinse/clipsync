@@ -25,6 +25,7 @@ app.add_middleware(
     allow_credentials=False,  # Token 走 Authorization header，不依赖 cookie
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["X-Auth-Error"],  # 跨域部署时前端也能读到禁用标记
 )
 
 
