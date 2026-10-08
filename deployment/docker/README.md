@@ -31,6 +31,8 @@ docker compose up -d
 
 backend 容器启动时会先执行 `alembic upgrade head`，再以单 worker 启动 uvicorn。数据库由 MySQL 镜像按 `.env` 中的 `DB_NAME` / `DB_USER` 自动创建。
 
+全新数据卷首次启动时 MySQL 需要一段初始化时间，db 的 healthcheck 走 TCP 并设了 30 秒 `start_period`，backend 等它健康后才启动。这一点还没在 Linux 上实测，见 [TODO.md](../../TODO.md)。
+
 ### 3. 创建超级管理员
 
 ```bash
@@ -79,7 +81,8 @@ docker compose up -d         # backend 启动时会自动执行迁移
 
 ```bash
 docker compose exec backend sh
-docker compose exec db mysql -u clipsync -p clipsync
+# 用户名、库名取容器内由 compose 注入的变量，改过 DB_USER / DB_NAME 也不用跟着改命令
+docker compose exec db sh -c 'mysql -u "$MYSQL_USER" -p "$MYSQL_DATABASE"'
 ```
 
 ## 备份与恢复
@@ -141,7 +144,11 @@ Docker 部署不会自动写入 cron，需要在宿主机配置。在 `/etc/cron
        - ./nginx-docker.conf:/etc/nginx/conf.d/default.conf:ro
        - /etc/letsencrypt:/etc/letsencrypt:ro
    ```
-3. 在 `nginx-docker.conf` 中加入 443 server 块（可参考 `../nginx/clipsync-https.conf`，把 `proxy_pass` 改为 `http://backend:8000`）。
+3. 在 `nginx-docker.conf` 中加入 443 server 块，可参考 `../nginx/clipsync-https.conf`，但要按容器环境改几处：
+   - `root` 改为 `/usr/share/nginx/html`
+   - `proxy_pass` 改为 `$backend_upstream`，沿用本文件已有的 `resolver 127.0.0.11` 与 `set $backend_upstream`
+   - `X-Forwarded-For` 用 `$remote_addr` 覆盖，不要用 `$proxy_add_x_forwarded_for`（后端信任整个 compose 子网，追加写法会放过客户端伪造的值）
+   - 原 80 端口的 server 块改为 `return 301 https://$host$request_uri;`
 4. 修改 `.env`：`HSTS_ENABLED=true`，`CORS_ORIGINS=https://your-domain.com`。
 5. `docker compose up -d` 重建。
 
@@ -168,7 +175,10 @@ docker compose ps
 docker compose logs backend
 ```
 
-常见原因：`JWT_SECRET` 未设置或过弱、数据库尚未就绪（backend 依赖 db 的健康检查）。
+常见原因：
+- `DB_ROOT_PASSWORD`、`DB_PASSWORD`、`JWT_SECRET` 未设置：`docker compose` 在创建容器前直接报错
+- `JWT_SECRET` 少于 32 位或含示例占位片段：backend 容器启动后立即退出，日志里有提示
+- 数据库尚未就绪：backend 依赖 db 的健康检查，`docker compose ps` 里 db 应为 `healthy`
 
 ### 数据库连接失败
 

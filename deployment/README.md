@@ -17,9 +17,9 @@ deployment/
 │   └── clipsync.service       # uvicorn 单 worker，只监听 127.0.0.1:8000
 ├── scripts/
 │   ├── deploy.sh              # 首次部署（不建库，需先按 DEPLOY.md 建库）
-│   ├── update.sh              # 更新：备份 → 在项目根 git pull → 迁移 → 构建 → 重启
+│   ├── update.sh              # 更新：备份 → 以 www-data 在项目根 git pull → 迁移 → npm ci 构建 → 重启；失败时自动拉起服务
 │   ├── backup_database.sh     # 从 backend/.env 读连接信息，mysqldump + gzip，保留 30 天
-│   ├── cleanup_expired.sh     # 清理过期访问码、超时上传会话及其临时目录
+│   ├── cleanup_expired.sh     # 调用 backend/scripts/cleanup_expired.py：过期访问码、超时上传会话、孤儿目录
 │   └── health_check.sh        # 检查服务、接口、数据库、磁盘、备份
 └── docker/
     ├── README.md              # Docker 部署文档
@@ -38,13 +38,13 @@ deployment/
 ## 重要约束
 
 - 后端**必须单 worker**，不支持多实例负载均衡。WebSocket 广播和限流计数都依赖进程内存。
-- 只支持 Debian / Ubuntu（脚本使用 apt、`sites-available`、`www-data`）。
+- 只支持 Debian / Ubuntu（安装命令用 apt，脚本写死了 `sites-available` 与 `www-data`）。
+- cron 用 `bash 脚本路径` 调用，不依赖脚本的可执行位。
 
 ## 相关文档
 
 - [DEPLOY.md](DEPLOY.md)：部署步骤与维护
 - [CHECKLIST.md](CHECKLIST.md)：上线前逐项核对
 - [docker/README.md](docker/README.md)：Docker 部署
-- [../README.md](../README.md)：项目说明与开发环境
-- [../DESIGN.md](../DESIGN.md)：技术设计
+- [../README.md](../README.md)：项目说明、技术设计与开发环境
 - [../frontend/README.md](../frontend/README.md)：前端说明

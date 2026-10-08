@@ -1,7 +1,7 @@
 """clipboard content 改为 MEDIUMTEXT
 
 TEXT 上限 64KB，而 ClipboardUpdate 允许 16MB（16777215 字符），超过 64KB 的文本写库会失败。
-按 DESIGN 第 5 节的设计改为 MEDIUMTEXT（上限 16MB）。
+按 README 第 5 节的设计改为 MEDIUMTEXT（上限 16MB）。
 
 Revision ID: 3f1c2a9d7b4e
 Revises: 278c88a5f21f

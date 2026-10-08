@@ -31,7 +31,7 @@
   - [ ] `JWT_SECRET`（`openssl rand -hex 32` 生成，至少 32 位；示例值或过短后端拒绝启动）
   - [ ] `CORS_ORIGINS`（前端域名或 IP，不能用 `*`）
 - [ ] **HTTPS 环境**：`HSTS_ENABLED=true`
-- [ ] **可选项**：`DEFAULT_QUOTA_BYTES`、`MAX_FILE_BYTES`、`CHUNK_SIZE`、`MAX_UPLOAD_SESSIONS_PER_USER`、`HISTORY_KEEP`、`JWT_EXPIRE_MINUTES`
+- [ ] **可选项**：`DEFAULT_QUOTA_BYTES`、`MAX_FILE_BYTES`、`CHUNK_SIZE`、`MAX_UPLOAD_SESSIONS_PER_USER`、`UPLOAD_SESSION_TTL_HOURS`、`HISTORY_KEEP`、`JWT_ALGORITHM`、`JWT_EXPIRE_MINUTES`
 
 ### Nginx 配置
 - [ ] 已删除 Debian 自带的 `/etc/nginx/sites-enabled/default`（否则会抢走 80 端口的请求）
@@ -65,13 +65,15 @@
 
 ## 功能验证
 
-### API 测试
+以下都是上线后的手动检查。生产环境不运行 `pytest`（原因见 DEPLOY.md「7. 验证」）。
+
+### API 检查
 - [ ] 健康检查：`curl http://127.0.0.1:8000/` 返回 `{"status":"ok",...}`（后端没有 `/api/health`）
 
-### 前端测试
+### 前端检查
 - [ ] 浏览器能打开登录页，控制台无资源加载错误
 
-### 功能测试
+### 功能检查（手动）
 - [ ] 超级管理员登录成功，能进入管理后台
 - [ ] 能创建邀请码，并用它注册新用户
 - [ ] 能更新剪贴板文本，另一终端实时同步

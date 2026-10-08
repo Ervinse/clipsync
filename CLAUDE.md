@@ -1,15 +1,15 @@
 # ClipSync 开发约束
 
 > 本文件是编码时必须遵守的**硬规则**，Claude 每次会话自动读取。
-> 三份文档各司其职：**规格权威** → DESIGN.md（技术栈全表、数据模型字段、API 清单、目录树、机制、分阶段计划）；**运行** → README.md（完整 setup、配置项表、面向用户的权限说明）；**部署** → deployment/DEPLOY.md（直接部署）与 deployment/docker/README.md（Docker）；**本文件** → 编码硬约束 + 指针。
-> 冲突时以本文件为准；本文件未覆盖的细节以 DESIGN.md 为准（「第 N 节」指 DESIGN.md 章节）。
+> 文档分工：**规格权威** → README.md（项目说明、技术栈全表、数据模型字段、API 清单、机制、目录树、分阶段计划、开发环境、配置项）；**待办** → TODO.md；**部署** → deployment/DEPLOY.md（直接部署）与 deployment/docker/README.md（Docker）；**本文件** → 编码硬约束 + 指针。
+> 冲突时以本文件为准；本文件未覆盖的细节以 README.md 为准（「第 N 节」指 README.md 章节）。
 
 ## 交流语言
 - 始终用**简体中文**回复；报错、日志、引用文档为英文也一律用中文解释。
 - 代码里的标识符、库名、API 路径、变量名保持英文原样，**不要翻译**。
 
 ## 技术栈
-- 以 DESIGN.md 第 2 节为准，**不得替换**：FastAPI 全异步 + SQLAlchemy 2.0 async + aiomysql + Alembic；MySQL 8.0；JWT(python-jose) + bcrypt；Uvicorn **单 worker**；Vue 3 组合式 API + Vite + Pinia + axios；原生 WebSocket。
+- 以 README.md 第 2 节为准，**不得替换**：FastAPI 全异步 + SQLAlchemy 2.0 async + aiomysql + Alembic；MySQL 8.0；JWT(python-jose) + bcrypt；Uvicorn **单 worker**；Vue 3 组合式 API + Vite + Pinia + axios；原生 WebSocket。
 
 ## 🔴 安全红线（违反即为 bug，背景见第 4、12 节）
 1. **数据隔离**：隐私数据查询强制 `WHERE user_id == 当前用户`，唯一例外是 superadmin。
@@ -40,14 +40,15 @@
 - 改动任何数据模型，必须**同步写 Alembic 迁移**。
 
 ## 测试
-- 后端用 `pytest` + `pytest-asyncio`，测试放 `backend/tests/`。
+- 后端用 `pytest` + `pytest-asyncio`，测试放 `backend/tests/`；现有用例经 FastAPI `TestClient` 同步调用，测试库为独立的 `clipsync_test`（每次运行 DROP 重建）。
 - 新增/修复接口后补测试；安全红线（归属校验、角色边界、路径穿越）务必覆盖。
+- 何时运行测试见下方「按改动范围验证」：只改文档不跑测试；前端没有自动化测试，改前端只跑 `npm run build` 并手动验证。
 
 ## Git 工作流程
 - 主线分支是 **`master`**，始终代表项目最新的正式状态；所有功能开发在独立分支完成，**禁止直接提交到 master**。
 - 分支命名规范：`feature/功能名`、`fix/问题描述`、`refactor/重构内容`。
 - 提交信息用中文，简明扼要说明改动内容；多文件改动按模块分组描述。
-- 提交前必须确保代码能运行（后端能启动、前端能构建）；测试相关改动需确保测试通过。
+- 提交前按改动范围验证（见下方「按改动范围验证」），不要对无关改动跑全套验证。
 - `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/storage/`（上传文件，旧名 `uploads/` 保留兼容）、编译产物。
 
 ### 分支生命周期（开分支 → 提交 → 等用户指令合并 → 删分支）
@@ -55,10 +56,23 @@
    - 唯一例外：新工作必须依赖某个尚未合并的分支时，先向用户说明并等用户决定。
 2. **对项目的每次操作都必须提交**：每完成一项改动（代码、文档、配置、脚本）就 `git add` 指定文件 + `git commit`，不要让改动停留在未提交状态。
 3. **只有用户明确说「合并」才能合并**：分支工作完成后向用户汇报并等待指令，**禁止**自行合并到 master（即便测试已全部通过）。合并时用 `git merge --no-ff`（保留合并节点）。
-4. **合并后在 master 上复验**：重跑 `pytest`（`backend/`）和 `npm run build`（`frontend/`），确认主线可用。
+4. **合并后在 master 上复验**：按本次合并涉及的改动范围复验（见下方「按改动范围验证」）；只含文档的合并不需要复验。
 5. **删除已合并的分支**：用 `git branch -d <分支>`（只删已合并分支）；**禁止**用 `-D` 强删，除非用户明确要求。
 6. **会话开始时检查分支状态**：若有未合并的分支或未提交的改动，先向用户报告，再开始新工作。
 - 删除分支、推送远端同样需要先汇报并等用户确认；有冲突时停下来向用户说明，不要自行取舍。
+
+### 按改动范围验证
+提交前与合并后，只跑与改动相关的验证：
+
+| 改动内容 | 需要的验证 |
+|------|------|
+| 只改文档（`*.md`）或纯注释 | 不跑测试与构建；只检查文中路径、命令、引用与代码一致 |
+| `backend/` 代码、迁移、依赖 | `pytest`（在 `backend/`） |
+| `frontend/` 代码、依赖、`vite.config.js` | `npm run build`（在 `frontend/`） |
+| `deployment/scripts/*.sh` | `bash -n` 语法检查 |
+| Nginx / compose / systemd 配置 | 无法本地运行时说明未实测，记入 TODO.md |
+
+改动跨多个范围时，把对应的验证都跑一遍；汇报时写明跑了哪些、按规则跳过了哪些。
 
 ### 每次提交 / 合并后必须汇报 git 状态
 每次 `commit` 或 `merge` 之后，向用户汇报：
@@ -72,10 +86,10 @@
 - 按第 15 节的 8 个阶段推进，**不要跳阶段**。
 - 新增/修改接口后，同步更新前端 api 封装与对应 store。
 - 安全红线关键代码处（deps.py 角色校验、文件下载接口等）留简短中文注释标明约束意图。
-- 不确定的设计取舍先问，不要自行更改 DESIGN.md 中已定的设计。
+- 不确定的设计取舍先问，不要自行更改 README.md 中已定的设计。
 - **执行任何操作前，必须向用户汇报将要做什么；操作完成后，汇报实际做了什么、结果如何**。
 
-## 常用命令（速查；完整 setup 见 README.md，部署见 deployment/DEPLOY.md）
+## 常用命令（速查；完整 setup 见 README.md 第 16 节，部署见 deployment/DEPLOY.md）
 - 后端启动：`uvicorn app.main:app --reload`（在 `backend/`）
 - 应用迁移：`alembic upgrade head`；改模型后生成迁移：`alembic revision --autogenerate -m "描述"`
 - 跑单个测试：`pytest tests/test_xxx.py::test_name`
