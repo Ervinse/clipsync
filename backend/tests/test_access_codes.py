@@ -106,7 +106,7 @@ def test_type_mismatch_and_unknown_codes_look_identical(client, make_user):
 def test_public_handler_not_exposed_under_management_prefix(client, make_user):
     user = make_user()
     code = _text_code(client, user)["code"]
-    # /api/access-codes/{code} 不再是免登录入口
+    # /api/access-codes/{code} 不是免登录入口：公开接口只挂在 /api/access 下
     assert client.get(f"/api/access-codes/{code}").status_code in (401, 404, 405)
 
 

@@ -1,4 +1,4 @@
-"""阶段 4 回归：取消上传释放配额、reserved_bytes、下载时文件丢失、剪贴板按字节限长"""
+"""上传配额与文件下载：取消上传释放配额、reserved_bytes、下载时文件丢失、剪贴板按字节限长"""
 import pytest
 from pydantic import ValidationError
 
@@ -14,7 +14,7 @@ def _init(client, user, total_size=2048, chunk_size=1024):
     )
 
 
-# ---------- 4.1 取消上传 + reserved_bytes ----------
+# ---------- 取消上传 + reserved_bytes ----------
 
 def test_cancel_other_users_upload_returns_404(client, make_user):
     alice, bob = make_user(), make_user()
@@ -54,7 +54,7 @@ def test_cancel_unknown_upload_returns_404(client, make_user):
     assert client.delete(f"/api/files/upload/{fake}", headers=user.headers).status_code == 404
 
 
-# ---------- 4.2 / 4.5 下载时磁盘文件丢失 ----------
+# ---------- 下载时磁盘文件丢失 ----------
 
 def _upload_and_lose_disk_file(client, user):
     file_id = upload(client, user, b"hello").json()["id"]
@@ -91,7 +91,7 @@ def test_download_still_works(client, make_user):
     assert resp.headers["content-length"] == "3000"
 
 
-# ---------- 4.6 剪贴板按 UTF-8 字节限长 ----------
+# ---------- 剪贴板按 UTF-8 字节限长 ----------
 
 def test_clipboard_limit_counts_utf8_bytes():
     # 字符数远低于上限，但 UTF-8 字节数超限（每个汉字 3 字节）

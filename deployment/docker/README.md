@@ -148,7 +148,7 @@ Docker 部署不会自动写入 cron，需要在宿主机配置。在 `/etc/cron
    - `root` 改为 `/usr/share/nginx/html`
    - `proxy_pass` 改为 `$backend_upstream`，沿用本文件已有的 `resolver 127.0.0.11` 与 `set $backend_upstream`
    - `X-Forwarded-For` 用 `$remote_addr` 覆盖，不要用 `$proxy_add_x_forwarded_for`（后端信任整个 compose 子网，追加写法会放过客户端伪造的值）
-   - 原 80 端口的 server 块改为 `return 301 https://$host$request_uri;`
+   - 现有的 80 端口 server 块只保留跳转：`return 301 https://$host$request_uri;`
 4. 修改 `.env`：`HSTS_ENABLED=true`，`CORS_ORIGINS=https://your-domain.com`。
 5. `docker compose up -d` 重建。
 

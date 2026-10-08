@@ -74,7 +74,7 @@ src/
 │   ├── clipboard.js # 复制到剪贴板（HTTP 下降级为 execCommand）
 │   └── format.js    # 文件大小、UTC 时间格式化
 ├── App.vue         # 根组件（全局基础样式与深色主题）
-├── style.css       # 全局样式入口（Vite 模板样式已清空）
+├── style.css       # 全局样式入口（目前为空，全局样式写在 App.vue）
 └── main.js         # 入口文件（先恢复登录状态再挂载路由，监听跨标签页 token 变化）
 ```
 

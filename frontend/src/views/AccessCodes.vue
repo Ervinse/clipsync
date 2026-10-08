@@ -93,7 +93,7 @@ const handleRevoke = async (code) => {
   }
 }
 
-// 链接由后端按请求 scheme + host 拼好（access_url），前端不再自行拼接
+// 链接由后端按请求 scheme + host 拼好（access_url），前端不自行拼接
 const copyLink = async (code) => {
   if (await copyToClipboard(code.access_url)) {
     alert('链接已复制到剪贴板')

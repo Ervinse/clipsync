@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def _log_rmtree_error(func, path, exc):
-    """rmtree 单个条目删除失败：记日志后继续删其余条目（不再静默吞掉错误）"""
+    """rmtree 单个条目删除失败：记日志后继续删其余条目"""
     logger.error("删除存储路径失败 %s（%s）: %s", path, getattr(func, "__name__", func), exc)
 
 

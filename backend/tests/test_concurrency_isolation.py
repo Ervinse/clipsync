@@ -1,12 +1,11 @@
-"""阶段 1 并发/一致性修复回归：
+"""分片上传的并发与一致性：
 
-- 1.4 分片提交用显式 UPDATE + rowcount 校验：会话被并发删除时返回 404 并清理临时目录；
-       重传已存在分片（received_chunks 不变）仍返回 200（MySQL 方言 FOUND_ROWS，匹配行数而非改动行数）。
-- 1.5 写盘 / 原子替换期间临时目录被并发 rmtree：捕获 FileNotFoundError 统一按会话已结束处理（404）。
+- 分片提交用显式 UPDATE + rowcount 校验：会话被并发删除时返回 404 并清理临时目录；
+  重传已存在分片（received_chunks 不变）仍返回 200（MySQL 方言 FOUND_ROWS，匹配行数而非改动行数）。
+- 写盘 / 原子替换期间临时目录被并发 rmtree：捕获 FileNotFoundError 统一按会话已结束处理（404）。
 
-1.1 / 1.2 / 1.3 是 REPEATABLE READ 下「commit 结束鉴权读视图再加行锁」的并发正确性修复，
-依赖真实并行连接才能触发竞态，单事件循环的 TestClient 无法复现，这里只保证不破坏正常路径
-（由既有端到端用例覆盖）。
+剪贴板写入、init_upload、删除用户在 REPEATABLE READ 下「先 commit 结束鉴权读视图再加行锁」的串行化，
+依赖真实并行连接才能触发竞态，单事件循环的 TestClient 无法复现，由其他端到端用例覆盖正常路径。
 """
 import shutil
 
@@ -35,7 +34,7 @@ def _chunk(client, user, upload_id, index, data):
     )
 
 
-# ---------- 1.4 显式 UPDATE + rowcount ----------
+# ---------- 显式 UPDATE + rowcount ----------
 
 def test_retransmit_same_chunk_still_succeeds(client, make_user):
     """重传已落盘的分片：received_chunks 不变，显式 UPDATE 靠 FOUND_ROWS 仍匹配 1 行，返回 200 不误判为 404。"""
@@ -74,7 +73,7 @@ def test_chunk_404_when_session_deleted_during_write(client, db, make_user, monk
     assert not files_api.get_upload_temp_dir(uid).exists()  # 临时目录已被清理，不留孤儿
 
 
-# ---------- 1.5 临时目录被并发清理 ----------
+# ---------- 临时目录被并发清理 ----------
 
 def test_chunk_404_when_write_hits_missing_dir(client, make_user, monkeypatch):
     """写盘时临时目录已不存在：_save_chunk 抛 FileNotFoundError，按会话已结束返回 404。"""

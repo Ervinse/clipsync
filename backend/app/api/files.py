@@ -478,7 +478,7 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
         # 提交失败：记录未落库，删掉已合并的文件，避免磁盘上留下不计配额的孤儿文件
         await run_in_threadpool(final_path.unlink, missing_ok=True)
         raise
-    # 不再 refresh：flush 后 id 已回填，created_at 显式赋值，expire_on_commit=False
+    # 无需 refresh：flush 后 id 已回填，created_at 显式赋值，expire_on_commit=False
 
     await run_in_threadpool(cleanup_upload_temp, data.upload_id)
 
