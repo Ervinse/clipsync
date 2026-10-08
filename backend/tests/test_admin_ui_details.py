@@ -1,4 +1,4 @@
-"""阶段 5 后端回归：访问码有效期上限、管理后台文件列表排序次键"""
+"""访问码有效期上限、管理后台文件列表排序次键"""
 from datetime import datetime, timedelta, timezone
 
 from app.models import UserRole

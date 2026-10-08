@@ -116,7 +116,7 @@ journalctl -u clipsync --since "1 hour ago" -p err --no-pager | tail -5 || echo 
 
 # 11. 检查 WebSocket 连接数
 echo
-# 只统计后端 8000 端口上已建立的入站连接（原写法把两个方向、UDP 和非 ESTABLISHED 都算进去）。
+# 只统计后端 8000 端口上已建立的 TCP 入站连接。
 # 其中也含 Nginx 到后端的 HTTP 长连接，数值是近似上限
 echo -n "后端已建立连接数（含 WebSocket，近似）: "
 WS_CONN=$(ss -Htn state established '( sport = :8000 )' 2>/dev/null | wc -l)
