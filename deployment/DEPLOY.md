@@ -9,8 +9,8 @@
 - 磁盘 20GB 及以上（按用户数与文件量调整）
 
 ### 软件
-- **Ubuntu 22.04 / 24.04 或 Debian 12**。脚本写死了 `apt`、`/etc/nginx/sites-available`、`www-data`，**不支持 CentOS/RHEL**。
-- **Python 3.12+**。代码使用了 3.10+ 语法，项目统一要求 3.12。
+- **Ubuntu 22.04 / 24.04 或 Debian 12**。安装命令用 `apt`，脚本写死了 `/etc/nginx/sites-available` 与 `www-data`，**不支持 CentOS/RHEL**。
+- **Python 3.12+**。后端用到 `shutil.rmtree(onexc=...)` 等 3.12 才有的接口；`deploy.sh` 在 `backend/venv` 不存在时会检查系统 `python3` 的版本。
 - **Node.js 20.19+ 或 22.12+**。Vite 8 要求 `^20.19.0 || >=22.12.0`，系统 apt 源里的 Node 版本太旧，不能用。
 - MySQL 8.0+
 - Nginx 1.18+
@@ -78,15 +78,19 @@ cd /var/www/clipsync
 sudo bash deployment/scripts/deploy.sh
 ```
 
-脚本会依次完成：
-1. 检查 python3 / node / mysql / nginx 是否已安装（只检查，不安装、不建库）
-2. 创建 `backend/venv` 并安装依赖
-3. `alembic upgrade head`
-4. 交互式创建首个超级管理员
-5. 构建前端
-6. 安装 HTTP 版 Nginx 配置并执行 `nginx -t`
-7. 安装 systemd 服务
-8. 写入 cron 定时任务（备份、清理）
+脚本共 10 步：
+1. 创建项目目录与备份目录 `/var/backups/clipsync/database`
+2. 检查 python3 / node / mysql / nginx 是否已安装；`backend/venv` 不存在时还会检查 `python3` ≥ 3.12（只检查，不安装、不建库）
+3. 确认项目文件已放到 `/var/www/clipsync`
+4. 创建 `backend/venv`（已存在则复用）并安装依赖，确认 `backend/.env` 已存在
+5. `alembic upgrade head`
+6. 交互式创建首个超级管理员；成功后写入标记文件 `backend/.superadmin_created`，再次运行脚本时跳过这一步
+7. `npm ci` 并构建前端
+8. 安装 HTTP 版 Nginx 配置并执行 `nginx -t`
+9. 安装 systemd 服务并 `daemon-reload`（**不会**启用或启动服务）
+10. 写入 cron 定时任务（备份、清理，均用 `bash` 显式调用）
+
+最后把项目目录和 `/var/log/clipsync` 的属主设为 `www-data`。
 
 Debian/Ubuntu 自带的 `/etc/nginx/sites-enabled/default` 也监听 80 端口，可能会先接走请求。如果不需要它，请删除：`sudo rm /etc/nginx/sites-enabled/default`。
 
@@ -112,6 +116,8 @@ sudo bash deployment/scripts/health_check.sh
 cd /var/www/clipsync/backend && source venv/bin/activate
 python -m scripts.create_superadmin
 ```
+
+> 生产环境**不需要运行 `pytest`**。测试会 DROP 并重建 `clipsync_test` 库，需要建库、删库权限，第 2 步创建的 `clipsync` 账号只有 `clipsync` 库的权限，测试会直接失败。测试只在开发环境运行（见项目根目录 README.md 第 16 节）；上线后的检查以本节命令和 [CHECKLIST.md](CHECKLIST.md) 为准。
 
 ## HTTP / HTTPS 切换
 
@@ -164,18 +170,19 @@ sudo -u www-data git reflog -n 5
 sudo -u www-data git checkout <更新前的提交>
 
 # 2. 若这次更新包含数据库迁移：先降级迁移，或用更新前的备份恢复（update.sh 第 2 步已自动备份）
-cd backend && source venv/bin/activate
-alembic downgrade <更新前的 revision>
+cd backend
+sudo venv/bin/alembic downgrade <更新前的 revision>
 # 或：gunzip < /var/backups/clipsync/database/clipsync_<更新前时间>.sql.gz | mysql -u clipsync -p clipsync
 
-# 3. 依赖与前端回到对应版本
-pip install -r requirements.txt
-cd ../frontend && sudo -u www-data npm ci && sudo -u www-data npm run build
+# 3. 依赖与前端回到对应版本（与 update.sh 一样以 root 执行）
+sudo venv/bin/pip install -r requirements.txt
+cd ../frontend && sudo npm ci && sudo npm run build
 
 sudo systemctl start clipsync
 ```
 
-回滚到旧提交后仓库处于分离 HEAD 状态，问题修好后用 `git checkout master && git pull --ff-only` 回到主线。
+- 降级迁移 `3f1c2a9d7b4e`（剪贴板文本改 MEDIUMTEXT）时，如果库里已有超过 64KB 的文本，降级会失败或截断，这种情况改用备份恢复。
+- 回滚到旧提交后仓库处于分离 HEAD 状态，问题修好后用 `sudo -u www-data git checkout master && sudo -u www-data git pull --ff-only` 回到主线。
 
 ### 备份与恢复
 

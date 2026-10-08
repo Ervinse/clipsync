@@ -45,7 +45,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | 迁移工具 | Alembic | 管理表结构版本 |
 | 认证 | JWT (python-jose，HS256/384/512) + bcrypt | 无状态令牌 + 密码哈希（直接使用 `bcrypt` 库，未用 passlib） |
 | 限流 | slowapi | 登录、快速访问等接口限流 |
-| 测试 | pytest + pytest-asyncio | 后端单测/异步用例，`pytest 路径::用例名` 跑单个 |
+| 测试 | pytest + pytest-asyncio | 后端用例经 FastAPI `TestClient` 同步调用（pytest-asyncio 在依赖中，目前没有异步用例）；`pytest 路径::用例名` 跑单个 |
 | 前端框架 | Vue 3 + Vite 8 | 组合式 API；Vite 8 要求 Node 20.19+ 或 22.12+ |
 | 路由 | vue-router | 登录与角色守卫 |
 | 状态管理 | Pinia | user / clipboard / files / access / admin 五个 store |
@@ -538,7 +538,7 @@ CodeProject/
     │   ├── alembic/versions/     # 278c88a5f21f 初始表结构；3f1c2a9d7b4e 文本改 MEDIUMTEXT
     │   ├── alembic.ini
     │   ├── scripts/              # create_superadmin.py / cleanup_expired.py（定时清理，直接部署与 Docker 共用）
-    │   ├── tests/                # pytest 安全测试（使用独立库 clipsync_test）
+    │   ├── tests/                # pytest 用例：安全边界、并发、实时推送、上传下载等（使用独立库 clipsync_test）
     │   ├── pytest.ini
     │   ├── requirements.txt
     │   ├── .env.example
@@ -678,6 +678,17 @@ pytest tests/test_auth.py::test_name    # 单个
 ```
 
 测试使用 `.env` 中的 MySQL 账号，每次运行都会 **DROP 并重建** 独立的 `clipsync_test` 库（开发库不受影响），所以该账号需要建库、删库权限。测试会自行生成临时 `JWT_SECRET` 和临时存储目录，不依赖 `.env` 中的这两项。
+
+什么时候需要跑：
+
+| 改动内容 | 验证方式 |
+|------|------|
+| 只改文档（`*.md`）或注释 | 不跑测试，也不构建前端 |
+| `backend/` 的代码、迁移、依赖 | `pytest` |
+| `frontend/` 的代码、依赖、`vite.config.js` | `npm run build`，界面行为在浏览器里手动验证（前端没有自动化测试） |
+| `deployment/scripts/*.sh` | `bash -n` 语法检查 |
+
+完整规则见 CLAUDE.md「按改动范围验证」；尚待手动验证的行为见 [TODO.md](TODO.md)。生产环境不运行测试（见 deployment/DEPLOY.md「7. 验证」）。
 
 ---
 
