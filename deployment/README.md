@@ -19,7 +19,7 @@ deployment/
 │   ├── deploy.sh              # 首次部署（不建库，需先按 DEPLOY.md 建库）
 │   ├── update.sh              # 更新：备份 → 在项目根 git pull → 迁移 → 构建 → 重启
 │   ├── backup_database.sh     # 从 backend/.env 读连接信息，mysqldump + gzip，保留 30 天
-│   ├── cleanup_expired.sh     # 清理过期访问码、超时上传会话及其临时目录
+│   ├── cleanup_expired.sh     # 调用 backend/scripts/cleanup_expired.py：过期访问码、超时上传会话、孤儿目录
 │   └── health_check.sh        # 检查服务、接口、数据库、磁盘、备份
 └── docker/
     ├── README.md              # Docker 部署文档
@@ -45,6 +45,5 @@ deployment/
 - [DEPLOY.md](DEPLOY.md)：部署步骤与维护
 - [CHECKLIST.md](CHECKLIST.md)：上线前逐项核对
 - [docker/README.md](docker/README.md)：Docker 部署
-- [../README.md](../README.md)：项目说明与开发环境
-- [../DESIGN.md](../DESIGN.md)：技术设计
+- [../README.md](../README.md)：项目说明、技术设计与开发环境
 - [../frontend/README.md](../frontend/README.md)：前端说明

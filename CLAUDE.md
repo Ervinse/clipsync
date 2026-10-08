@@ -1,15 +1,15 @@
 # ClipSync 开发约束
 
 > 本文件是编码时必须遵守的**硬规则**，Claude 每次会话自动读取。
-> 三份文档各司其职：**规格权威** → DESIGN.md（技术栈全表、数据模型字段、API 清单、目录树、机制、分阶段计划）；**运行** → README.md（完整 setup、配置项表、面向用户的权限说明）；**部署** → deployment/DEPLOY.md（直接部署）与 deployment/docker/README.md（Docker）；**本文件** → 编码硬约束 + 指针。
-> 冲突时以本文件为准；本文件未覆盖的细节以 DESIGN.md 为准（「第 N 节」指 DESIGN.md 章节）。
+> 文档分工：**规格权威** → README.md（项目说明、技术栈全表、数据模型字段、API 清单、机制、目录树、分阶段计划、开发环境、配置项）；**待办** → TODO.md；**部署** → deployment/DEPLOY.md（直接部署）与 deployment/docker/README.md（Docker）；**本文件** → 编码硬约束 + 指针。
+> 冲突时以本文件为准；本文件未覆盖的细节以 README.md 为准（「第 N 节」指 README.md 章节）。
 
 ## 交流语言
 - 始终用**简体中文**回复；报错、日志、引用文档为英文也一律用中文解释。
 - 代码里的标识符、库名、API 路径、变量名保持英文原样，**不要翻译**。
 
 ## 技术栈
-- 以 DESIGN.md 第 2 节为准，**不得替换**：FastAPI 全异步 + SQLAlchemy 2.0 async + aiomysql + Alembic；MySQL 8.0；JWT(python-jose) + bcrypt；Uvicorn **单 worker**；Vue 3 组合式 API + Vite + Pinia + axios；原生 WebSocket。
+- 以 README.md 第 2 节为准，**不得替换**：FastAPI 全异步 + SQLAlchemy 2.0 async + aiomysql + Alembic；MySQL 8.0；JWT(python-jose) + bcrypt；Uvicorn **单 worker**；Vue 3 组合式 API + Vite + Pinia + axios；原生 WebSocket。
 
 ## 🔴 安全红线（违反即为 bug，背景见第 4、12 节）
 1. **数据隔离**：隐私数据查询强制 `WHERE user_id == 当前用户`，唯一例外是 superadmin。
@@ -72,10 +72,10 @@
 - 按第 15 节的 8 个阶段推进，**不要跳阶段**。
 - 新增/修改接口后，同步更新前端 api 封装与对应 store。
 - 安全红线关键代码处（deps.py 角色校验、文件下载接口等）留简短中文注释标明约束意图。
-- 不确定的设计取舍先问，不要自行更改 DESIGN.md 中已定的设计。
+- 不确定的设计取舍先问，不要自行更改 README.md 中已定的设计。
 - **执行任何操作前，必须向用户汇报将要做什么；操作完成后，汇报实际做了什么、结果如何**。
 
-## 常用命令（速查；完整 setup 见 README.md，部署见 deployment/DEPLOY.md）
+## 常用命令（速查；完整 setup 见 README.md 第 16 节，部署见 deployment/DEPLOY.md）
 - 后端启动：`uvicorn app.main:app --reload`（在 `backend/`）
 - 应用迁移：`alembic upgrade head`；改模型后生成迁移：`alembic revision --autogenerate -m "描述"`
 - 跑单个测试：`pytest tests/test_xxx.py::test_name`
