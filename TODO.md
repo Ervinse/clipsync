@@ -6,6 +6,7 @@
 
 - [ ] **Docker 全新卷启动**：`docker compose up` 时 MySQL healthcheck 可能过早通过，导致 backend 连库失败。
   已做预防：healthcheck 走 TCP（`mysqladmin ping -h 127.0.0.1`）并设 `start_period`。需在全新数据卷上实际启动一次确认。
+- [ ] **SSH 隧道查询数据库**：db 的 3306 只绑定宿主机 `127.0.0.1`。需确认：从其他机器直连 `服务器IP:3306` 失败；经 SSH 隧道用只读账号能连上并查询；`docker compose exec -T db ... mysqldump --no-tablespaces` 用应用账号能导出非空备份。
 - [ ] **重建 backend 后前端 Nginx 缓存旧 IP**：`nginx-docker.conf` 已用 `resolver 127.0.0.11` 与变量式 `proxy_pass`。需实际 `docker compose up -d --build backend` 后确认前端仍能访问 `/api`。
 - [ ] **直接部署脚本**：`deploy.sh`、`update.sh`（含失败后自动拉起服务、以 www-data 执行 `git pull`）、cron 中的 `backup_database.sh` 与 `cleanup_expired.sh`（含孤儿目录扫描）目前只通过了 `bash -n` 语法检查，需在测试环境实际执行一次，检查孤儿扫描输出的删除列表是否符合预期。
 

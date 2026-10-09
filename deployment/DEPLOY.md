@@ -195,7 +195,7 @@ ls -lh /var/backups/clipsync/database/
 gunzip < /var/backups/clipsync/database/clipsync_YYYYMMDD_HHMMSS.sql.gz | mysql -u clipsync -p clipsync
 ```
 
-备份脚本从 `backend/.env` 读取数据库连接信息，并启用了 `pipefail`。mysqldump 失败时脚本会报错退出，不会留下空的备份文件。数据库备份**不包含上传的文件**，文件在 `backend/storage/`，需要另外备份。
+备份脚本从 `backend/.env` 读取数据库连接信息，并启用了 `pipefail`。mysqldump 带 `--no-tablespaces`：MySQL 8.0.21 起导出表空间信息需要全局 `PROCESS` 权限，应用账号只有本库权限。mysqldump 失败时脚本会报错退出，不会留下空的备份文件。数据库备份**不包含上传的文件**，文件在 `backend/storage/`，需要另外备份。
 
 ### 清理任务
 

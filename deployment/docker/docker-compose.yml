@@ -24,7 +24,10 @@ services:
       MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 未设置}
     volumes:
       - mysql_data:/var/lib/mysql
-    # 不对宿主机暴露 3306，仅容器网络内可访问
+    # 3306 只绑定宿主机 127.0.0.1：外网和局域网都连不进来，只供宿主机本机与 SSH 隧道查询数据库（见 README「远程查询数据库」）
+    # 不要改成 "3306:3306"：Docker 发布的端口会绕过 firewalld，等于把数据库直接暴露出去
+    ports:
+      - "127.0.0.1:${DB_HOST_PORT:-3306}:3306"
     healthcheck:
       # 走 TCP（127.0.0.1）而不是 socket：全新卷初始化时 MySQL 先以 --skip-networking 起一个临时实例，
       # 用 socket ping 会在初始化完成前就判定健康，backend 随后连接失败
