@@ -342,7 +342,7 @@ docker compose stop frontend                 # 停止网站访问，避免恢复
 gzip -dc /var/backups/clipsync/clipsync_db_<时间>.sql.gz \
     | docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql -u "$MYSQL_USER" "$MYSQL_DATABASE"'
 
-# 上传的文件：解压回数据卷（同名文件被覆盖；备份之后新上传的文件不会被删除，下次定时清理时作为残留清除）
+# 上传的文件：解压回数据卷（同名文件被覆盖；备份之后新上传的文件仍留在磁盘上占用空间，但数据库里没有记录，页面上不会显示）
 docker compose exec -T backend sh -c 'tar -xzf - -C /app/storage' \
     < /var/backups/clipsync/clipsync_files_<时间>.tar.gz
 
@@ -419,7 +419,7 @@ MySQL 的版本号固定在 `docker-compose.yml` 的 `image:` 一行，随新版
   docker compose stop                  # 让 MySQL 8.0 正常关闭
   # 导入带 MySQL 8.4 的镜像包、解压新的部署包后：
   docker compose up -d
-  docker compose logs db | grep -i upgrade      # 应看到 Server upgrade from '8000xx' to '8040xx' completed
+  docker compose logs db | grep -i upgrade      # 应看到类似 Server upgrade from '80046' to '80411' completed
   bash health_check.sh
   ```
   升级失败时，删除数据卷后用 8.4 全新启动，再按第 10.3 节恢复备份（备份文件是 SQL，8.0 导出的备份可以导入 8.4）。
@@ -470,6 +470,7 @@ docker image prune                        # 删除没有标签的旧镜像层（
 | `cert.sh issue` 失败 | 域名没有解析到本服务器、80 端口从公网访问不到，或者 frontend 没有运行。检查 `curl -I http://<域名>/` |
 | 实时同步不工作，页面提示连接断开 | 检查 `nginx-common.conf` 是否为部署包里的版本；修改过 Nginx 配置后要 `docker compose up -d --force-recreate frontend` |
 | 上传文件失败，提示 413 | 单个分片超过 Nginx 的 10MB 上限，检查 `CHUNK_SIZE` 是否被改大 |
+| 开启了 SELinux 的系统上，frontend 日志里读取 Nginx 配置报 `Permission denied` | Docker 启用了 SELinux 支持（`/etc/docker/daemon.json` 里 `"selinux-enabled": true`）时，挂载的文件需要容器可读的标签：在部署目录执行 `chcon -Rt container_file_t .`，再 `docker compose up -d --force-recreate frontend` |
 | 端口 80 或 3306 被占用 | 修改 `.env` 的 `HTTP_PORT`（同时修改 `CORS_ORIGINS`，加上端口号）或 `DB_HOST_PORT` |
 | `backup.sh` 报 `service "db" is not running` | 容器没有运行，`docker compose up -d` 后重试 |
 | `172.28.0.0/16` 与服务器已有网段冲突 | 同时修改 `docker-compose.yml` 的 `subnet` 和 backend `command` 里的 `--forwarded-allow-ips`。这两处会随部署包更新被覆盖，每次更新后都要重新修改 |

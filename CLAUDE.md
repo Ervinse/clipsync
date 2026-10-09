@@ -49,7 +49,7 @@
 - 分支命名规范：`feature/功能名`、`fix/问题描述`、`refactor/重构内容`。
 - 提交信息用中文，简明扼要说明改动内容；多文件改动按模块分组描述。
 - 提交前按改动范围验证（见下方「按改动范围验证」），不要对无关改动跑全套验证。
-- `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/storage/`（上传文件）、编译产物、`release/`（`build-release.ps1` 生成的镜像包与部署包）。
+- `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/storage/`（上传文件）、编译产物、`release/`（`build-release.ps1` 生成的镜像包与部署包）、`deployment/docker/acme/` 与 `deployment/docker/letsencrypt/`（在该目录直接运行 compose 时生成）。
 
 ### 分支生命周期（开分支 → 提交 → 等用户指令合并 → 删分支）
 1. **每次新的更新都在 `feature/*` 或 `fix/*` 分支上进行**：从最新的 master 开分支 `git checkout master && git checkout -b <type>/<name>`，不要从其他未合并的分支上接着开。

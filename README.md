@@ -639,6 +639,13 @@ CodeProject/
 
 ### 1. 创建数据库
 
+本机没有 MySQL 8.4 时，可以用 Docker 启动一个开发用实例，然后在 `backend/.env` 里设 `DB_HOST=127.0.0.1`、`DB_PORT=3307`、`DB_USER=root`：
+
+```bash
+docker run -d --name clipsync-dev-mysql -p 127.0.0.1:3307:3306 \
+    -v clipsync_dev_mysql:/var/lib/mysql -e MYSQL_ROOT_PASSWORD=<开发库密码> mysql:8.4.11
+```
+
 ```sql
 CREATE DATABASE clipsync CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
