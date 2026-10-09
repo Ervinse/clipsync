@@ -6,6 +6,13 @@
 
 - Docker 20.10+
 - Docker Compose v2（命令为 `docker compose`；旧版独立的 `docker-compose` 也可用）
+- 宿主机发行版不限。Rocky Linux / AlmaLinux / RHEL 上请装 Docker CE，不要用系统自带的 Podman：
+  ```bash
+  sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+  sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  sudo systemctl enable --now docker
+  sudo firewall-cmd --permanent --add-service=http && sudo firewall-cmd --reload
+  ```
 
 ## 快速开始
 

@@ -39,7 +39,8 @@ fi
 
 # 3. 检查 MySQL 服务
 echo -n "MySQL 服务: "
-if systemctl is-active --quiet mysql; then
+# 服务名因发行版而异：Debian 系为 mysql，RHEL 系为 mysqld
+if systemctl is-active --quiet mysql || systemctl is-active --quiet mysqld; then
     echo -e "${GREEN}✓ 运行中${NC}"
 else
     echo -e "${RED}✗ 未运行${NC}"

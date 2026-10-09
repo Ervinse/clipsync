@@ -5,6 +5,10 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=os_env.sh
+source "$SCRIPT_DIR/os_env.sh"
+
 # 颜色输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -41,9 +45,11 @@ echo -e "${GREEN}✓ 数据库已备份${NC}"
 echo -e "${YELLOW}[3/6] 更新后端...${NC}"
 
 # 拉取最新代码：.git 在项目根目录，必须在根目录执行
-# 以项目文件属主（www-data）执行：root 执行会把 .git 内新对象改成 root 所有，之后 www-data 无法再操作
+# 以项目文件属主执行（deploy.sh 设置的应用用户：Debian 系 www-data，RHEL 系 nginx）：
+# root 执行会把 .git 内新对象改成 root 所有，之后应用用户无法再操作
 if [ -d "$PROJECT_ROOT/.git" ]; then
-    sudo -u www-data git -C "$PROJECT_ROOT" pull --ff-only
+    APP_USER=$(stat -c %U "$PROJECT_ROOT")
+    sudo -u "$APP_USER" git -C "$PROJECT_ROOT" pull --ff-only
     echo -e "${GREEN}✓ 代码已更新${NC}"
 else
     echo -e "${YELLOW}⚠ $PROJECT_ROOT 不是 git 仓库，跳过拉取代码${NC}"
@@ -72,6 +78,10 @@ echo -e "${GREEN}✓ 前端已构建${NC}"
 
 # 步骤 5: 重启服务
 echo -e "${YELLOW}[5/6] 重启服务...${NC}"
+# SELinux 开启时，给新拉取、新构建的文件恢复安全上下文（规则由 deploy.sh 设置）；未开启时跳过
+if selinux_enabled; then
+    restorecon -R "$PROJECT_ROOT"
+fi
 systemctl start clipsync
 # 服务已正常拉起，解除失败兜底
 trap - EXIT

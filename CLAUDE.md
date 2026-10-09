@@ -69,7 +69,7 @@
 | 只改文档（`*.md`）或纯注释 | 不跑测试与构建；只检查文中路径、命令、引用与代码一致 |
 | `backend/` 代码、迁移、依赖 | `pytest`（在 `backend/`） |
 | `frontend/` 代码、依赖、`vite.config.js` | `npm run build`（在 `frontend/`） |
-| `deployment/scripts/*.sh` | `bash -n` 语法检查 |
+| `deployment/scripts/*.sh` | `bash -n` 语法检查；改了 `os_env.sh` 另跑 `bash deployment/scripts/test_os_env.sh` |
 | Nginx / compose / systemd 配置 | 无法本地运行时说明未实测，记入 TODO.md |
 
 改动跨多个范围时，把对应的验证都跑一遍；汇报时写明跑了哪些、按规则跳过了哪些。

@@ -7,7 +7,13 @@
 - [ ] **Docker 全新卷启动**：`docker compose up` 时 MySQL healthcheck 可能过早通过，导致 backend 连库失败。
   已做预防：healthcheck 走 TCP（`mysqladmin ping -h 127.0.0.1`）并设 `start_period`。需在全新数据卷上实际启动一次确认。
 - [ ] **重建 backend 后前端 Nginx 缓存旧 IP**：`nginx-docker.conf` 已用 `resolver 127.0.0.11` 与变量式 `proxy_pass`。需实际 `docker compose up -d --build backend` 后确认前端仍能访问 `/api`。
-- [ ] **直接部署脚本**：`deploy.sh`、`update.sh`（含失败后自动拉起服务、以 www-data 执行 `git pull`）、cron 中的 `backup_database.sh` 与 `cleanup_expired.sh`（含孤儿目录扫描）目前只通过了 `bash -n` 语法检查，需在测试环境实际执行一次，检查孤儿扫描输出的删除列表是否符合预期。
+- [ ] **直接部署脚本**：`deploy.sh`、`update.sh`（含失败后自动拉起服务、以项目属主执行 `git pull`）、cron 中的 `backup_database.sh` 与 `cleanup_expired.sh`（含孤儿目录扫描）目前只通过了 `bash -n` 语法检查，需在测试环境实际执行一次，检查孤儿扫描输出的删除列表是否符合预期。
+- [ ] **Rocky Linux 9 直接部署**：发行版识别、systemd 单元渲染、SELinux 调用顺序已由 `test_os_env.sh` 用桩命令覆盖，但没在真实 Rocky 9 上跑过。需在 SELinux enforcing 的 Rocky 9 上按 DEPLOY.md 完整部署一次，确认：
+  - `python3.12` 建出的 venv 能装上全部依赖
+  - `clipsync` 服务能启动（没有 `203/EXEC`），页面无 502 / 403，`ausearch -m avc -ts recent` 无拒绝记录
+  - `/etc/nginx/nginx.conf` 默认 server 块的提示出现，注释后 80 端口由 ClipSync 接管
+  - `update.sh` 以 `nginx` 用户 `git pull` 成功，更新后 `restorecon` 正常
+  - `health_check.sh` 的 MySQL 服务检查识别 `mysqld`
 
 ## 2. 需要在浏览器里手动验证的行为
 
