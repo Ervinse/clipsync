@@ -82,3 +82,7 @@ htmlcov/
 
 # 开发机打包产物（deployment/docker/build-release.ps1 生成的镜像包与部署包）
 release/
+
+# 在 deployment/docker 里直接运行 compose 时生成：证书验证目录、HTTPS 证书
+deployment/docker/acme/
+deployment/docker/letsencrypt/

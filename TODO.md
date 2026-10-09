@@ -2,24 +2,16 @@
 
 项目中尚未完成的事项：需要在真实环境实测的部署项、需要在浏览器里手动验证的行为，以及还没有实现的功能。处理完一项就从本文件删掉；全部清空后删除本文件。
 
-## 1. 需要在 Linux 上实测的部署项
+## 1. 需要在真实 Linux 服务器上实测的部署项
 
-- [ ] **Docker 全新卷启动**：`docker compose up` 时 MySQL healthcheck 可能过早通过，导致 backend 连库失败。
-  已做预防：healthcheck 走 TCP（`mysqladmin ping -h 127.0.0.1`）并设 `start_period`。需在全新数据卷上实际启动一次确认。
-- [ ] **SSH 隧道查询数据库**：db 的 3306 只绑定宿主机 `127.0.0.1`。需确认：从其他机器直连 `服务器IP:3306` 失败；经 SSH 隧道用只读账号能连上并查询；`docker compose exec -T db ... mysqldump --no-tablespaces` 用应用账号能导出非空备份。
-- [ ] **重建 backend 后前端 Nginx 缓存旧 IP**：`nginx-docker.conf` 已用 `resolver 127.0.0.11` 与变量式 `proxy_pass`。需导入新的 backend 镜像（或 `docker compose up -d --force-recreate backend`）重建 backend 容器后，确认前端仍能访问 `/api`。
-- [ ] **开发机构建（方式 A）全流程**：`build-release.ps1` 只用伪造的 docker 命令验证过参数与打包步骤，PowerShell 语法解析通过；需在装有 Docker Desktop 的 Windows 上实际运行一次，确认：
-  - 去掉 gcc 后 `pip install` 成功（依赖的 x86_64 预编译包已用 `pip download --platform manylinux` 核对过）
-  - 启用 containerd 镜像存储时 `docker save` 不报错，镜像包体积合理
-  - 服务器 `docker load` 后 `docker compose up -d` 不访问网络即可启动，数据卷名为 `clipsync_mysql_data`、`clipsync_storage_data`
-  - `-AppOnly` 更新与 `CLIPSYNC_TAG` 回滚可用
-- [ ] **直接部署脚本**：`deploy.sh`、`update.sh`（含失败后自动拉起服务、以项目属主执行 `git pull`）、cron 中的 `backup_database.sh` 与 `cleanup_expired.sh`（含孤儿目录扫描）目前只通过了 `bash -n` 语法检查，需在测试环境实际执行一次，检查孤儿扫描输出的删除列表是否符合预期。
-- [ ] **Rocky Linux 9 直接部署**：发行版识别、systemd 单元渲染、SELinux 调用顺序已由 `test_os_env.sh` 用桩命令覆盖，但没在真实 Rocky 9 上跑过。需在 SELinux enforcing 的 Rocky 9 上按 DEPLOY.md 完整部署一次，确认：
-  - `python3.12` 建出的 venv 能装上全部依赖
-  - `clipsync` 服务能启动（没有 `203/EXEC`），页面无 502 / 403，`ausearch -m avc -ts recent` 无拒绝记录
-  - `/etc/nginx/nginx.conf` 默认 server 块的提示出现，注释后 80 端口由 ClipSync 接管
-  - `update.sh` 以 `nginx` 用户 `git pull` 成功，更新后 `restorecon` 正常
-  - `health_check.sh` 的 MySQL 服务检查识别 `mysqld`
+开发机（Windows + Docker Desktop）上已实测：方式 B 源码构建、全新数据卷启动、经 Nginx 的登录 / 文本同步 / 分片上传下载 / 访问码 / WebSocket / 限流、`backup.sh` 备份与失败处理、数据库与文件恢复、`health_check.sh`、清理任务、重建 backend 后 Nginx 重新解析 IP、HTTPS 版 Nginx 配置（自签证书）、MySQL 8.0 数据卷原地升级到 8.4。以下只能在真实服务器上确认：
+
+- [ ] **方式 A 服务器端**：`docker load` 后不联网 `docker compose up -d` 能启动；`-AppOnly` 更新与 `CLIPSYNC_TAG` 回滚可用；`health_check.sh` 显示 VERSION 与运行中的提交号。
+- [ ] **定时任务**：按 `clipsync.cron` 安装到 `/etc/cron.d/` 后，清理、备份按时执行，日志写入 `/var/log/clipsync/`，`clipsync.logrotate` 轮转正常。
+- [ ] **端口暴露**：从其他机器访问 `服务器IP:3306` 失败；只有安全组放行的 80（启用 HTTPS 后 443）可访问。
+- [ ] **SSH 隧道查询数据库**：经 SSH 隧道用只读账号 `reader` 能连上并查询。
+- [ ] **HTTPS**：有域名后，`cert.sh issue` 能在公网申请到证书；启用 `docker-compose.https.yml` 后 80 跳转 443、WebSocket 走 `wss://`；`cert.sh renew` 能续期并重新加载 Nginx。
+- [ ] **服务器上的 MySQL 8.0 → 8.4 升级**：服务器上若已有 8.0 的数据卷，按 DEPLOYMENT.md「升级 MySQL」在 compose 环境中升级一次（开发机上只用独立容器测过）。
 
 ## 2. 需要在浏览器里手动验证的行为
 

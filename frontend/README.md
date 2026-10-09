@@ -140,7 +140,7 @@ server: {
 
 ### 生产环境
 
-生产环境把 `npm run build` 的产物 `dist/` 交给 Nginx 托管，并反代 `/api`、`/ws`。Nginx 配置以 [deployment/nginx/clipsync.conf](../deployment/nginx/clipsync.conf)（HTTP）和 [deployment/nginx/clipsync-https.conf](../deployment/nginx/clipsync-https.conf)（HTTPS）为准，部署步骤见 [deployment/DEPLOY.md](../deployment/DEPLOY.md)。
+生产环境由 frontend 容器（[Dockerfile.frontend](../deployment/docker/Dockerfile.frontend)）在镜像内执行 `npm ci && npm run build`，产物 `dist/` 由容器里的 Nginx 托管，并反代 `/api`、`/ws` 到 backend 容器。Nginx 规则以 [deployment/docker/nginx-common.conf](../deployment/docker/nginx-common.conf) 为准（HTTP 站点 `nginx-docker.conf`、HTTPS 站点 `nginx-https.conf` 都引用它），部署步骤见 [deployment/DEPLOYMENT.md](../deployment/DEPLOYMENT.md)。
 
 > 自己写反代时必须设置 `X-Forwarded-For`，否则后端只能看到 127.0.0.1，所有用户会共用一个限流额度。
 

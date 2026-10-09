@@ -1,0 +1,16 @@
+# ClipSync 宿主机定时任务。安装（在部署目录执行，部署目录不是 /opt/clipsync 时 sed 会替换成实际路径）：
+#   mkdir -p /var/log/clipsync
+#   sed "s|/opt/clipsync|$(pwd)|g" clipsync.cron > /etc/cron.d/clipsync && chmod 644 /etc/cron.d/clipsync
+# 日志在 /var/log/clipsync/，由 clipsync.logrotate 轮转。
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# 每小时：清理过期访问码、过期上传会话与孤儿目录
+0 * * * * root cd /opt/clipsync && docker compose exec -T backend python -m scripts.cleanup_expired >> /var/log/clipsync/cleanup.log 2>&1
+
+# 每天 02:30：备份数据库与上传的文件（保留期见 backup.sh）
+30 2 * * * root bash /opt/clipsync/backup.sh >> /var/log/clipsync/backup.log 2>&1
+
+# 每天 04:15：检查 HTTPS 证书并在快到期时续期（没有申请过证书时什么都不做）
+15 4 * * * root bash /opt/clipsync/cert.sh renew >> /var/log/clipsync/cert.log 2>&1

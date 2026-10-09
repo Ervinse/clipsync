@@ -1,10 +1,19 @@
-# ClipSync Docker Compose
-# 默认按镜像名启动：clipsync-backend / clipsync-frontend 在开发机上由 build-release.ps1 构建并打包，
-# 服务器用 docker load 导入后启动，不在服务器上构建、不从镜像仓库拉取（见 README.md）。
-# 在服务器上从源码构建：docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# ClipSync Docker Compose（部署步骤见 DEPLOYMENT.md）
+# clipsync-backend / clipsync-frontend 镜像默认由开发机的 build-release.ps1 构建打包，服务器 docker load 导入后启动；
+# 在服务器上从源码构建时叠加 docker-compose.build.yml。
+#
+# 本文件和 nginx-*.conf 会随部署包更新被覆盖：需要调整的配置都放在 .env 里，不要直接改这些文件。
+# 启用 HTTPS：在 .env 里设 COMPOSE_FILE=docker-compose.yml:docker-compose.https.yml
 
 # 项目名固定为 clipsync：网络、数据卷名（clipsync_mysql_data、clipsync_storage_data）不随所在目录名变化
 name: clipsync
+
+# 容器日志上限：每个容器最多 3 个 10MB 的日志文件，长期运行也不会占满硬盘
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 # 固定子网：backend 只信任这个网段发来的 X-Forwarded-For（即前端容器的 Nginx）
 # 若与宿主机已有网段冲突，同时修改这里的 subnet 和 backend command 里的 --forwarded-allow-ips
@@ -18,10 +27,15 @@ networks:
 services:
   # MySQL 数据库
   db:
-    image: mysql:8.0
+    # 版本号固定：升级前先备份（见 DEPLOYMENT.md「升级 MySQL」）。build-release.ps1 按本行打包 MySQL 镜像
+    image: mysql:8.4.11
     container_name: clipsync-db
     restart: always
     networks: [clipsync]
+    logging: *default-logging
+    security_opt: ["no-new-privileges:true"]
+    # 停止时最多等 60 秒让 MySQL 正常关闭（默认 10 秒后强制结束，可能让下次启动或版本升级需要崩溃恢复）
+    stop_grace_period: 60s
     environment:
       # 密码没有默认值：未设置时 compose 直接报错
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD 未设置}
@@ -30,7 +44,7 @@ services:
       MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 未设置}
     volumes:
       - mysql_data:/var/lib/mysql
-    # 3306 只绑定宿主机 127.0.0.1：外网和局域网都连不进来，只供宿主机本机与 SSH 隧道查询数据库（见 README「远程查询数据库」）
+    # 3306 只绑定宿主机 127.0.0.1：外网和局域网都连不进来，只供宿主机本机与 SSH 隧道查询数据库
     # 不要改成 "3306:3306"：Docker 发布的端口会绕过 firewalld，等于把数据库直接暴露出去
     ports:
       - "127.0.0.1:${DB_HOST_PORT:-3306}:3306"
@@ -51,6 +65,10 @@ services:
     container_name: clipsync-backend
     restart: always
     networks: [clipsync]
+    logging: *default-logging
+    # 以非 root 用户运行，不需要任何 Linux capability，也不允许再提权
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
     depends_on:
       db:
         condition: service_healthy
@@ -82,19 +100,24 @@ services:
     # 用数组写法：YAML 折叠写法（>）的引号与换行处理容易出错，可能让代理头参数不生效
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips 172.28.0.0/16"]
 
-  # 前端服务
+  # 前端服务（Nginx：静态页面 + 反代 /api、/ws）
   frontend:
     image: clipsync-frontend:${CLIPSYNC_TAG:-latest}
     pull_policy: never
     container_name: clipsync-frontend
     restart: always
     networks: [clipsync]
+    logging: *default-logging
+    security_opt: ["no-new-privileges:true"]
     depends_on:
       - backend
     ports:
-      - "80:80"
+      - "${HTTP_PORT:-80}:80"
     volumes:
       - ./nginx-docker.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx-common.conf:/etc/nginx/snippets/clipsync-common.conf:ro
+      # Let's Encrypt 验证文件目录（cert.sh 写入），HTTP 模式下也要挂载，申请证书时用得到
+      - ./acme:/var/www/acme:ro
 
 volumes:
   mysql_data:

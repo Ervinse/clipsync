@@ -1,6 +1,6 @@
-# 在服务器上从源码构建镜像（叠加在 docker-compose.yml 之上使用）
+# 在服务器上从源码构建镜像（叠加在 docker-compose.yml 之上使用，见 DEPLOYMENT.md「方式 B」）
 # 需要服务器上有完整项目源码，并且能访问 Docker Hub、Debian、PyPI、npm 等下载源。
-# 网络受限的服务器请改用开发机构建（build-release.ps1，见 README.md）。
+# 网络受限的服务器请改用开发机构建（build-release.ps1）。
 #
 # 用法（在 deployment/docker 目录）：
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build

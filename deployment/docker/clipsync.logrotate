@@ -1,0 +1,11 @@
+# ClipSync 定时任务日志轮转。安装：cp clipsync.logrotate /etc/logrotate.d/clipsync
+# 容器日志由 docker-compose.yml 的 logging 配置限制大小，不在这里处理
+/var/log/clipsync/*.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

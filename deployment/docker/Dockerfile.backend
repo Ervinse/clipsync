@@ -1,28 +1,29 @@
-# ClipSync 后端 Dockerfile
+# ClipSync 后端镜像
+# 基础镜像版本号固定（Python 3.12 + Debian trixie），重新构建时运行环境不会悄悄变化；升级时手动改这里
 
-FROM python:3.12-slim
+FROM python:3.12.15-slim-trixie
 
-# 设置工作目录
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
 WORKDIR /app
 
-# 不安装 gcc 等编译工具：requirements.txt 里的依赖都有 manylinux x86_64 预编译包（aiomysql 为纯 Python），
-# pip 直接安装即可；新增依赖若没有预编译包，pip 会因缺编译器报错，届时再按需补装
-
-# 复制依赖文件
+# 只装运行依赖（requirements.txt），测试依赖在 requirements-dev.txt，不进生产镜像。
+# 不安装 gcc 等编译工具：这些依赖都有 manylinux x86_64 预编译包（aiomysql 为纯 Python），
+# 新增依赖若没有预编译包，pip 会因缺编译器报错，届时再按需补装
 COPY requirements.txt .
-
-# 安装 Python 依赖
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制应用代码
 COPY . .
 
-# 创建存储目录，并以非 root 用户运行
-RUN mkdir -p storage && useradd --system --no-create-home clipsync && chown -R clipsync /app
+# 以非 root 用户运行；应用代码保持 root 所有（运行时只读），只有上传目录可写
+RUN useradd --system --no-create-home clipsync \
+    && mkdir -p storage \
+    && chown clipsync storage
 USER clipsync
 
-# 暴露端口
 EXPOSE 8000
 
-# 启动命令（单 worker：WebSocket 与限流依赖进程内存）
+# 单 worker：WebSocket 与限流依赖进程内存。docker-compose.yml 会用自己的 command 覆盖（先迁移再启动）
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers"]
