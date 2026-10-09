@@ -67,7 +67,7 @@
 ## 服务启动
 
 - [ ] `sudo systemctl enable --now clipsync`
-- [ ] `sudo systemctl restart nginx`
+- [ ] `sudo systemctl enable nginx && sudo systemctl restart nginx`（RHEL 系装完 Nginx 不会自动启动，也不会开机自启）
 - [ ] `systemctl status clipsync` 与 `systemctl status nginx` 均正常
 - [ ] RHEL 系：`firewall-cmd` 已放行 http / https
 

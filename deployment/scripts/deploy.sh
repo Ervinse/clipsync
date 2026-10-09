@@ -201,7 +201,7 @@ echo
 echo "下一步操作:"
 echo "  1. 启动服务: systemctl start clipsync"
 echo "  2. 启用开机自启: systemctl enable clipsync"
-echo "  3. 重启 Nginx: systemctl restart nginx"
+echo "  3. 启用并重启 Nginx: systemctl enable nginx && systemctl restart nginx"
 echo "  4. 查看服务状态: systemctl status clipsync"
 echo "  5. 查看日志: journalctl -u clipsync -f"
 echo

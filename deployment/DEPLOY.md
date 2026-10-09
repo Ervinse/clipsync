@@ -145,7 +145,8 @@ sudo bash deployment/scripts/deploy.sh
 
 ```bash
 sudo systemctl enable --now clipsync
-sudo systemctl reload nginx
+# 用 restart 而不是 reload：RHEL 系装完 Nginx 不会自动启动，reload 一个未运行的服务会失败
+sudo systemctl enable nginx && sudo systemctl restart nginx
 ```
 
 ### 7. 验证
