@@ -25,8 +25,10 @@ deployment/
 │   └── health_check.sh        # 检查服务、接口、数据库、磁盘、备份
 └── docker/
     ├── README.md              # Docker 部署文档
-    ├── docker-compose.yml     # db / backend / frontend 三个服务
-    ├── Dockerfile.backend     # python:3.12-slim，非 root 运行
+    ├── build-release.ps1      # 开发机（Windows + Docker Desktop）构建镜像，打包成镜像包 + 部署包，输出到项目根 release/
+    ├── docker-compose.yml     # db / backend / frontend 三个服务，按镜像名启动（镜像由 docker load 导入）
+    ├── docker-compose.build.yml # 叠加使用：在服务器上从源码构建 backend / frontend 镜像
+    ├── Dockerfile.backend     # python:3.12-slim，非 root 运行，不装编译工具
     ├── Dockerfile.frontend    # node:22-alpine 构建 + nginx:alpine 提供服务
     ├── nginx-docker.conf      # 前端容器内的 Nginx 配置
     └── .env.example           # compose 环境变量模板

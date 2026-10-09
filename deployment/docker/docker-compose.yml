@@ -1,4 +1,10 @@
-version: '3.8'
+# ClipSync Docker Compose
+# 默认按镜像名启动：clipsync-backend / clipsync-frontend 在开发机上由 build-release.ps1 构建并打包，
+# 服务器用 docker load 导入后启动，不在服务器上构建、不从镜像仓库拉取（见 README.md）。
+# 在服务器上从源码构建：docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+
+# 项目名固定为 clipsync：网络、数据卷名（clipsync_mysql_data、clipsync_storage_data）不随所在目录名变化
+name: clipsync
 
 # 固定子网：backend 只信任这个网段发来的 X-Forwarded-For（即前端容器的 Nginx）
 # 若与宿主机已有网段冲突，同时修改这里的 subnet 和 backend command 里的 --forwarded-allow-ips
@@ -39,9 +45,9 @@ services:
 
   # 后端服务
   backend:
-    build:
-      context: ../../backend
-      dockerfile: ../deployment/docker/Dockerfile.backend
+    image: clipsync-backend:${CLIPSYNC_TAG:-latest}
+    # 镜像由 docker load 导入：没导入时直接报错，不去 Docker Hub 找同名镜像
+    pull_policy: never
     container_name: clipsync-backend
     restart: always
     networks: [clipsync]
@@ -78,9 +84,8 @@ services:
 
   # 前端服务
   frontend:
-    build:
-      context: ../../frontend
-      dockerfile: ../deployment/docker/Dockerfile.frontend
+    image: clipsync-frontend:${CLIPSYNC_TAG:-latest}
+    pull_policy: never
     container_name: clipsync-frontend
     restart: always
     networks: [clipsync]

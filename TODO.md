@@ -7,7 +7,12 @@
 - [ ] **Docker 全新卷启动**：`docker compose up` 时 MySQL healthcheck 可能过早通过，导致 backend 连库失败。
   已做预防：healthcheck 走 TCP（`mysqladmin ping -h 127.0.0.1`）并设 `start_period`。需在全新数据卷上实际启动一次确认。
 - [ ] **SSH 隧道查询数据库**：db 的 3306 只绑定宿主机 `127.0.0.1`。需确认：从其他机器直连 `服务器IP:3306` 失败；经 SSH 隧道用只读账号能连上并查询；`docker compose exec -T db ... mysqldump --no-tablespaces` 用应用账号能导出非空备份。
-- [ ] **重建 backend 后前端 Nginx 缓存旧 IP**：`nginx-docker.conf` 已用 `resolver 127.0.0.11` 与变量式 `proxy_pass`。需实际 `docker compose up -d --build backend` 后确认前端仍能访问 `/api`。
+- [ ] **重建 backend 后前端 Nginx 缓存旧 IP**：`nginx-docker.conf` 已用 `resolver 127.0.0.11` 与变量式 `proxy_pass`。需导入新的 backend 镜像（或 `docker compose up -d --force-recreate backend`）重建 backend 容器后，确认前端仍能访问 `/api`。
+- [ ] **开发机构建（方式 A）全流程**：`build-release.ps1` 只用伪造的 docker 命令验证过参数与打包步骤，PowerShell 语法解析通过；需在装有 Docker Desktop 的 Windows 上实际运行一次，确认：
+  - 去掉 gcc 后 `pip install` 成功（依赖的 x86_64 预编译包已用 `pip download --platform manylinux` 核对过）
+  - 启用 containerd 镜像存储时 `docker save` 不报错，镜像包体积合理
+  - 服务器 `docker load` 后 `docker compose up -d` 不访问网络即可启动，数据卷名为 `clipsync_mysql_data`、`clipsync_storage_data`
+  - `-AppOnly` 更新与 `CLIPSYNC_TAG` 回滚可用
 - [ ] **直接部署脚本**：`deploy.sh`、`update.sh`（含失败后自动拉起服务、以项目属主执行 `git pull`）、cron 中的 `backup_database.sh` 与 `cleanup_expired.sh`（含孤儿目录扫描）目前只通过了 `bash -n` 语法检查，需在测试环境实际执行一次，检查孤儿扫描输出的删除列表是否符合预期。
 - [ ] **Rocky Linux 9 直接部署**：发行版识别、systemd 单元渲染、SELinux 调用顺序已由 `test_os_env.sh` 用桩命令覆盖，但没在真实 Rocky 9 上跑过。需在 SELinux enforcing 的 Rocky 9 上按 DEPLOY.md 完整部署一次，确认：
   - `python3.12` 建出的 venv 能装上全部依赖

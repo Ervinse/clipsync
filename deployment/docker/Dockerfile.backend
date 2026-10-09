@@ -5,12 +5,8 @@ FROM python:3.12-slim
 # 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖
-RUN apt-get update && apt-get install -y \
-    gcc \
-    default-libmysqlclient-dev \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+# 不安装 gcc 等编译工具：requirements.txt 里的依赖都有 manylinux x86_64 预编译包（aiomysql 为纯 Python），
+# pip 直接安装即可；新增依赖若没有预编译包，pip 会因缺编译器报错，届时再按需补装
 
 # 复制依赖文件
 COPY requirements.txt .

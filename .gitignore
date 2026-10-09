@@ -79,3 +79,6 @@ htmlcov/
 *.tmp
 *.bak
 *.swp
+
+# 开发机打包产物（deployment/docker/build-release.ps1 生成的镜像包与部署包）
+release/

@@ -574,7 +574,7 @@ CodeProject/
         ├── nginx/clipsync-https.conf  # HTTPS 阶段
         ├── systemd/clipsync.service   # 单 worker，监听 127.0.0.1
         ├── scripts/                   # deploy / update / backup_database / cleanup_expired / health_check；os_env.sh 识别发行版，test_os_env.sh 为其自测
-        ├── docker/                    # Dockerfile、docker-compose.yml、nginx-docker.conf
+        ├── docker/                    # Dockerfile、docker-compose.yml（按镜像启动）、docker-compose.build.yml（服务器上构建）、nginx-docker.conf、build-release.ps1（开发机构建并打包镜像）
         ├── .env.production.example
         └── DEPLOY.md / CHECKLIST.md / README.md
 ```
@@ -591,7 +591,7 @@ CodeProject/
 - **后端**：`uvicorn --workers 1 --host 127.0.0.1 --proxy-headers`，systemd 托管。**必须单 worker**：WebSocket 连接表与限流计数都在进程内存中，多进程会导致实时同步与限流失效。
 - **前端**：`npm run build` 产出静态文件，Nginx 托管。
 - **Nginx**：静态文件 + `/api`、`/ws` 反代，HTTP/HTTPS 两份配置切换。前端页面 `/access/<code>` 是 SPA 路由，由 `try_files` 回落到 `index.html`，**不要**把 `/access` 反代到后端。
-- **Docker**：`deployment/docker/docker-compose.yml`（MySQL + 后端 + 前端 Nginx），后端同样单 worker，只信任 compose 固定子网 `172.28.0.0/16` 的 `X-Forwarded-For`，Nginx 用 `$remote_addr` 覆盖该头。宿主机只对外开放 80 端口；MySQL 的 3306 只绑定宿主机 `127.0.0.1`，供 SSH 隧道查询数据库。
+- **Docker**：`deployment/docker/docker-compose.yml`（MySQL + 后端 + 前端 Nginx）。默认在开发机用 `build-release.ps1` 构建镜像并打包，服务器 `docker load` 导入后启动，不需要联网下载；网络通畅的服务器也可叠加 `docker-compose.build.yml` 在服务器上从源码构建。后端同样单 worker，只信任 compose 固定子网 `172.28.0.0/16` 的 `X-Forwarded-For`，Nginx 用 `$remote_addr` 覆盖该头。宿主机只对外开放 80 端口；MySQL 的 3306 只绑定宿主机 `127.0.0.1`，供 SSH 隧道查询数据库。
 
 ### 上线步骤（概要）
 
@@ -690,6 +690,7 @@ pytest tests/test_auth.py::test_name    # 单个
 | `backend/` 的代码、迁移、依赖 | `pytest` |
 | `frontend/` 的代码、依赖、`vite.config.js` | `npm run build`，界面行为在浏览器里手动验证（前端没有自动化测试） |
 | `deployment/scripts/*.sh` | `bash -n` 语法检查；改了 `os_env.sh` 另跑 `bash deployment/scripts/test_os_env.sh` |
+| `deployment/docker/build-release.ps1` | PowerShell 语法解析；装有 Docker Desktop 时实际运行一次 |
 
 完整规则见 CLAUDE.md「按改动范围验证」；尚待手动验证的行为见 [TODO.md](TODO.md)。生产环境不运行测试（见 deployment/DEPLOY.md「7. 验证」）。
 

@@ -49,7 +49,7 @@
 - 分支命名规范：`feature/功能名`、`fix/问题描述`、`refactor/重构内容`。
 - 提交信息用中文，简明扼要说明改动内容；多文件改动按模块分组描述。
 - 提交前按改动范围验证（见下方「按改动范围验证」），不要对无关改动跑全套验证。
-- `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/storage/`（上传文件）、编译产物。
+- `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/storage/`（上传文件）、编译产物、`release/`（`build-release.ps1` 生成的镜像包与部署包）。
 
 ### 分支生命周期（开分支 → 提交 → 等用户指令合并 → 删分支）
 1. **每次新的更新都在 `feature/*` 或 `fix/*` 分支上进行**：从最新的 master 开分支 `git checkout master && git checkout -b <type>/<name>`，不要从其他未合并的分支上接着开。
@@ -70,6 +70,7 @@
 | `backend/` 代码、迁移、依赖 | `pytest`（在 `backend/`） |
 | `frontend/` 代码、依赖、`vite.config.js` | `npm run build`（在 `frontend/`） |
 | `deployment/scripts/*.sh` | `bash -n` 语法检查；改了 `os_env.sh` 另跑 `bash deployment/scripts/test_os_env.sh` |
+| `deployment/docker/build-release.ps1` | PowerShell 语法解析（`[System.Management.Automation.Language.Parser]::ParseFile`）；装有 Docker Desktop 时实际运行一次，否则记入 TODO.md |
 | Nginx / compose / systemd 配置 | 无法本地运行时说明未实测，记入 TODO.md |
 
 改动跨多个范围时，把对应的验证都跑一遍；汇报时写明跑了哪些、按规则跳过了哪些。
