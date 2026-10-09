@@ -52,8 +52,11 @@ EOF
 
 echo "[$(date)] 开始备份数据库..."
 
+# --no-tablespaces：MySQL 8.0.21 起导出表空间信息需要全局 PROCESS 权限，应用账号只有本库权限，
+# 不加会报 Access denied；本项目没有自定义表空间，跳过不影响恢复
 if ! mysqldump \
     --defaults-extra-file="$MYSQL_CNF" \
+    --no-tablespaces \
     --single-transaction \
     --quick \
     --lock-tables=false \

@@ -25,8 +25,10 @@ nano .env
 ```
 
 **必须修改的配置：**
-- `DB_ROOT_PASSWORD`：MySQL root 密码
-- `DB_PASSWORD`：应用数据库用户密码
+- `DB_ROOT_PASSWORD`：MySQL root 账号的密码（用户名固定为 `root`）
+- `DB_USER` / `DB_PASSWORD`：应用数据库账号与密码，用户名可自定（不能是 `root`）
+  - 密码只用字母、数字和 `_ - . @`，至少 12 位；`$ #`、引号、空格、反斜杠在 `.env` 里有特殊含义，会被截断或改写
+  - 账号只在数据库**第一次启动**（数据卷为空）时创建，之后改 `.env` 不会生效，反而会让后端连不上数据库
 - `JWT_SECRET`：用 `openssl rand -hex 32` 生成。未设置时 compose 直接报错；少于 32 字符或仍是示例值时后端拒绝启动
 - `CORS_ORIGINS`：浏览器访问的地址，例如 `http://localhost` 或 `https://your-domain.com`
 
@@ -49,13 +51,14 @@ docker compose exec backend python -m scripts.create_superadmin
 ### 4. 访问应用
 
 - 浏览器访问 http://localhost（前端容器的 Nginx 监听宿主机 80 端口）
-- 后端 8000 端口和 MySQL 3306 端口**不对宿主机暴露**，只能在容器网络内访问。API 统一经 `http://localhost/api/...`，WebSocket 经 `/ws`
+- 后端 8000 端口**不对宿主机暴露**，API 统一经 `http://localhost/api/...`，WebSocket 经 `/ws`
+- MySQL 3306 端口只绑定宿主机的 `127.0.0.1`：外网和局域网连不进来，只供宿主机本机和 SSH 隧道查询数据库（见下文「远程查询数据库」）
 
 ## 服务说明
 
 | 服务 | 来源 | 宿主机端口 | 数据卷 |
 |------|------|-----------|--------|
-| db | `mysql:8.0` | 无 | `mysql_data` → `/var/lib/mysql` |
+| db | `mysql:8.0` | `127.0.0.1:3306`（仅本机，端口可用 `.env` 的 `DB_HOST_PORT` 修改） | `mysql_data` → `/var/lib/mysql` |
 | backend | `../../backend` + `Dockerfile.backend`（Python 3.12，非 root 用户运行） | 无 | `storage_data` → `/app/storage` |
 | frontend | `../../frontend` + `Dockerfile.frontend`（Node 22 构建，Nginx 提供服务） | 80 | 挂载 `./nginx-docker.conf` |
 
@@ -84,6 +87,18 @@ docker compose build
 docker compose up -d         # backend 启动时会自动执行迁移
 ```
 
+项目没有推送到远端仓库时，在开发机上用 `git archive` 打包已提交的代码，再传到服务器解压覆盖：
+
+```bash
+# 开发机（项目根目录）：core.autocrlf=false 保证打包出的文件是 LF 换行（Windows 开启 autocrlf 时必须加）
+git -c core.autocrlf=false archive --format=tar.gz -o ../clipsync.tar.gz master
+scp ../clipsync.tar.gz root@服务器IP:/root/
+
+# 服务器：压缩包里没有 .env，解压不会覆盖已有配置
+tar -xzf /root/clipsync.tar.gz -C /opt/clipsync
+cd /opt/clipsync/deployment/docker && docker compose up -d --build
+```
+
 ### 进入容器
 
 ```bash
@@ -97,11 +112,12 @@ docker compose exec db sh -c 'mysql -u "$MYSQL_USER" -p "$MYSQL_DATABASE"'
 ### 数据库
 
 用户名、密码、库名取容器内的 `$MYSQL_USER` / `$MYSQL_PASSWORD` / `$MYSQL_DATABASE`（由 compose 注入），
-外层用单引号，变量在容器内展开，宿主机 shell 不需要知道密码：
+外层用单引号，变量在容器内展开，宿主机 shell 不需要知道密码。
+`--no-tablespaces`：MySQL 8.0.21 起导出表空间信息需要全局 `PROCESS` 权限，应用账号没有，不加会报 Access denied；本项目没有自定义表空间，跳过不影响恢复。
 
 ```bash
 # 备份（-T 关闭 TTY，避免输出被破坏）
-docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysqldump -u "$MYSQL_USER" --single-transaction "$MYSQL_DATABASE"' \
+docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysqldump -u "$MYSQL_USER" --single-transaction --no-tablespaces "$MYSQL_DATABASE"' \
     | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
 
 # 恢复
@@ -133,8 +149,62 @@ Docker 部署不会自动写入 cron，需要在宿主机配置。在 `/etc/cron
 0 * * * * root cd /opt/clipsync/deployment/docker && docker compose exec -T backend python -m scripts.cleanup_expired >> /var/log/clipsync-cleanup.log 2>&1
 
 # 每天凌晨 2 点备份数据库，保留 30 天（cron 里的 % 必须写成 \%）
-0 2 * * * root mkdir -p /var/backups/clipsync && cd /opt/clipsync/deployment/docker && docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysqldump -u "$MYSQL_USER" --single-transaction "$MYSQL_DATABASE"' | gzip > /var/backups/clipsync/clipsync_$(date +\%Y\%m\%d).sql.gz && find /var/backups/clipsync -name 'clipsync_*.sql.gz' -mtime +30 -delete
+0 2 * * * root mkdir -p /var/backups/clipsync && cd /opt/clipsync/deployment/docker && docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysqldump -u "$MYSQL_USER" --single-transaction --no-tablespaces "$MYSQL_DATABASE"' | gzip > /var/backups/clipsync/clipsync_$(date +\%Y\%m\%d).sql.gz && find /var/backups/clipsync -name 'clipsync_*.sql.gz' -mtime +30 -delete
+
+# 每天凌晨 3 点备份上传的文件，保留 7 天（卷名先用 docker volume ls 确认，默认目录名为 docker 时是 docker_storage_data）
+0 3 * * * root mkdir -p /var/backups/clipsync && docker run --rm -v docker_storage_data:/data:ro -v /var/backups/clipsync:/backup alpine tar czf /backup/storage_$(date +\%Y\%m\%d).tar.gz -C /data . && find /var/backups/clipsync -name 'storage_*.tar.gz' -mtime +7 -delete
 ```
+
+备份文件和服务器在同一块硬盘上，硬盘损坏时会一起丢失，请定期复制到其他机器。
+
+## 远程查询数据库（SSH 隧道）
+
+数据库端口只绑定宿主机 `127.0.0.1`，从自己电脑查询时先 SSH 登录服务器，再经这条加密通道连数据库。外网、局域网都不能直接连 3306。
+
+> 不要把 compose 里的端口改成 `"3306:3306"`：Docker 发布的端口会绕过 firewalld，即使防火墙没放行，数据库也会直接暴露在网络上。
+
+### 1. 创建只读账号（建议）
+
+用 root 查询容易误改、误删数据，建议另建只能查询的账号：
+
+```bash
+docker compose exec db mysql -u root -p
+```
+
+```sql
+-- clipsync 为库名（.env 的 DB_NAME）；'%' 是因为隧道进来的连接在容器里看来来自 Docker 网关地址，
+-- 端口只绑定 127.0.0.1，外部仍然连不进来
+CREATE USER 'reader'@'%' IDENTIFIED BY '自己设的只读密码';
+GRANT SELECT ON clipsync.* TO 'reader'@'%';
+```
+
+### 2. 图形工具（以 DBeaver 为例）
+
+新建连接 → MySQL：
+
+| 页签 | 项 | 填写 |
+|------|----|------|
+| SSH | 勾选 Use SSH Tunnel；Host / Port / User / 认证 | 服务器 IP / 22 / 服务器登录用户 / 该用户的密码或私钥 |
+| 主页（Main） | Server Host / Port | `127.0.0.1` / `3306`（改过 `DB_HOST_PORT` 则填该值）。隧道另一头在服务器上，对服务器来说数据库就在本机 |
+| 主页（Main） | Database / Username / Password | `clipsync` / `reader` / 只读密码 |
+| 驱动属性（Driver properties） | `allowPublicKeyRetrieval` | 仅在连接时报 "Public Key Retrieval is not allowed" 时设为 `true`（MySQL 8 的默认认证方式在未启用 SSL 的连接上需要它；数据已经在 SSH 隧道里加密传输） |
+
+MySQL Workbench、HeidiSQL、Navicat 也都支持「通过 SSH 连接」，填写的信息相同。
+
+### 3. 命令行
+
+```bash
+# 在自己电脑上：把本机 13306 端口经 SSH 转发到服务器的 127.0.0.1:3306，保持这个窗口不关
+ssh -N -L 13306:127.0.0.1:3306 用户@服务器IP
+# 另开一个窗口连接本机 13306
+mysql -h 127.0.0.1 -P 13306 -u reader -p clipsync
+```
+
+### 注意
+
+- 服务器的 SSH 需要允许端口转发（`AllowTcpForwarding`，默认允许）。root 不能用密码登录 SSH 时，改用有 sudo 权限的普通用户。
+- 数据库里的剪贴板文本是明文（登录密码只存 bcrypt 哈希）。直接查库会绕过应用里「admin 不能看他人内容」的限制，这个入口只留给运维者本人。
+- 宿主机已装有 MySQL 并占用 3306 时，`docker compose up` 会报端口被占用，在 `.env` 里把 `DB_HOST_PORT` 改成 3307 等空闲端口。
 
 ## 使用 HTTPS
 

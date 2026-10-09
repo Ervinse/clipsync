@@ -591,7 +591,7 @@ CodeProject/
 - **后端**：`uvicorn --workers 1 --host 127.0.0.1 --proxy-headers`，systemd 托管。**必须单 worker**：WebSocket 连接表与限流计数都在进程内存中，多进程会导致实时同步与限流失效。
 - **前端**：`npm run build` 产出静态文件，Nginx 托管。
 - **Nginx**：静态文件 + `/api`、`/ws` 反代，HTTP/HTTPS 两份配置切换。前端页面 `/access/<code>` 是 SPA 路由，由 `try_files` 回落到 `index.html`，**不要**把 `/access` 反代到后端。
-- **Docker**：`deployment/docker/docker-compose.yml`（MySQL + 后端 + 前端 Nginx），后端同样单 worker，只信任 compose 固定子网 `172.28.0.0/16` 的 `X-Forwarded-For`，Nginx 用 `$remote_addr` 覆盖该头。
+- **Docker**：`deployment/docker/docker-compose.yml`（MySQL + 后端 + 前端 Nginx），后端同样单 worker，只信任 compose 固定子网 `172.28.0.0/16` 的 `X-Forwarded-For`，Nginx 用 `$remote_addr` 覆盖该头。宿主机只对外开放 80 端口；MySQL 的 3306 只绑定宿主机 `127.0.0.1`，供 SSH 隧道查询数据库。
 
 ### 上线步骤（概要）
 
