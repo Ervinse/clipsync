@@ -1,3 +1,5 @@
+# 运行依赖（生产镜像只安装本文件；开发与测试另装 requirements-dev.txt）
+
 # Web 框架
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
@@ -18,8 +20,3 @@ slowapi==0.1.9
 # 配置管理
 python-dotenv==1.0.1
 pydantic-settings==2.15.0
-
-# 测试
-pytest==8.3.4
-pytest-asyncio==0.25.2
-httpx==0.28.1

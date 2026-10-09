@@ -341,7 +341,7 @@ async def delete_user(
     await db.commit()
 
     # 5. 删除磁盘文件与临时目录（rmtree 可能涉及大量文件，放入线程池避免阻塞事件循环）
-    #    记录已删除：磁盘清理失败只记日志，残留目录由 cleanup_expired.sh 的孤儿扫描兜底
+    #    记录已删除：磁盘清理失败只记日志，残留目录由 scripts/cleanup_expired.py 的孤儿扫描兜底
     try:
         await run_in_threadpool(delete_user_storage, user_id)
     except OSError:
