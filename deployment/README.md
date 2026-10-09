@@ -16,8 +16,10 @@ deployment/
 ├── systemd/
 │   └── clipsync.service       # uvicorn 单 worker，只监听 127.0.0.1:8000
 ├── scripts/
+│   ├── os_env.sh              # 被 deploy.sh / update.sh 引入：识别发行版，给出应用用户、Nginx 配置位置、MySQL 服务名，处理 SELinux
+│   ├── test_os_env.sh         # os_env.sh 的自测（伪造 os-release 与桩命令，不需要 root）
 │   ├── deploy.sh              # 首次部署（不建库，需先按 DEPLOY.md 建库）
-│   ├── update.sh              # 更新：备份 → 以 www-data 在项目根 git pull → 迁移 → npm ci 构建 → 重启；失败时自动拉起服务
+│   ├── update.sh              # 更新：备份 → 以项目属主在项目根 git pull → 迁移 → npm ci 构建 → 重启；失败时自动拉起服务
 │   ├── backup_database.sh     # 从 backend/.env 读连接信息，mysqldump + gzip，保留 30 天
 │   ├── cleanup_expired.sh     # 调用 backend/scripts/cleanup_expired.py：过期访问码、超时上传会话、孤儿目录
 │   └── health_check.sh        # 检查服务、接口、数据库、磁盘、备份
@@ -38,7 +40,9 @@ deployment/
 ## 重要约束
 
 - 后端**必须单 worker**，不支持多实例负载均衡。WebSocket 广播和限流计数都依赖进程内存。
-- 只支持 Debian / Ubuntu（安装命令用 apt，脚本写死了 `sites-available` 与 `www-data`）。
+- 直接部署支持 Debian / Ubuntu 与 Rocky Linux / AlmaLinux / RHEL 9+，发行版差异集中在 `scripts/os_env.sh`。CentOS 7 / 8 等旧系统请用 Docker。
+- `systemd/clipsync.service` 按 Debian 系书写，`deploy.sh` 安装时按发行版替换运行用户和 MySQL 服务名；手动安装到 RHEL 系时要自己改。
+- 修改 `os_env.sh` 后运行 `bash scripts/test_os_env.sh`。
 - cron 用 `bash 脚本路径` 调用，不依赖脚本的可执行位。
 
 ## 相关文档

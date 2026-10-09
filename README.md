@@ -463,9 +463,9 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
    - `clipsync.conf` —— 监听 80，直接反代，无证书（`deploy.sh` 默认安装这份）。
    - `clipsync-https.conf` —— 监听 443 + TLS 证书，80 端口 301 跳转 443。
    ```bash
-   # 内网 HTTP 阶段
+   # 内网 HTTP 阶段（Debian 系；RHEL 系配置在 /etc/nginx/conf.d/clipsync.conf，无需软链）
    ln -sf /etc/nginx/sites-available/clipsync /etc/nginx/sites-enabled/clipsync && nginx -t && systemctl reload nginx
-   # 升级到 HTTPS（证书就位、改好 server_name 与证书路径后）
+   # 升级到 HTTPS（证书就位、改好 server_name 与证书路径后；RHEL 系目标改为 /etc/nginx/conf.d/clipsync.conf）
    cp deployment/nginx/clipsync-https.conf /etc/nginx/sites-available/clipsync && nginx -t && systemctl reload nginx
    ```
 
@@ -573,7 +573,7 @@ CodeProject/
         ├── nginx/clipsync.conf        # HTTP 阶段
         ├── nginx/clipsync-https.conf  # HTTPS 阶段
         ├── systemd/clipsync.service   # 单 worker，监听 127.0.0.1
-        ├── scripts/                   # deploy / update / backup_database / cleanup_expired / health_check
+        ├── scripts/                   # deploy / update / backup_database / cleanup_expired / health_check；os_env.sh 识别发行版，test_os_env.sh 为其自测
         ├── docker/                    # Dockerfile、docker-compose.yml、nginx-docker.conf
         ├── .env.production.example
         └── DEPLOY.md / CHECKLIST.md / README.md
@@ -584,6 +584,8 @@ CodeProject/
 ## 14. 部署方案（直接部署）
 
 ### 组件
+
+支持的系统：Debian / Ubuntu 与 Rocky Linux / AlmaLinux / RHEL 9+。发行版差异（应用用户、Nginx 配置位置、MySQL 服务名、SELinux）由 `deployment/scripts/os_env.sh` 处理，详见 `deployment/DEPLOY.md`「系统要求」。
 
 - **MySQL**：建库建用户，配置到 `.env`。
 - **后端**：`uvicorn --workers 1 --host 127.0.0.1 --proxy-headers`，systemd 托管。**必须单 worker**：WebSocket 连接表与限流计数都在进程内存中，多进程会导致实时同步与限流失效。
@@ -626,7 +628,7 @@ CodeProject/
 | 快速访问码 | 生成 / 撤销、免登录访问（文本实时 / 文件下载）、限流 | — |
 | 管理后台 | 统计、用户管理（配额 / 启用禁用 / 删除）、邀请码、全站文件元数据、系统设置 | 变更角色、全站访问码管理 |
 | 前端 | 登录 / 注册、剪贴板、文件、访问码、管理后台、公开访问页、路由守卫、WebSocket 接入 | 自动化测试 |
-| 部署 | Nginx HTTP / HTTPS 两套配置、systemd、部署 / 更新 / 备份 / 清理 / 健康检查脚本、Docker Compose | — |
+| 部署 | Nginx HTTP / HTTPS 两套配置、systemd、部署 / 更新 / 备份 / 清理 / 健康检查脚本（Debian 系与 RHEL 9+）、Docker Compose | CentOS 7 / 8 等旧系统的直接部署（用 Docker） |
 
 未实现与待验证的事项汇总在 [TODO.md](TODO.md)。
 
@@ -687,7 +689,7 @@ pytest tests/test_auth.py::test_name    # 单个
 | 只改文档（`*.md`）或注释 | 不跑测试，也不构建前端 |
 | `backend/` 的代码、迁移、依赖 | `pytest` |
 | `frontend/` 的代码、依赖、`vite.config.js` | `npm run build`，界面行为在浏览器里手动验证（前端没有自动化测试） |
-| `deployment/scripts/*.sh` | `bash -n` 语法检查 |
+| `deployment/scripts/*.sh` | `bash -n` 语法检查；改了 `os_env.sh` 另跑 `bash deployment/scripts/test_os_env.sh` |
 
 完整规则见 CLAUDE.md「按改动范围验证」；尚待手动验证的行为见 [TODO.md](TODO.md)。生产环境不运行测试（见 deployment/DEPLOY.md「7. 验证」）。
 

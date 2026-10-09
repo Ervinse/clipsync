@@ -1,5 +1,7 @@
 # ClipSync Systemd 服务配置
 # 路径：/etc/systemd/system/clipsync.service
+# 下面的 User/Group 与 MySQL 服务名按 Debian 系书写。deploy.sh 安装时按发行版替换：
+# RHEL 系的运行用户为 nginx、MySQL 服务名为 mysqld，同时替换项目路径（见 scripts/os_env.sh 的 render_service_unit）
 
 [Unit]
 Description=ClipSync - 跨设备剪贴板与文件同步服务

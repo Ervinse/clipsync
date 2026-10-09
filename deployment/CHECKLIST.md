@@ -5,9 +5,10 @@
 ## 部署前准备
 
 ### 服务器环境（版本要求见 DEPLOY.md「系统要求」）
-- [ ] Ubuntu 22.04 / 24.04 或 Debian 12（脚本只适配 Debian 系，不支持 CentOS）
-- [ ] Python 3.12+
-- [ ] Node.js 20.19+ 或 22.12+（Vite 8 的要求；不要用 apt 自带的旧版 Node）
+- [ ] Ubuntu 22.04 / 24.04、Debian 12，或 Rocky Linux / AlmaLinux / RHEL 9+（CentOS 7 / 8 不支持，改用 Docker）
+- [ ] Python 3.12+（Rocky 9 上为 `python3.12` 包，不要改系统的 `python3`）
+- [ ] Node.js 20.19+ 或 22.12+（Vite 8 的要求；不要用系统源自带的旧版 Node）
+- [ ] RHEL 系：已安装 `cronie`（并启用 `crond`）与 `policycoreutils-python-utils`
 - [ ] MySQL 8.0+
 - [ ] Nginx 1.18+
 - [ ] Git
@@ -34,14 +35,19 @@
 - [ ] **可选项**：`DEFAULT_QUOTA_BYTES`、`MAX_FILE_BYTES`、`CHUNK_SIZE`、`MAX_UPLOAD_SESSIONS_PER_USER`、`UPLOAD_SESSION_TTL_HOURS`、`HISTORY_KEEP`、`JWT_ALGORITHM`、`JWT_EXPIRE_MINUTES`
 
 ### Nginx 配置
-- [ ] 已删除 Debian 自带的 `/etc/nginx/sites-enabled/default`（否则会抢走 80 端口的请求）
-- [ ] HTTP 阶段使用 `deployment/nginx/clipsync.conf`
+- [ ] 已去掉发行版自带的默认站点（否则会抢走 80 端口的请求）：Debian 系删除 `/etc/nginx/sites-enabled/default`；RHEL 系注释掉 `/etc/nginx/nginx.conf` 里的 `server { }` 块
+- [ ] HTTP 阶段使用 `deployment/nginx/clipsync.conf`（Debian 系装在 `sites-available/clipsync`，RHEL 系装在 `conf.d/clipsync.conf`）
 - [ ] HTTPS 阶段改用 `deployment/nginx/clipsync-https.conf`，并已改 `server_name` 和证书路径
 - [ ] `sudo nginx -t` 通过
 
 ### Systemd 配置
-- [ ] 已核对 `clipsync.service` 中的路径和用户
+- [ ] 已核对 `/etc/systemd/system/clipsync.service` 中的路径和用户（Debian 系 `www-data` + `mysql.service`，RHEL 系 `nginx` + `mysqld.service`）
 - [ ] 保持 `--workers 1`、`--host 127.0.0.1`（不要改成多 worker）
+
+### SELinux（RHEL 系，`deploy.sh` 自动配置）
+- [ ] `getenforce` 为 `Enforcing`（不要关掉 SELinux）
+- [ ] `getsebool httpd_can_network_connect` 为 `on`
+- [ ] `ls -Z /var/www/clipsync/backend/venv/bin/uvicorn` 为 `bin_t`
 
 ## 部署执行
 
@@ -55,13 +61,15 @@
 - [ ] 已执行 `alembic upgrade head`
 - [ ] 已执行 `python -m scripts.create_superadmin`
 - [ ] 已执行 `npm ci && npm run build`
-- [ ] 已设置权限：`chown -R www-data:www-data /var/www/clipsync`
+- [ ] 已设置权限：`chown -R www-data:www-data /var/www/clipsync`（RHEL 系为 `nginx:nginx`）
+- [ ] RHEL 系：已按 DEPLOY.md 第 5 步配置 SELinux（`setsebool`、`semanage fcontext`、`restorecon`）
 
 ## 服务启动
 
 - [ ] `sudo systemctl enable --now clipsync`
-- [ ] `sudo systemctl restart nginx`
+- [ ] `sudo systemctl enable nginx && sudo systemctl restart nginx`（RHEL 系装完 Nginx 不会自动启动，也不会开机自启）
 - [ ] `systemctl status clipsync` 与 `systemctl status nginx` 均正常
+- [ ] RHEL 系：`firewall-cmd` 已放行 http / https
 
 ## 功能验证
 
@@ -106,7 +114,7 @@
 - [ ] `JWT_SECRET` 为随机生成值
 - [ ] MySQL 只监听 localhost
 - [ ] 后端 8000 端口只监听 127.0.0.1
-- [ ] 防火墙已配置：`sudo ufw status`
+- [ ] 防火墙已配置：`sudo ufw status`（RHEL 系 `sudo firewall-cmd --list-all`）
 - [ ] SSH 密钥认证、禁用 root 远程登录、fail2ban（可选）
 
 ## 备份验证
