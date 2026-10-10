@@ -13,7 +13,7 @@ class Clipboard(Base):
     __tablename__ = "clipboard"
 
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), primary_key=True)
-    # MEDIUMTEXT（16MB）：与 schemas/clipboard.py 的 max_length 一致，TEXT 只有 64KB
+    # MEDIUMTEXT（16MB）：容量大于 schemas/clipboard.py 的应用层上限（8MB），TEXT 只有 64KB 装不下
     content: Mapped[str] = mapped_column(MEDIUMTEXT, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 

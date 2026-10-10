@@ -21,9 +21,10 @@ export default {
     })
   },
 
-  // 完成上传
+  // 完成上传：服务端要把分片合并成一个文件，大文件在慢磁盘上可能超过默认的 30 秒；
+  // 与 Nginx /api 的读超时（600 秒）一致，超时后上传其实已成功却报失败，用户重试会得到重复文件
   completeUpload(uploadId) {
-    return request.post('/files/upload/complete', { upload_id: uploadId })
+    return request.post('/files/upload/complete', { upload_id: uploadId }, { timeout: 600000 })
   },
 
   // 取消进行中的上传：删除会话并释放其占用的配额

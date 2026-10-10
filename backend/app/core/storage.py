@@ -29,6 +29,15 @@ def _is_uuid(value: str) -> bool:
         return False
 
 
+def is_valid_upload_id(upload_id: str) -> bool:
+    """
+    upload_id 必须是服务端生成的标准小写 UUID。
+    数据库是大小写不敏感的排序规则，大写写法能查到会话行，却过不了磁盘路径校验：
+    接口入口先用本函数拦下，统一按「会话不存在」处理。
+    """
+    return _is_uuid(upload_id)
+
+
 def _ensure_inside_base(path: Path) -> Path:
     """确认路径位于存储根目录内，否则拒绝"""
     resolved = path.resolve()

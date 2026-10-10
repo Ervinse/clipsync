@@ -45,8 +45,11 @@ onUnmounted(() => {
 const handleSave = async () => {
   try {
     isSaving.value = true
-    await clipboardStore.updateText(textContent.value)
-    syncedText.value = textContent.value
+    // 保存的是点击时的内容：请求期间继续输入的字不在其中，不能被标成「已同步」，
+    // 否则之后其他终端的更新会把这几个字无提示地覆盖掉
+    const saved = textContent.value
+    await clipboardStore.updateText(saved)
+    syncedText.value = saved
 
     saveSuccess.value = true
     setTimeout(() => {

@@ -123,12 +123,13 @@ export const useUserStore = defineStore('user', {
     },
 
     /**
-     * 凭证失效 / 账号被禁用：登出并回到登录页（公开访问页不跳转，访客不受影响）
+     * 凭证失效 / 账号被禁用：登出并回到登录页（登录页、注册页、公开访问页不跳转，访客不受影响）
      */
     handleAuthLost() {
       this.logout()
       const path = window.location.pathname
-      if (!path.startsWith('/access/') && path !== '/login') {
+      // 登录页、注册页、公开访问页本来就不需要登录：留在原地（带着过期 token 打开邀请链接时不被踢去登录页）
+      if (!path.startsWith('/access/') && path !== '/login' && path !== '/register') {
         window.location.href = '/login'
       }
     },

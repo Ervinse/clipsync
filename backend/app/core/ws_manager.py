@@ -37,11 +37,15 @@ class ConnectionManager:
         安全红线：用户被禁用或删除后，已建立的 WebSocket 不能继续接收推送。
         """
         connections = self.active_connections.pop(user_id, set())
-        for connection in list(connections):
-            try:
-                await connection.close(code=code)
-            except Exception:
-                pass
+        await asyncio.gather(*(self._close_quietly(c, code) for c in list(connections)))
+
+    @staticmethod
+    async def _close_quietly(connection: WebSocket, code: int):
+        """关闭连接：出错或超时都忽略，网络卡住的终端不能拖住调用方（如禁用用户的 HTTP 请求）"""
+        try:
+            await asyncio.wait_for(connection.close(code=code), timeout=SEND_TIMEOUT_SECONDS)
+        except Exception:
+            pass
 
     async def broadcast_to_user(self, user_id: int, message: dict, exclude: WebSocket = None):
         """向指定用户的所有在线终端广播消息（可排除触发源）"""
@@ -62,9 +66,13 @@ class ConnectionManager:
         # 复制一份再并发发送：await 期间集合可能被其他协程修改；
         # 单个卡住的终端最多拖 SEND_TIMEOUT_SECONDS，不会拖慢触发广播的 HTTP 请求太久
         targets = [c for c in list(connections) if c is not exclude]
-        for failed in await asyncio.gather(*(_send(c) for c in targets)):
-            if failed is not None:
-                self.disconnect(user_id, failed)
+        failed_connections = [c for c in await asyncio.gather(*(_send(c) for c in targets)) if c is not None]
+        for failed in failed_connections:
+            self.disconnect(user_id, failed)
+        # 只摘掉不关闭的话，ws.py 的接收循环还在回心跳，前端以为连接正常，不会重连，
+        # 该终端之后再也收不到推送；关闭后前端 onclose 走重连，重连成功会补拉数据
+        if failed_connections:
+            await asyncio.gather(*(self._close_quietly(c, 1011) for c in failed_connections))
 
 
 # 全局单例

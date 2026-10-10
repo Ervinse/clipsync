@@ -58,6 +58,11 @@ const handleSaveSettings = async () => {
     alert('仅超级管理员可修改系统设置')
     return
   }
+  // 设置没加载成功时，表单里是初始默认值而不是真实设置，此时保存会把真实设置改成默认值
+  if (!adminStore.settings) {
+    alert('当前设置未能加载，请刷新页面后再保存')
+    return
+  }
   const quotaMB = Number(settingsForm.value.default_quota_mb)
   if (!Number.isInteger(quotaMB) || quotaMB < 0) {
     alert('默认配额必须是非负整数（MB）')
@@ -455,8 +460,16 @@ const copyInviteCode = async (code) => {
           单文件上限、分片大小、历史保留条数等由 backend/.env 配置，需重启后端生效，不在此修改。
         </div>
 
+        <div v-if="!adminStore.settings" class="settings-hint">
+          当前设置未能加载，下面显示的不是真实设置，无法保存。请刷新页面重试。
+        </div>
+
         <div v-if="userStore.isSuperAdmin" class="modal-actions">
-          <button class="btn-primary" :disabled="isSavingSettings" @click="handleSaveSettings">
+          <button
+            class="btn-primary"
+            :disabled="isSavingSettings || !adminStore.settings"
+            @click="handleSaveSettings"
+          >
             {{ isSavingSettings ? '保存中...' : '保存设置' }}
           </button>
         </div>
