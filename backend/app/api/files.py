@@ -29,6 +29,7 @@ from ..core.storage import (
     get_file_path,
     generate_stored_name,
     cleanup_upload_temp,
+    is_valid_upload_id,
     delete_file as storage_delete_file,
 )
 from ..core.http_utils import content_disposition
@@ -47,6 +48,12 @@ MAX_TOTAL_CHUNKS = 10_000
 
 # 正在合并的 upload_id（后端单 worker，检查与加入之间无 await，在 asyncio 下是原子的）
 _completing: set[str] = set()
+
+
+def _require_valid_upload_id(upload_id: str) -> None:
+    """格式不对（含大写写法）的 upload_id 一律按会话不存在处理，不进入查库与磁盘操作"""
+    if not is_valid_upload_id(upload_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或无权访问")
 
 
 async def _reserved_bytes(db: AsyncSession, user_id: int, exclude_upload_id: str | None = None) -> int:
@@ -90,12 +97,20 @@ def _save_chunk(src, partial_path: Path, limit: int) -> int:
     超过 limit 立即停止并删除半截文件，返回 -1；否则返回写入字节数。
     """
     written = 0
-    with open(partial_path, "wb") as f:
-        while block := src.read(_READ_BLOCK):
-            written += len(block)
-            if written > limit:
-                break
-            f.write(block)
+    try:
+        with open(partial_path, "wb") as f:
+            while block := src.read(_READ_BLOCK):
+                written += len(block)
+                if written > limit:
+                    break
+                f.write(block)
+    except OSError:
+        # 磁盘写满等 IO 错误：不留半截 .part（客户端重试会不断堆积，加重磁盘满）
+        try:
+            partial_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     if written > limit:
         partial_path.unlink(missing_ok=True)
         return -1
@@ -253,6 +268,7 @@ async def cancel_upload(
 
     安全红线：删除条件带 user_id，他人会话与不存在统一 404
     """
+    _require_valid_upload_id(upload_id)
     if upload_id in _completing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该上传正在合并中")
 
@@ -286,6 +302,7 @@ async def upload_chunk(
     - chunk_index 在 [0, total_chunks) 内；磁盘名只用整数索引
     - 单分片字节数不得超过会话的 chunk_size，边写边计数，超限立即中止并删除
     """
+    _require_valid_upload_id(upload_id)
     result = await db.execute(
         select(UploadSession).where(
             UploadSession.upload_id == upload_id,
@@ -349,7 +366,11 @@ async def upload_chunk(
         await run_in_threadpool(partial_path.unlink, missing_ok=True)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或已结束")
 
-    received_count = await run_in_threadpool(_count_chunks, temp_dir)
+    try:
+        received_count = await run_in_threadpool(_count_chunks, temp_dir)
+    except FileNotFoundError:
+        # 分片落盘后临时目录被并发的 cancel / complete / 过期清理 rmtree 掉：会话已结束
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或已结束")
     # 显式 UPDATE + 校验 rowcount：重传已存在的分片时 received_chunks 可能不变，
     # 靠 ORM 脏检查则不会发出 UPDATE，无法察觉会话已被并发删除。显式 UPDATE 的
     # rowcount==0 才能可靠判定「会话行已不存在」（MySQL 方言启用 FOUND_ROWS，
@@ -392,6 +413,7 @@ async def complete_upload(
     - 合并后再次按实际占用校验配额
     - 同一 upload_id 不允许并发 complete（否则会写出两条 File 记录、重复占用配额）
     """
+    _require_valid_upload_id(data.upload_id)
     if data.upload_id in _completing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该上传正在合并中")
     _completing.add(data.upload_id)

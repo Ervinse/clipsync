@@ -15,6 +15,14 @@ from app.core.security import hash_password
 from app.config import settings
 
 
+async def find_existing_superadmin(db):
+    """返回任意一个已有的超级管理员（没有则 None）；可能已有多个，不能要求结果唯一"""
+    result = await db.execute(
+        select(User).where(User.role == UserRole.SUPERADMIN).order_by(User.id).limit(1)
+    )
+    return result.scalars().first()
+
+
 async def create_superadmin():
     """交互式创建超级管理员"""
     print("=" * 50)
@@ -23,8 +31,7 @@ async def create_superadmin():
 
     # 检查是否已有超级管理员
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.role == UserRole.SUPERADMIN))
-        existing_superadmin = result.scalar_one_or_none()
+        existing_superadmin = await find_existing_superadmin(db)
 
         if existing_superadmin:
             print(f"\n[!] Existing superadmin found: {existing_superadmin.username}")

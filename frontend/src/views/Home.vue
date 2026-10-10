@@ -9,7 +9,8 @@ const route = useRoute()
 const userStore = useUserStore()
 
 // 侧栏配额在布局级刷新：不管当前在哪个页面，文件增删或管理员改配额后都同步
-const QUOTA_EVENTS = ['file_added', 'file_deleted', 'quota_updated']
+// open：连接（重新）建立时补拉，断线期间错过的配额变更不会一直显示旧值
+const QUOTA_EVENTS = ['file_added', 'file_deleted', 'quota_updated', 'open']
 const onQuotaChanged = () => {
   userStore.fetchUserInfo().catch(() => {})
 }

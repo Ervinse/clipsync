@@ -14,8 +14,16 @@ const onCodesChanged = () => {
 }
 const CODE_EVENTS = ['access_codes_changed', 'file_deleted', 'open']
 
+// 「创建访问码」弹窗的文件下拉读 filesStore.files：其他终端上传 / 删除文件后同步刷新，
+// 否则会选到已删除的文件（创建时 404），或看不到新上传的文件
+const onFilesChanged = () => {
+  filesStore.fetchFiles({ silent: true }).catch(() => {})
+}
+const FILE_EVENTS = ['file_added', 'file_deleted', 'open']
+
 onUnmounted(() => {
   CODE_EVENTS.forEach((event) => ws.off(event, onCodesChanged))
+  FILE_EVENTS.forEach((event) => ws.off(event, onFilesChanged))
 })
 
 // 访问码最长有效期：1 年
@@ -31,6 +39,7 @@ const createForm = ref({
 onMounted(async () => {
   // 先挂监听再拉数据，拉取期间的变更不会漏掉
   CODE_EVENTS.forEach((event) => ws.on(event, onCodesChanged))
+  FILE_EVENTS.forEach((event) => ws.on(event, onFilesChanged))
   await Promise.all([
     accessStore.fetchCodes(),
     filesStore.fetchFiles(),
@@ -38,6 +47,8 @@ onMounted(async () => {
 })
 
 const openCreateModal = () => {
+  // 打开弹窗时再静默刷新一次文件列表，保证下拉里是最新的
+  onFilesChanged()
   createForm.value = {
     target_type: 'text',
     file_id: null,

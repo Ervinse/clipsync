@@ -110,8 +110,9 @@ export const useFilesStore = defineStore('files', {
         // 3. 完成上传
         const result = await api.files.completeUpload(uploadId)
 
-        // 刷新列表
-        await this.fetchFiles()
+        // 文件已入库：刷新列表失败不能算上传失败（否则会取消会话并提示失败，用户重试得到重复文件）。
+        // 失败时列表由随后到达的 file_added 推送或手动刷新补上
+        await this.fetchFiles().catch(() => {})
 
         return result
       } catch (error) {

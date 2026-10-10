@@ -13,6 +13,8 @@ const MAX_RECONNECT_DELAY = 30000
 const HEARTBEAT_INTERVAL = 30000
 // 服务端以 1008（policy violation）关闭：token 无效、用户被禁用或删除，重连没有意义
 const POLICY_VIOLATION = 1008
+// 发出 ping 后这么久没收到任何消息，就认为连接已半断（休眠、切网络后 TCP 没有报错）并重建
+const PONG_TIMEOUT = 10000
 
 class WebSocketManager {
   constructor() {
@@ -20,6 +22,7 @@ class WebSocketManager {
     this.url = ''
     this.reconnectTimer = null
     this.heartbeatTimer = null
+    this.pongTimer = null
     this.reconnectCount = 0
     this.listeners = {}
     this.isConnected = false
@@ -33,10 +36,14 @@ class WebSocketManager {
     // 网络恢复或页面回到前台时，跳过退避立即重连
     if (typeof window !== 'undefined') {
       const retryNow = () => {
-        // this.ws 为空才重试：连接正在建立（CONNECTING）时不要把它拆掉重来
-        if (!this.manualClose && !this.authFailed && !this.ws && this.token) {
+        if (this.manualClose || this.authFailed || !this.token) return
+        if (!this.ws) {
           this.reconnectCount = 0
           this.scheduleReconnect(0)
+        } else if (this.isConnected) {
+          // 连接看起来正常：休眠、切网络后它可能已半断（浏览器还没察觉），探测一次，
+          // 收不到回应就重建。连接正在建立（CONNECTING）时不处理，不要把它拆掉重来
+          this.probe()
         }
       }
       window.addEventListener('online', retryNow)
@@ -82,6 +89,8 @@ class WebSocketManager {
     }
 
     ws.onmessage = (event) => {
+      // 收到任何消息都说明连接还活着
+      this.clearPongTimer()
       let data
       try {
         data = JSON.parse(event.data)
@@ -139,9 +148,7 @@ class WebSocketManager {
    */
   startHeartbeat() {
     this.stopHeartbeat()
-    this.heartbeatTimer = setInterval(() => {
-      this.send({ type: 'ping' })
-    }, HEARTBEAT_INTERVAL)
+    this.heartbeatTimer = setInterval(() => this.probe(), HEARTBEAT_INTERVAL)
   }
 
   /**
@@ -152,6 +159,36 @@ class WebSocketManager {
       clearInterval(this.heartbeatTimer)
       this.heartbeatTimer = null
     }
+    this.clearPongTimer()
+  }
+
+  /**
+   * 发一个 ping 并等回应：PONG_TIMEOUT 内没有收到任何消息，说明连接已半断，重建它。
+   * 已经有等待中的探测时不重置计时，保留最早的截止时间
+   */
+  probe() {
+    if (!this.send({ type: 'ping' }) || this.pongTimer) return
+    this.pongTimer = setTimeout(() => {
+      this.pongTimer = null
+      this.rebuild()
+    }, PONG_TIMEOUT)
+  }
+
+  clearPongTimer() {
+    if (this.pongTimer) {
+      clearTimeout(this.pongTimer)
+      this.pongTimer = null
+    }
+  }
+
+  /**
+   * 拆掉当前连接并立即重连（重连成功后各页面订阅的 open 事件会补拉数据）
+   */
+  rebuild() {
+    if (this.manualClose || this.authFailed || !this.token) return
+    this.teardown()
+    this.reconnectCount = 0
+    this.scheduleReconnect(0)
   }
 
   /**
