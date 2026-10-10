@@ -46,13 +46,13 @@
 
 ## Git 工作流程
 - 主线分支是 **`master`**，始终代表项目最新的正式状态；所有功能开发在独立分支完成，**禁止直接提交到 master**。
-- 分支命名规范：`feature/功能名`、`fix/问题描述`、`refactor/重构内容`。
+- 分支命名规范：`feature/功能名`、`fix/问题描述`、`refactor/重构内容`、`docs/文档改动`（仅改文档 `*.md` 或纯注释时用）。
 - 提交信息用中文，简明扼要说明改动内容；多文件改动按模块分组描述。
 - 提交前按改动范围验证（见下方「按改动范围验证」），不要对无关改动跑全套验证。
 - `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/storage/`（上传文件）、编译产物、`release/`（`build-release.ps1` 生成的镜像包与部署包）、`deployment/docker/acme/` 与 `deployment/docker/letsencrypt/`（在该目录直接运行 compose 时生成）。
 
 ### 分支生命周期（开分支 → 提交 → 等用户指令合并 → 删分支）
-1. **每次新的更新都在 `feature/*` 或 `fix/*` 分支上进行**：从最新的 master 开分支 `git checkout master && git checkout -b <type>/<name>`，不要从其他未合并的分支上接着开。
+1. **每次新的更新都在 `feature/*`、`fix/*`、`refactor/*` 或 `docs/*` 分支上进行**：从最新的 master 开分支 `git checkout master && git checkout -b <type>/<name>`（仅改文档或注释用 `docs/*`），不要从其他未合并的分支上接着开。
    - 唯一例外：新工作必须依赖某个尚未合并的分支时，先向用户说明并等用户决定。
 2. **对项目的每次操作都必须提交**：每完成一项改动（代码、文档、配置、脚本）就 `git add` 指定文件 + `git commit`，不要让改动停留在未提交状态。
 3. **只有用户明确说「合并」才能合并**：分支工作完成后向用户汇报并等待指令，**禁止**自行合并到 master（即便测试已全部通过）。合并时用 `git merge --no-ff`（保留合并节点）。
