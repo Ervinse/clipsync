@@ -71,7 +71,7 @@
 | `backend/` 代码、迁移、依赖 | `pytest`（在 `backend/`） |
 | `frontend/` 代码、依赖、`vite.config.js` | `npm run build`（在 `frontend/`） |
 | `deployment/docker/*.sh` | `bash -n` 语法检查；装有 Docker 时在本机 compose 环境实际运行，否则记入 TODO.md |
-| `deployment/docker/build-release.ps1` | PowerShell 语法解析（`[System.Management.Automation.Language.Parser]::ParseFile`）；装有 Docker Desktop 时实际运行一次，否则记入 TODO.md |
+| `deployment/docker/build-release.ps1`、`publish-release.ps1` | 确认文件带 UTF-8 BOM（PowerShell 5.1 读中文需要）；PowerShell 语法解析（`[System.Management.Automation.Language.Parser]::ParseFile`，用绝对路径）；装有 Docker Desktop 时实际运行一次，否则记入 TODO.md |
 | compose、Dockerfile、Nginx 配置 | `docker compose config` 校验；装有 Docker 时构建并启动一次；只能在真实服务器上验证的（公网证书、cron、防火墙）记入 TODO.md |
 
 改动跨多个范围时，把对应的验证都跑一遍；汇报时写明跑了哪些、按规则跳过了哪些。
@@ -85,7 +85,8 @@
 - 最近的提交图（`git log --oneline --graph -n 10`）
 
 ## 部署打包（镜像标签与版本一致性）
-- 本项目没有 CI/CD；镜像构建、打标签、打包只在 `deployment/docker/build-release.ps1` 一处完成，它是本规范的权威实现。调整打包策略即改这个脚本，并同步更新本节。
+- 本项目没有 CI/CD；镜像构建、打提交号与 `latest` 标签、打测试包只在 `deployment/docker/build-release.ps1` 一处完成，它是本规范的权威实现。调整打包策略即改这个脚本，并同步更新本节。
+- 版本号标签只由 `deployment/docker/publish-release.ps1` 打（见下方「正式版本晋级」），`build-release.ps1` 不打版本号标签。
 - **commit 哈希标签（必打）**：用 `git rev-parse --verify <ref>^{commit}`（`<ref>` 默认 `HEAD`，可用 `-Ref` 指定分支或提交）取完整哈希，截前 12 位作为标签，如 `clipsync-backend:9718d16c4fde`。每个镜像一定有这个标签，用于精确追溯。
 - **latest 标签（有条件）**：仅当「要打包的提交哈希」等于「`master` 当前提交哈希」（按哈希比对，非分支名）时，才额外追加 `:latest`；非 master 或旧提交只有 commit 哈希标签。服务器 `.env` 的 `CLIPSYNC_TAG` 默认 `latest`，故测试分支的镜像导入后不会被误用。
 - **版本一致性**：同一个 commit 哈希（脚本里的 `$Commit` 变量）必须同时写入这几处，保证永远一致：
@@ -95,11 +96,23 @@
   4. 两个产物的文件名：`clipsync-images-<commit>[-app].tar.gz`、`clipsync-deploy-<commit>.tar.gz`
 - 打包只取**已提交**的代码（`git archive`），工作区未提交的改动不进镜像；打包的不是 master 最新提交或工作区不干净时，脚本要求确认。
 
+## 正式版本晋级（publish-release.ps1）
+用户要求「把某个提交 / 测试构建晋级为版本 X」时，按以下步骤做。核心原则：**不重新构建**，只给测试过的同一份镜像追加版本号标签。
+1. **确认对象**：要晋级的提交必须在 master 上，且用户确认该提交的测试构建（`release/<commit>/`）已测试通过。版本号按 SemVer，带 `-` 后缀的是预发布版。
+2. **Git 标签**：`git rev-parse --verify v<版本号>^{commit}` 检查标签。没有时在该提交上建附注标签 `git tag -a v<版本号> <commit> -m "说明"`（本地操作）；已有但指向别的提交时停下来问用户，不要移动标签。
+3. **镜像**：本机须有 `clipsync-backend:<commit>`、`clipsync-frontend:<commit>`。被清理过时用 `docker load -i release/<commit>/clipsync-images-<commit>.tar.gz` 导回，**禁止**用 `build-release.ps1` 重新构建来代替（重新构建得到的是另一份镜像）。
+4. **运行**：`powershell -ExecutionPolicy Bypass -File deployment\docker\publish-release.ps1 -Version <版本号>`（不带 `v`）。脚本会校验镜像 label 里的提交号、追加 `<版本号>` 标签、导出镜像包（backend / frontend 各带 `<版本号>` 与 `<commit>` 标签 + compose 里的 MySQL，**不含 `latest`**）、生成部署包与 `SHA256SUMS`，产物在 `release/<版本号>/`。
+5. **发布包与测试包的唯一差别**：部署包里 `.env.example` 的 `CLIPSYNC_TAG` 预填 `<版本号>`；`VERSION` 增加 `version=` 与 `published=`，`latest=no`。`docker-compose.yml` 等其他文件与该提交完全相同，**不修改 compose**。
+6. **核对产物**（全部做完再汇报）：`sha256sum -c SHA256SUMS`；SHA256SUMS 无 BOM、只用 LF；部署包内 `VERSION` 与 `.env.example` 的 `CLIPSYNC_TAG`；镜像包 `manifest.json` 的 `RepoTags`。装有 Docker 时在临时目录解压部署包、用发布包 `docker load` 后以版本号 `docker compose up -d` 启动一次，`health_check.sh` 显示版本号与运行中的提交，用完 `docker compose down -v` 并删除临时目录（先确认没有同名 `clipsync` 项目的容器和数据卷）。
+7. **镜像 ID**：开发机启用 containerd 镜像存储时，本机 `docker images` 的 IMAGE ID 与服务器上的不同；与服务器测试版本核对时以脚本最后打印的镜像 ID（导出包 `manifest.json` 的配置摘要）为准。
+8. **notes**：按「发布与发布说明」更新 `release-notes/v<版本号>.md` 与 `.internal.md`，把三个文件的 SHA-256 与镜像 ID 记入 `.internal.md`。
+9. **远程操作交给用户**：给出 `git push origin master v<版本号>`，以及在 GitHub 网页创建 Release 的步骤（选标签、贴 notes、预发布版勾选 Set as a pre-release、上传 `release/<版本号>/` 的三个文件）。
+
 ## 发布与发布说明（产物与 notes 的存放、写 notes 的规矩）
 - **版本号**：按 SemVer（如 `1.0.0`、`1.0.0-alpha.1`）。Git 标签带 `v`（`v1.0.0-alpha.1`，附注标签）；目录名、镜像版本号标签不带 `v`。
 - **产物目录 `release/`**（`.gitignore` 排除）：只放镜像包与部署包，按版本分子目录，不放任何其他文件。
-  - 测试构建：`release/<commit>/`。`build-release.ps1` 把产物输出在 `release/` 根目录，构建完成后移入 `release/<commit>/`。
-  - 正式版本：`release/<版本号>/`，放发布到 GitHub Release 的文件。
+  - 测试构建：`release/<commit>/`，由 `build-release.ps1` 直接输出。
+  - 正式版本：`release/<版本号>/`，由 `publish-release.ps1` 输出，放发布到 GitHub Release 的三个文件。
   - 清理磁盘时按子目录删除；已发布版本的目录与其对应的测试构建目录保留到下一个正式版发布后。
 - **发布说明目录 `release-notes/`**（`.git/info/exclude` 本地忽略，不进 git，与 `release/` 分开，不随产物清理）。每个版本两个文件：
   - `v<版本号>.md`：发布页正文，原样粘贴到 GitHub Release。

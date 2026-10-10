@@ -7,6 +7,7 @@
 开发机（Windows + Docker Desktop）上已实测：方式 B 源码构建、全新数据卷启动、经 Nginx 的登录 / 文本同步 / 分片上传下载 / 访问码 / WebSocket / 限流、`backup.sh` 备份与失败处理、数据库与文件恢复、`health_check.sh`、清理任务、重建 backend 后 Nginx 重新解析 IP、HTTPS 版 Nginx 配置（自签证书）、MySQL 8.0 数据卷原地升级到 8.4。以下只能在真实服务器上确认：
 
 - [ ] **方式 A 服务器端**：`docker load` 后不联网 `docker compose up -d` 能启动；`-AppOnly` 更新与 `CLIPSYNC_TAG` 回滚可用；`health_check.sh` 显示 VERSION 与运行中的提交号。
+- [ ] **正式版本发布包**：服务器上 `sha256sum -c SHA256SUMS` 通过；导入 `publish-release.ps1` 生成的镜像包后，`docker images` 的 IMAGE ID 与测试版本相同；已有部署把 `CLIPSYNC_TAG` 改成版本号后能启动。
 - [ ] **定时任务**：按 `clipsync.cron` 安装到 `/etc/cron.d/` 后，清理、备份按时执行，日志写入 `/var/log/clipsync/`，`clipsync.logrotate` 轮转正常。
 - [ ] **端口暴露**：从其他机器访问 `服务器IP:3306` 失败；只有安全组放行的 80（启用 HTTPS 后 443）可访问。
 - [ ] **SSH 隧道查询数据库**：经 SSH 隧道用只读账号 `reader` 能连上并查询。

@@ -11,10 +11,10 @@
     latest     只有打包的是 master 的最新提交时才打。服务器 .env 默认 CLIPSYNC_TAG=latest，
                所以测试分支的镜像导入服务器后不会被误用，要用时需把 CLIPSYNC_TAG 改成提交号。
 
-  产物放在项目根目录的 release/（已 gitignore）：
+  产物放在项目根目录的 release\<提交号>\（已 gitignore）：
     clipsync-images-<提交号>[-app].tar.gz   镜像包，服务器上用 docker load -i 导入
     clipsync-deploy-<提交号>.tar.gz         部署包：compose、Nginx 配置、运维脚本、DEPLOYMENT.md、VERSION
-  服务器上的步骤见 deployment/DEPLOYMENT.md。
+  服务器上的步骤见 deployment/DEPLOYMENT.md。测试通过后用 publish-release.ps1 晋级为正式版本。
 
 .PARAMETER Ref
   要打包的 git 提交、分支或标签，默认 HEAD（当前检出的提交）。
@@ -234,7 +234,8 @@ try {
         $images += $image
     }
 
-    $ReleaseDir = Join-Path $ProjectRoot "release"
+    # 每个提交一个子目录；正式版本由 publish-release.ps1 输出到 release\<版本号>\
+    $ReleaseDir = Join-Path $ProjectRoot "release\$Commit"
     New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
     $suffix = if ($AppOnly) { "$Commit-app" } else { $Commit }
 
