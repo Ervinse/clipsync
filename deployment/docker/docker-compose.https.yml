@@ -1,0 +1,14 @@
+# 启用 HTTPS 时叠加在 docker-compose.yml 之上（步骤见 DEPLOYMENT.md「使用 HTTPS」）
+# 不用改命令：在 .env 里设 COMPOSE_FILE=docker-compose.yml:docker-compose.https.yml，docker compose 会自动叠加
+#
+# 前提：已用 cert.sh 申请到证书（./letsencrypt/live/clipsync/），否则 Nginx 找不到证书无法启动；
+# .env 的 HTTP_PORT 保持 80（证书验证与 HTTP→HTTPS 跳转都依赖 80 端口）
+
+services:
+  frontend:
+    ports:
+      - "443:443"
+    volumes:
+      # 与 docker-compose.yml 中挂载到同一路径的条目会被这里替换：Nginx 改用 HTTPS 配置
+      - ./nginx-https.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./letsencrypt:/etc/letsencrypt:ro

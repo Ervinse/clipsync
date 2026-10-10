@@ -1,0 +1,6 @@
+# 开发与测试依赖：pip install -r requirements-dev.txt（包含运行依赖）
+-r requirements.txt
+
+pytest==8.3.4
+pytest-asyncio==0.25.2
+httpx==0.28.1

@@ -3,7 +3,7 @@
 自托管的跨终端剪贴板与文件同步工具：粘贴文本即实时同步到你的其他终端，上传文件后其他终端即可下载。适合小范围、自托管的部署场景。
 
 > - 开发环境搭建见第 16 节，配置项见第 17 节，已知限制见第 18 节
-> - 部署见 [deployment/DEPLOY.md](deployment/DEPLOY.md)（直接部署）与 [deployment/docker/README.md](deployment/docker/README.md)（Docker）
+> - 部署（Docker Compose）见 [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md)
 > - 尚未完成的事项见 [TODO.md](TODO.md)
 > - 文中标注「**未实现**」的条目是设计中有、代码里还没有的功能
 
@@ -20,7 +20,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 - **多用户隔离**：普通用户只能看到自己的文本和文件。
 - **邀请码注册**：一次性邀请码，可设过期时间；系统设置可关闭注册（关闭后持有邀请码也无法注册）。
 - **三级权限**：普通用户 / 管理员 / 超级管理员，配套管理后台面板。
-- **公网/内网两套部署**：初期纯 HTTP 内网访问，后续一键切换 HTTPS。
+- **HTTP / HTTPS**：可以先以 HTTP 部署，切换 HTTPS 时应用代码不用改（见第 11 节）。
 
 ### 核心使用场景
 
@@ -39,7 +39,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 |----|------|------|
 | 后端框架 | Python 3.12+ / FastAPI | 异步、原生支持 WebSocket、自动生成 API 文档 |
 | ASGI 服务器 | Uvicorn（**单 worker**） | WebSocket 连接表与限流计数在进程内存中，不能多进程 |
-| 数据库 | MySQL 8.0 | 存用户与元数据，会话时区固定 UTC |
+| 数据库 | MySQL 8.4 LTS | 存用户与元数据，会话时区固定 UTC；Docker 镜像版本固定在 compose 中 |
 | ORM / 驱动 | SQLAlchemy 2.0 (async) + aiomysql | 异步访问 MySQL（连接串 `mysql+aiomysql://`） |
 | 迁移工具 | Alembic | 管理表结构版本 |
 | 认证 | JWT (python-jose，HS256/384/512) + bcrypt | 无状态令牌 + 密码哈希（直接使用 `bcrypt` 库） |
@@ -51,7 +51,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | HTTP 客户端 | axios | 统一封装、自动带 token |
 | 实时通道 | 原生 WebSocket | 按 user_id 广播 |
 | 文件存储 | 服务器本地磁盘 | 按 user_id 分目录 |
-| 部署 | systemd + Nginx 反向代理，或 Docker Compose | HTTP / HTTPS 两份 Nginx 配置；部署文件在 `deployment/` |
+| 部署 | Docker Compose | MySQL、后端、前端（Nginx）三个容器；部署文件在 `deployment/docker/` |
 
 ---
 
@@ -61,7 +61,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
                      内网 / 公网
                           │
                     ┌─────▼─────┐
-                    │   Nginx    │  HTTP 或 HTTPS（两套配置切换）
+                    │   Nginx    │  frontend 容器：HTTP 或 HTTPS
                     │ (80 / 443) │  静态资源 / 反向代理 / WS upgrade
                     └─────┬─────┘
               ┌───────────┼───────────┐
@@ -441,16 +441,16 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
 - 配额：已用 = 已落盘文件 + **进行中会话的声明大小**，防止并发开会话超配；init 预校验，complete 按实际大小最终确认。
 - 取消：上传中途失败时前端调 `DELETE /api/files/upload/{upload_id}` 立即释放配额；关掉页面等无法取消的会话，靠 `/auth/me` 与 `GET /api/files` 返回的 `reserved_bytes`（侧栏显示「上传中」）让用户看见，并在 TTL 后清理。
 - 每用户进行中的上传会话不超过 `MAX_UPLOAD_SESSIONS_PER_USER`（默认 5），超出返回 429。
-- 会话过期：超过 `UPLOAD_SESSION_TTL_HOURS`（默认 24）的会话，在该用户下次 init 时清理；`deployment/scripts/cleanup_expired.sh` 定时清理全站过期会话与 tmp 目录，并做孤儿扫描（超过 TTL 且无会话记录的 tmp 目录、用户已不存在的 `storage/<uid>` 目录）。
+- 会话过期：超过 `UPLOAD_SESSION_TTL_HOURS`（默认 24）的会话，在该用户下次 init 时清理；定时任务 `backend/scripts/cleanup_expired.py`（宿主机 cron 经 `docker compose exec` 每小时执行）清理全站过期会话与 tmp 目录，并做孤儿扫描（超过 TTL 且无会话记录的 tmp 目录、用户已不存在的 `storage/<uid>` 目录）。
 - 下载：线程池中先打开文件再 `fstat` 取大小，下载途中文件被删也能读完；文件不存在返回 404（公开访问码路径统一提示「访问码无效或已失效」）。
 - 应用内磁盘删除失败只记日志（`rmtree` 用 `onexc` 回调），不影响接口结果，残留由孤儿扫描兜底。
 - 合并与下载都流式处理，不一次性读入内存。
 
 ---
 
-## 11. HTTP / HTTPS 双方案（快速切换）
+## 11. HTTP / HTTPS 切换
 
-初期纯 HTTP 内网访问，后续平滑切到 HTTPS。设计目标：**切换只动 Nginx 配置与一个环境开关，应用代码零改动**。
+可以先以 HTTP 部署，日后切到 HTTPS。设计目标：**切换只动 Nginx 配置与 `.env` 开关，应用代码零改动**。
 
 ### 保障平滑切换的三项设计
 
@@ -459,30 +459,22 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
    - WebSocket 按 `window.location.protocol` 自动选 `ws://`/`wss://`（见第 7 节）。
    - 访问码链接由后端按请求的 `scheme` + `host` 动态拼接，不硬编码。
 
-2. **两份 Nginx 配置文件**（`deployment/nginx/`），切换即换软链/重载：
-   - `clipsync.conf` —— 监听 80，直接反代，无证书（`deploy.sh` 默认安装这份）。
-   - `clipsync-https.conf` —— 监听 443 + TLS 证书，80 端口 301 跳转 443。
-   ```bash
-   # 内网 HTTP 阶段（Debian 系；RHEL 系配置在 /etc/nginx/conf.d/clipsync.conf，无需软链）
-   ln -sf /etc/nginx/sites-available/clipsync /etc/nginx/sites-enabled/clipsync && nginx -t && systemctl reload nginx
-   # 升级到 HTTPS（证书就位、改好 server_name 与证书路径后；RHEL 系目标改为 /etc/nginx/conf.d/clipsync.conf）
-   cp deployment/nginx/clipsync-https.conf /etc/nginx/sites-available/clipsync && nginx -t && systemctl reload nginx
-   ```
+2. **Nginx 配置可替换**：frontend 容器的 Nginx 读取挂载进去的 `deployment/docker/nginx-docker.conf`（HTTP，监听 80）。切换 HTTPS 时换成带 443 与证书的配置并映射 443 端口，步骤见 [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md)「使用 HTTPS」。
 
 3. **环境开关**（`.env`）：
 
    | 变量 | HTTP 阶段 | HTTPS 阶段 | 作用 |
    |------|:---:|:---:|------|
    | `HSTS_ENABLED` | false | true | 由**后端中间件**下发 `Strict-Transport-Security`（HTTP 阶段不能开） |
-   | `CORS_ORIGINS` | 内网 IP | 域名 | 允许来源白名单，逗号分隔，忽略 `*` |
+   | `CORS_ORIGINS` | `http://` 访问地址 | `https://` 访问地址 | 允许来源白名单，逗号分隔，忽略 `*` |
    | `DEPLOY_SCHEME` | http | https | **预留，代码未读取**；访问码链接按请求的 scheme 拼接 |
    | `COOKIE_SECURE` | false | true | **预留，代码未读取**；当前不使用 cookie |
 
 ### 阶段说明与提示
 
-- **HTTP 阶段的风险**：密码、JWT、文本、文件在内网明文传输，可被同网段嗅探。仅限**可信内网**使用，切勿在此阶段暴露公网（第 17 节也有提示）。
+- **HTTP 阶段的风险**：密码、JWT、文本、文件明文传输，网络链路上的任何一方都能看到。HTTP 只适合测试或可信内网；正式使用，尤其是暴露在公网时，应切换 HTTPS（第 17 节也有提示）。
 - Token 采用 `Authorization` header + 前端 localStorage，HTTP/HTTPS 行为一致，不依赖 cookie，切换协议无需改动应用代码。
-- 升级 HTTPS 时：申请证书（Let's Encrypt）→ 换 Nginx 软链 → 改 `.env` 开关 → 重载。无需改动数据库或应用逻辑。
+- 升级 HTTPS 时：申请证书（如 Let's Encrypt）→ 换成 HTTPS 版 Nginx 配置并映射 443 → 改 `.env` 开关 → 重建 frontend、backend 容器。无需改动数据库或应用逻辑。
 
 ---
 
@@ -490,7 +482,7 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
 
 | 项 | 措施 |
 |----|------|
-| 传输加密 | 两套方案：HTTP（内网临时）/ HTTPS（正式）。HTTP 阶段仅限可信内网（第 11、17 节）。 |
+| 传输加密 | HTTP（测试 / 可信内网）与 HTTPS（正式使用）可切换，HTTP 下全部内容明文传输（第 11、17 节）。 |
 | 密码存储 | bcrypt 哈希，绝不存明文，不在日志/响应回显。 |
 | 认证 | JWT，必须带 `exp`（默认 7 天），只允许 HS 系列算法；`JWT_SECRET` 少于 32 位或为示例值时后端拒绝启动；每次请求回库校验用户存在且未禁用。 |
 | 角色权限 | 三级角色后端强制校验；admin 看不到文件/文本内容，仅 superadmin 可绕过。 |
@@ -536,10 +528,11 @@ CodeProject/
     │   │   └── api/              # auth / clipboard / files / access / admin / ws
     │   ├── alembic/versions/     # 278c88a5f21f 初始表结构；3f1c2a9d7b4e 文本改 MEDIUMTEXT
     │   ├── alembic.ini
-    │   ├── scripts/              # create_superadmin.py / cleanup_expired.py（定时清理，直接部署与 Docker 共用）
+    │   ├── scripts/              # create_superadmin.py / cleanup_expired.py（定时清理，由宿主机 cron 经 docker compose exec 调用）
     │   ├── tests/                # pytest 用例：安全边界、并发、实时推送、上传下载等（使用独立库 clipsync_test）
     │   ├── pytest.ini
-    │   ├── requirements.txt
+    │   ├── requirements.txt      # 运行依赖（生产镜像只装这个）
+    │   ├── requirements-dev.txt  # 运行依赖 + pytest 等测试依赖
     │   ├── .env.example
     │   └── storage/              # 上传文件落盘（STORAGE_DIR 默认 ./storage，相对 backend/；已 gitignore）
     │       ├── <user_id>/<uuid>
@@ -570,49 +563,55 @@ CodeProject/
     │   ├── package.json
     │   └── vite.config.js        # 开发端口 3000，代理 /api 与 /ws 到 127.0.0.1:8000
     └── deployment/
-        ├── nginx/clipsync.conf        # HTTP 阶段
-        ├── nginx/clipsync-https.conf  # HTTPS 阶段
-        ├── systemd/clipsync.service   # 单 worker，监听 127.0.0.1
-        ├── scripts/                   # deploy / update / backup_database / cleanup_expired / health_check；os_env.sh 识别发行版，test_os_env.sh 为其自测
-        ├── docker/                    # Dockerfile、docker-compose.yml、nginx-docker.conf
-        ├── .env.production.example
-        └── DEPLOY.md / CHECKLIST.md / README.md
+        ├── DEPLOYMENT.md              # 部署手册（Docker Compose）
+        └── docker/
+            ├── docker-compose.yml         # db / backend / frontend，按镜像名启动
+            ├── docker-compose.build.yml   # 叠加使用：在服务器上从源码构建镜像
+            ├── docker-compose.https.yml   # 叠加使用：映射 443、改用 HTTPS 版 Nginx 配置
+            ├── Dockerfile.backend / Dockerfile.frontend
+            ├── nginx-common.conf          # Nginx 公共规则（静态文件、/api、/ws、证书验证）
+            ├── nginx-docker.conf          # HTTP 站点（默认）
+            ├── nginx-https.conf           # HTTPS 站点（80 跳转 443）
+            ├── .env.example               # compose 环境变量模板
+            ├── backup.sh                  # 备份数据库与上传文件（宿主机 cron 调用）
+            ├── health_check.sh            # 版本、容器、接口、数据库、磁盘、备份、证书检查
+            ├── cert.sh                    # 用 certbot 申请 / 续期 Let's Encrypt 证书
+            ├── clipsync.cron              # 宿主机定时任务模板（清理、备份、证书续期）
+            ├── clipsync.logrotate         # 定时任务日志轮转
+            └── build-release.ps1          # 开发机构建镜像并打包（镜像包 + 部署包）
 ```
 
 ---
 
-## 14. 部署方案（直接部署）
+## 14. 部署方案（Docker Compose）
 
 ### 组件
 
-支持的系统：Debian / Ubuntu 与 Rocky Linux / AlmaLinux / RHEL 9+。发行版差异（应用用户、Nginx 配置位置、MySQL 服务名、SELinux）由 `deployment/scripts/os_env.sh` 处理，详见 `deployment/DEPLOY.md`「系统要求」。
+只支持 Docker Compose 部署，完整步骤见 [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md)。服务器只需要 x86_64 Linux + Docker，发行版不限。
 
-- **MySQL**：建库建用户，配置到 `.env`。
-- **后端**：`uvicorn --workers 1 --host 127.0.0.1 --proxy-headers`，systemd 托管。**必须单 worker**：WebSocket 连接表与限流计数都在进程内存中，多进程会导致实时同步与限流失效。
-- **前端**：`npm run build` 产出静态文件，Nginx 托管。
-- **Nginx**：静态文件 + `/api`、`/ws` 反代，HTTP/HTTPS 两份配置切换。前端页面 `/access/<code>` 是 SPA 路由，由 `try_files` 回落到 `index.html`，**不要**把 `/access` 反代到后端。
-- **Docker**：`deployment/docker/docker-compose.yml`（MySQL + 后端 + 前端 Nginx），后端同样单 worker，只信任 compose 固定子网 `172.28.0.0/16` 的 `X-Forwarded-For`，Nginx 用 `$remote_addr` 覆盖该头。宿主机只对外开放 80 端口；MySQL 的 3306 只绑定宿主机 `127.0.0.1`，供 SSH 隧道查询数据库。
+### 组件（`deployment/docker/docker-compose.yml`，项目名固定为 `clipsync`）
 
-### 上线步骤（概要）
+| 服务 | 镜像 | 说明 |
+|------|------|------|
+| db | `mysql:8.4.x`（版本号固定在 compose 中） | 数据卷 `clipsync_mysql_data`；3306 只绑定宿主机 `127.0.0.1`，供宿主机与 SSH 隧道查询 |
+| backend | `clipsync-backend`（`Dockerfile.backend`） | 启动时先 `alembic upgrade head`，再以**单 worker** 运行 uvicorn；非 root 用户；数据卷 `clipsync_storage_data` → `/app/storage`；不对宿主机暴露端口 |
+| frontend | `clipsync-frontend`（`Dockerfile.frontend`） | Nginx 托管 Vue 构建产物，反代 `/api`、`/ws` 到 backend；宿主机端口 `HTTP_PORT`（默认 80），HTTPS 时另映射 443 |
 
-```
-1. 建 MySQL 库/用户，填 backend/.env（JWT_SECRET 用 openssl rand -hex 32 生成）
-2. cd backend && pip install -r requirements.txt && alembic upgrade head
-3. python -m scripts.create_superadmin   # 创建首个超级管理员
-4. cd frontend && npm ci && npm run build   # 需要 Node 20.19+ 或 22.12+
-5. Nginx 安装 deployment/nginx/clipsync.conf，nginx -t 后 reload
-6. systemctl enable --now clipsync
-7. （日后）证书就位 → 换 clipsync-https.conf → .env 设 HSTS_ENABLED=true、改 CORS_ORIGINS → 重启后端并 reload Nginx
-```
+- **必须单 worker**：WebSocket 连接表与限流计数都在进程内存中，多进程会导致实时同步与限流失效。
+- **真实客户端 IP**：compose 使用固定子网 `172.28.0.0/16`，uvicorn 只信任这个网段发来的 `X-Forwarded-For`；Nginx 用 `$remote_addr` 覆盖该头，客户端自带的值一律丢弃。
+- **镜像来源**：默认在开发机用 `build-release.ps1` 构建并打包，服务器 `docker load` 导入后启动，不需要联网下载；网络通畅的服务器也可叠加 `docker-compose.build.yml` 从源码构建。backend、frontend 设 `pull_policy: never`，不会从镜像仓库拉取同名镜像。
+- **版本标签**：镜像带 git 提交号标签；只有 master 上的提交额外标 `latest`。服务器按 `.env` 的 `CLIPSYNC_TAG` 选用镜像。
+- **定时任务**：宿主机 cron 每小时经 `docker compose exec` 执行 `scripts.cleanup_expired`，每天执行 `backup.sh` 备份数据库与上传文件（模板 `clipsync.cron`）。
 
-完整步骤见 `deployment/DEPLOY.md`；`deployment/scripts/deploy.sh` 自动执行第 2–5 步并安装 systemd 服务、写入 cron（不会建库），**不会**启用服务，第 6 步的 `systemctl enable --now clipsync` 需手动执行。
+### Nginx 关注点（`nginx-docker.conf` / `nginx-https.conf`，公共部分在 `nginx-common.conf`）
 
-### Nginx 关注点
-
+- `proxy_pass` 用变量 + `resolver 127.0.0.11`：backend 容器重建后 IP 会变，Nginx 运行时重新解析。
 - `location /ws` 需 `Upgrade`/`Connection` 头支持 WebSocket。
-- `client_max_body_size` 略大于单个分片大小。
+- `client_max_body_size` 略大于单个分片大小（`CHUNK_SIZE` 默认 5MB，Nginx 限 10MB）。
 - `/api` 反代加超时设置适配上传；`Host` 用 `$http_host`（保留端口，访问码链接才正确）。
-- 静态页面由 Nginx 加 `X-Frame-Options`、`X-Content-Type-Options`、`Referrer-Policy`，`index.html` 不缓存；`/api` 的安全头由后端下发。
+- 前端页面 `/access/<code>` 是 SPA 路由，由 `try_files` 回落到 `index.html`，**不要**把 `/access` 反代到后端。
+- 静态页面由 Nginx 加 `X-Frame-Options`、`X-Content-Type-Options`、`Referrer-Policy`；`index.html` 不缓存，带哈希的 `/assets/` 长期缓存；`/api` 的安全头由后端下发。
+- `/.well-known/acme-challenge/` 指向挂载的 `acme/` 目录，供 certbot 以 webroot 方式申请与续期证书。
 - HTTPS 配置额外含证书路径、80→443 跳转。**HSTS 只由后端按 `HSTS_ENABLED` 下发**，Nginx 不配置。
 
 ---
@@ -628,7 +627,7 @@ CodeProject/
 | 快速访问码 | 生成 / 撤销、免登录访问（文本实时 / 文件下载）、限流 | — |
 | 管理后台 | 统计、用户管理（配额 / 启用禁用 / 删除）、邀请码、全站文件元数据、系统设置 | 变更角色、全站访问码管理 |
 | 前端 | 登录 / 注册、剪贴板、文件、访问码、管理后台、公开访问页、路由守卫、WebSocket 接入 | 自动化测试 |
-| 部署 | Nginx HTTP / HTTPS 两套配置、systemd、部署 / 更新 / 备份 / 清理 / 健康检查脚本（Debian 系与 RHEL 9+）、Docker Compose | CentOS 7 / 8 等旧系统的直接部署（用 Docker） |
+| 部署 | Docker Compose（开发机构建离线导入 / 服务器源码构建）、HTTP / HTTPS Nginx 配置、Let's Encrypt 证书申请与续期、备份 / 清理 / 健康检查脚本 | 不使用 Docker 的直接部署（不支持） |
 
 未实现与待验证的事项汇总在 [TODO.md](TODO.md)。
 
@@ -636,9 +635,16 @@ CodeProject/
 
 ## 16. 开发环境快速开始
 
-先决条件：Python 3.12+、Node.js 20.19+ 或 22.12+（Vite 8 的要求）、已运行的 MySQL 8.0。
+先决条件：Python 3.12+、Node.js 20.19+ 或 22.12+（Vite 8 的要求）、已运行的 MySQL 8.4（与部署环境一致）。
 
 ### 1. 创建数据库
+
+本机没有 MySQL 8.4 时，可以用 Docker 启动一个开发用实例，然后在 `backend/.env` 里设 `DB_HOST=127.0.0.1`、`DB_PORT=3307`、`DB_USER=root`：
+
+```bash
+docker run -d --name clipsync-dev-mysql -p 127.0.0.1:3307:3306 \
+    -v clipsync_dev_mysql:/var/lib/mysql -e MYSQL_ROOT_PASSWORD=<开发库密码> mysql:8.4.11
+```
 
 ```sql
 CREATE DATABASE clipsync CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -651,7 +657,7 @@ cd backend
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux/macOS: source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # 运行依赖 + 测试依赖（生产镜像只装 requirements.txt）
 
 cp .env.example .env
 # 编辑 .env：填写 DB_* 连接信息；JWT_SECRET 用 `openssl rand -hex 32` 生成
@@ -689,15 +695,17 @@ pytest tests/test_auth.py::test_name    # 单个
 | 只改文档（`*.md`）或注释 | 不跑测试，也不构建前端 |
 | `backend/` 的代码、迁移、依赖 | `pytest` |
 | `frontend/` 的代码、依赖、`vite.config.js` | `npm run build`，界面行为在浏览器里手动验证（前端没有自动化测试） |
-| `deployment/scripts/*.sh` | `bash -n` 语法检查；改了 `os_env.sh` 另跑 `bash deployment/scripts/test_os_env.sh` |
+| `deployment/docker/*.sh` | `bash -n` 语法检查；装有 Docker 时在本机 compose 环境实际运行 |
+| `deployment/docker/build-release.ps1` | PowerShell 语法解析；装有 Docker Desktop 时实际运行一次 |
+| compose、Dockerfile、Nginx 配置 | `docker compose config` 校验；装有 Docker 时构建并启动一次 |
 
-完整规则见 CLAUDE.md「按改动范围验证」；尚待手动验证的行为见 [TODO.md](TODO.md)。生产环境不运行测试（见 deployment/DEPLOY.md「7. 验证」）。
+完整规则见 CLAUDE.md「按改动范围验证」；尚待手动验证的行为见 [TODO.md](TODO.md)。生产镜像不包含测试代码与测试依赖，生产环境不运行测试。
 
 ---
 
 ## 17. 配置项（backend/.env）
 
-默认值以 `backend/app/config.py` 为准；生产模板见 `deployment/.env.production.example`，Docker 见 `deployment/docker/.env.example`。
+默认值以 `backend/app/config.py` 为准。本节是后端读取的变量：开发环境写在 `backend/.env`；Docker 部署写在部署目录的 `.env`（模板 `deployment/docker/.env.example`），由 compose 传给 backend 容器，其中 `DB_HOST`、`DB_PORT`、`STORAGE_DIR` 由 compose 固定，另有 `CLIPSYNC_TAG`、`HTTP_PORT`、`DB_HOST_PORT`、`DB_ROOT_PASSWORD`、`COMPOSE_FILE` 等部署专用变量（见 [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md)「配置说明」）。
 
 | 变量 | 说明 | 代码默认值 |
 |------|------|------|
@@ -719,14 +727,15 @@ pytest tests/test_auth.py::test_name    # 单个
 
 数据库中的系统设置只有两项：**是否开放注册**、**新用户默认配额**，优先于 `.env`，在管理后台「设置」页修改（见第 9 节）。其余各项只能改 `.env` 并重启后端。
 
-> ⚠️ **HTTP 阶段安全提示**：纯 HTTP 下密码、令牌和所有内容都明文传输，**仅用于可信内网**（见第 11 节）。
+> ⚠️ **HTTP 阶段安全提示**：纯 HTTP 下密码、令牌和所有内容都明文传输，只适合测试或可信内网；正式使用应切换 HTTPS（见第 11 节）。
 
 ---
 
 ## 18. 已知限制
 
 - **单进程**：WebSocket 连接表与限流计数都在进程内存中，后端只能单 worker、单实例运行。多实例需要引入跨进程消息（如 Redis pub/sub）并改造广播层与限流存储。
-- **本地磁盘存储**：文件存在服务器本地 `STORAGE_DIR`，没有对象存储支持；数据库备份不包含上传文件，需要单独备份。
-- **监控**：只有 `deployment/scripts/health_check.sh` 的基础检查，没有接入专门的监控系统。
+- **本地磁盘存储**：文件存在服务器本地 `STORAGE_DIR`（Docker 部署为数据卷 `clipsync_storage_data`），没有对象存储支持；`deployment/docker/backup.sh` 分别备份数据库与上传文件，备份默认与服务器在同一块硬盘上，需要定期复制到其他机器。
+- **监控**：只有 `deployment/docker/health_check.sh` 的基础检查，没有接入专门的监控系统。
+- **部署平台**：只支持 x86_64 Linux 上的 Docker Compose；`build-release.ps1` 只能在 Windows 上运行，其他系统用服务器源码构建（方式 B）。
 - **测试范围**：后端有 pytest 用例（`backend/tests/`）；前端没有自动化测试，界面行为需手动验证。
 

@@ -1,7 +1,7 @@
 # ClipSync 开发约束
 
 > 本文件是编码时必须遵守的**硬规则**，Claude 每次会话自动读取。
-> 文档分工：**规格权威** → README.md（项目说明、技术栈全表、数据模型字段、API 清单、机制、目录树、功能模块与实现范围、开发环境、配置项）；**待办** → TODO.md；**部署** → deployment/DEPLOY.md（直接部署）与 deployment/docker/README.md（Docker）；**本文件** → 编码硬约束 + 指针。
+> 文档分工：**规格权威** → README.md（项目说明、技术栈全表、数据模型字段、API 清单、机制、目录树、功能模块与实现范围、开发环境、配置项）；**待办** → TODO.md；**部署** → deployment/DEPLOYMENT.md（只支持 Docker Compose）；**本文件** → 编码硬约束 + 指针。
 > 冲突时以本文件为准；本文件未覆盖的细节以 README.md 为准（「第 N 节」指 README.md 章节）。
 
 ## 交流语言
@@ -9,7 +9,7 @@
 - 代码里的标识符、库名、API 路径、变量名保持英文原样，**不要翻译**。
 
 ## 技术栈
-- 以 README.md 第 2 节为准，**不得替换**：FastAPI 全异步 + SQLAlchemy 2.0 async + aiomysql + Alembic；MySQL 8.0；JWT(python-jose) + bcrypt；Uvicorn **单 worker**；Vue 3 组合式 API + Vite + Pinia + axios；原生 WebSocket。
+- 以 README.md 第 2 节为准，**不得替换**：FastAPI 全异步 + SQLAlchemy 2.0 async + aiomysql + Alembic；MySQL 8.4 LTS；JWT(python-jose) + bcrypt；Uvicorn **单 worker**；Vue 3 组合式 API + Vite + Pinia + axios；原生 WebSocket。
 
 ## 🔴 安全红线（违反即为 bug，背景见第 4、12 节）
 1. **数据隔离**：隐私数据查询强制 `WHERE user_id == 当前用户`，唯一例外是 superadmin。
@@ -49,7 +49,7 @@
 - 分支命名规范：`feature/功能名`、`fix/问题描述`、`refactor/重构内容`。
 - 提交信息用中文，简明扼要说明改动内容；多文件改动按模块分组描述。
 - 提交前按改动范围验证（见下方「按改动范围验证」），不要对无关改动跑全套验证。
-- `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/storage/`（上传文件）、编译产物。
+- `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/storage/`（上传文件）、编译产物、`release/`（`build-release.ps1` 生成的镜像包与部署包）、`deployment/docker/acme/` 与 `deployment/docker/letsencrypt/`（在该目录直接运行 compose 时生成）。
 
 ### 分支生命周期（开分支 → 提交 → 等用户指令合并 → 删分支）
 1. **每次新的更新都在 `feature/*` 或 `fix/*` 分支上进行**：从最新的 master 开分支 `git checkout master && git checkout -b <type>/<name>`，不要从其他未合并的分支上接着开。
@@ -69,8 +69,9 @@
 | 只改文档（`*.md`）或纯注释 | 不跑测试与构建；只检查文中路径、命令、引用与代码一致 |
 | `backend/` 代码、迁移、依赖 | `pytest`（在 `backend/`） |
 | `frontend/` 代码、依赖、`vite.config.js` | `npm run build`（在 `frontend/`） |
-| `deployment/scripts/*.sh` | `bash -n` 语法检查；改了 `os_env.sh` 另跑 `bash deployment/scripts/test_os_env.sh` |
-| Nginx / compose / systemd 配置 | 无法本地运行时说明未实测，记入 TODO.md |
+| `deployment/docker/*.sh` | `bash -n` 语法检查；装有 Docker 时在本机 compose 环境实际运行，否则记入 TODO.md |
+| `deployment/docker/build-release.ps1` | PowerShell 语法解析（`[System.Management.Automation.Language.Parser]::ParseFile`）；装有 Docker Desktop 时实际运行一次，否则记入 TODO.md |
+| compose、Dockerfile、Nginx 配置 | `docker compose config` 校验；装有 Docker 时构建并启动一次；只能在真实服务器上验证的（公网证书、cron、防火墙）记入 TODO.md |
 
 改动跨多个范围时，把对应的验证都跑一遍；汇报时写明跑了哪些、按规则跳过了哪些。
 
@@ -98,7 +99,7 @@
 - 汇报时写明检查了哪些文档、改了哪些、哪些确认无需修改。
 - **文档与注释只描述当前状态**：README、各说明文档、代码注释的读者是使用和维护这份代码的人，只写代码现在是什么、为什么这样做；不写修改历史（如「原先…」「已改为…」「不再…」「已合并」「阶段 N 修复」）。修改历史写在 git 提交信息里。
 
-## 常用命令（速查；完整 setup 见 README.md 第 16 节，部署见 deployment/DEPLOY.md）
+## 常用命令（速查；完整 setup 见 README.md 第 16 节，部署见 deployment/DEPLOYMENT.md）
 - 后端启动：`uvicorn app.main:app --reload`（在 `backend/`）
 - 应用迁移：`alembic upgrade head`；改模型后生成迁移：`alembic revision --autogenerate -m "描述"`
 - 跑单个测试：`pytest tests/test_xxx.py::test_name`

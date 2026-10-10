@@ -9,7 +9,7 @@ backend_path = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_path))
 
 from sqlalchemy import select
-from app.database import AsyncSessionLocal
+from app.database import AsyncSessionLocal, engine
 from app.models import User, UserRole
 from app.core.security import hash_password
 from app.config import settings
@@ -84,9 +84,17 @@ async def create_superadmin():
         print("\nYou can now login with this account.")
 
 
+async def _run():
+    try:
+        await create_superadmin()
+    finally:
+        # 事件循环关闭前释放连接池，否则退出时 aiomysql 会打印 "Event loop is closed"
+        await engine.dispose()
+
+
 if __name__ == "__main__":
     try:
-        asyncio.run(create_superadmin())
+        asyncio.run(_run())
     except KeyboardInterrupt:
         print("\n\nOperation cancelled.")
     except Exception as e:

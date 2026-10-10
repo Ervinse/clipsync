@@ -1,8 +1,8 @@
 """定时清理：过期访问码、过期上传会话及其临时分片、孤儿目录
 
 用法（在 backend/ 目录）：python -m scripts.cleanup_expired
-- 直接部署：deployment/scripts/cleanup_expired.sh 由 cron 每小时调用
-- Docker 部署：宿主机 cron 执行 docker compose exec -T backend python -m scripts.cleanup_expired
+部署环境由宿主机 cron 每小时执行 docker compose exec -T backend python -m scripts.cleanup_expired
+（模板见 deployment/docker/clipsync.cron）
 """
 import asyncio
 import logging
@@ -12,7 +12,7 @@ from pathlib import Path
 from sqlalchemy import select, delete
 
 from app.config import settings
-from app.database import AsyncSessionLocal
+from app.database import AsyncSessionLocal, engine
 from app.models import AccessCode, UploadSession, User
 from app.core.storage import cleanup_upload_temp, delete_user_storage, get_upload_temp_dir
 from app.core.timeutil import utcnow
@@ -94,10 +94,18 @@ async def scan_orphans(cutoff):
     print(f"孤儿扫描：删除 {removed_tmp} 个临时目录、{removed_users} 个用户目录")
 
 
+async def _run():
+    try:
+        await cleanup()
+    finally:
+        # 事件循环关闭前释放连接池，否则退出时 aiomysql 会打印 "Event loop is closed"
+        await engine.dispose()
+
+
 def main():
     # storage 模块的 rmtree 失败回调走 logging，这里让它输出到 cron 日志
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    asyncio.run(cleanup())
+    asyncio.run(_run())
 
 
 if __name__ == "__main__":
