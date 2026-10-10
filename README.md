@@ -580,7 +580,8 @@ CodeProject/
             ├── cert.sh                    # 用 certbot 申请 / 续期 Let's Encrypt 证书
             ├── clipsync.cron              # 宿主机定时任务模板（清理、备份、证书续期）
             ├── clipsync.logrotate         # 定时任务日志轮转
-            └── build-release.ps1          # 开发机构建镜像并打包（镜像包 + 部署包）
+            ├── build-release.ps1          # 开发机构建镜像并打包（镜像包 + 部署包），按提交号打标签
+            └── publish-release.ps1        # 测试通过的构建晋级为正式版本：追加版本号标签并生成发布包，不重新构建
 ```
 
 ---
@@ -602,7 +603,7 @@ CodeProject/
 - **必须单 worker**：WebSocket 连接表与限流计数都在进程内存中，多进程会导致实时同步与限流失效。
 - **真实客户端 IP**：compose 使用固定子网 `172.28.0.0/16`，uvicorn 只信任这个网段发来的 `X-Forwarded-For`；Nginx 用 `$remote_addr` 覆盖该头，客户端自带的值一律丢弃。
 - **镜像来源**：默认在开发机用 `build-release.ps1` 构建并打包，服务器 `docker load` 导入后启动，不需要联网下载；网络通畅的服务器也可叠加 `docker-compose.build.yml` 从源码构建。backend、frontend 设 `pull_policy: never`，不会从镜像仓库拉取同名镜像。
-- **版本标签**：镜像带 git 提交号标签；只有 master 上的提交额外标 `latest`。服务器按 `.env` 的 `CLIPSYNC_TAG` 选用镜像。
+- **版本标签**：镜像带 git 提交号标签；只有 master 上的提交额外标 `latest`。测试通过的构建由 `publish-release.ps1` 追加版本号标签（如 `1.0.0-alpha.1`）生成发布包，镜像不重新构建。服务器按 `.env` 的 `CLIPSYNC_TAG` 选用镜像。
 - **定时任务**：宿主机 cron 每小时经 `docker compose exec` 执行 `scripts.cleanup_expired`，每天执行 `backup.sh` 备份数据库与上传文件（模板 `clipsync.cron`）。
 
 ### Nginx 关注点（`nginx-docker.conf` / `nginx-https.conf`，公共部分在 `nginx-common.conf`）
@@ -698,7 +699,7 @@ pytest tests/test_auth.py::test_name    # 单个
 | `backend/` 的代码、迁移、依赖 | `pytest` |
 | `frontend/` 的代码、依赖、`vite.config.js` | `npm run build`，界面行为在浏览器里手动验证（前端没有自动化测试） |
 | `deployment/docker/*.sh` | `bash -n` 语法检查；装有 Docker 时在本机 compose 环境实际运行 |
-| `deployment/docker/build-release.ps1` | PowerShell 语法解析；装有 Docker Desktop 时实际运行一次 |
+| `deployment/docker/build-release.ps1`、`publish-release.ps1` | PowerShell 语法解析；装有 Docker Desktop 时实际运行一次 |
 | compose、Dockerfile、Nginx 配置 | `docker compose config` 校验；装有 Docker 时构建并启动一次 |
 
 完整规则见 CLAUDE.md「按改动范围验证」；尚待手动验证的行为见 [TODO.md](TODO.md)。生产镜像不包含测试代码与测试依赖，生产环境不运行测试。
@@ -738,6 +739,6 @@ pytest tests/test_auth.py::test_name    # 单个
 - **单进程**：WebSocket 连接表与限流计数都在进程内存中，后端只能单 worker、单实例运行。多实例需要引入跨进程消息（如 Redis pub/sub）并改造广播层与限流存储。
 - **本地磁盘存储**：文件存在服务器本地 `STORAGE_DIR`（Docker 部署为数据卷 `clipsync_storage_data`），没有对象存储支持；`deployment/docker/backup.sh` 分别备份数据库与上传文件，备份默认与服务器在同一块硬盘上，需要定期复制到其他机器。
 - **监控**：只有 `deployment/docker/health_check.sh` 的基础检查，没有接入专门的监控系统。
-- **部署平台**：只支持 x86_64 Linux 上的 Docker Compose；`build-release.ps1` 只能在 Windows 上运行，其他系统用服务器源码构建（方式 B）。
+- **部署平台**：只支持 x86_64 Linux 上的 Docker Compose；`build-release.ps1`、`publish-release.ps1` 只能在 Windows 上运行，其他系统用服务器源码构建（方式 B）。
 - **测试范围**：后端有 pytest 用例（`backend/tests/`）；前端没有自动化测试，界面行为需手动验证。
 

@@ -33,7 +33,7 @@ ClipSync 只支持 Docker Compose 部署：MySQL、后端、前端（Nginx）三
 | `nginx-common.conf`、`nginx-docker.conf`、`nginx-https.conf` | frontend 容器的 Nginx 配置（公共规则 / HTTP 站点 / HTTPS 站点） |
 | `backup.sh`、`health_check.sh`、`cert.sh` | 备份、健康检查、HTTPS 证书申请与续期 |
 | `clipsync.cron`、`clipsync.logrotate` | 宿主机定时任务与其日志轮转的模板 |
-| `VERSION` | 方式 A 的部署包才有：打包时的分支、提交号、时间 |
+| `VERSION` | 方式 A 的部署包才有：打包时的分支、提交号、时间；正式版本的发布包还有版本号 |
 | `acme/`、`letsencrypt/` | 运行后自动生成：证书验证文件、HTTPS 证书 |
 
 除 `.env` 外，这些文件会在每次更新部署包时被覆盖。需要调整的配置都放在 `.env` 里，不要直接修改其他文件。
@@ -43,7 +43,8 @@ ClipSync 只支持 Docker Compose 部署：MySQL、后端、前端（Nginx）三
 - 正式部署使用 **master** 分支上的提交。
 - `build-release.ps1` 给镜像打 `<提交号>` 标签（git 提交号的前 12 位）。只有打包的是 master 的最新提交时，才额外打 `latest` 标签。
 - 服务器 `.env` 的 `CLIPSYNC_TAG` 默认是 `latest`，所以只会运行 master 的版本。要部署其他分支（比如测试一个还没合并的功能），把 `CLIPSYNC_TAG` 改成那次打包的提交号；测试结束后改回 `latest`。
-- 镜像包和部署包来自同一次打包，文件名里的提交号相同，不要混用不同提交的两个包。
+- 测试通过的构建用 `publish-release.ps1` 晋级为正式版本（第 4.4 节）：不重新构建，给同一份镜像追加 `<版本号>` 标签（如 `1.0.0-alpha.1`），发布包里的镜像只有 `<版本号>` 和 `<提交号>` 两个标签，没有 `latest`。
+- 镜像包和部署包来自同一次打包，文件名里的提交号（或版本号）相同，不要混用不同版本的两个包。
 ## 3. 环境要求
 
 **服务器**
@@ -91,7 +92,7 @@ powershell -ExecutionPolicy Bypass -File deployment\docker\build-release.ps1
 | `-WithCertbot` | 额外打包 certbot 镜像（服务器拉取不到 Docker Hub、又要申请 HTTPS 证书时用） |
 | `-Yes` | 跳过确认 |
 
-产物在项目根目录的 `release/`：
+产物在项目根目录的 `release\<提交号>\`：
 
 | 文件 | 内容 |
 |------|------|
@@ -100,8 +101,10 @@ powershell -ExecutionPolicy Bypass -File deployment\docker\build-release.ps1
 ### 4.2 上传到服务器
 
 ```powershell
-scp release\clipsync-images-<提交号>.tar.gz release\clipsync-deploy-<提交号>.tar.gz root@<服务器IP>:/root/
+scp release\<提交号>\clipsync-images-<提交号>.tar.gz release\<提交号>\clipsync-deploy-<提交号>.tar.gz root@<服务器IP>:/root/
 ```
+
+使用正式版本的发布包时，把文件名里的 `<提交号>` 换成 `<版本号>`（第 4.4 节）。
 
 ### 4.3 服务器：导入镜像、解压部署包
 
@@ -114,6 +117,34 @@ cd /opt/clipsync && cat VERSION
 ```
 
 然后按第 6 节「配置与启动」继续。
+
+### 4.4 正式版本的发布包
+
+测试通过的构建在开发机上晋级为正式版本。先在要发布的提交（必须在 master 上）建好 Git 标签 `v<版本号>`，然后执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deployment\docker\publish-release.ps1 -Version <版本号>
+```
+
+脚本不重新构建镜像：检查本机有该提交的 `clipsync-backend:<提交号>`、`clipsync-frontend:<提交号>`，且镜像里记录的提交号一致，再追加 `<版本号>` 标签导出。本机镜像被清理过时，先 `docker load` 导入该提交测试时的镜像包。产物在 `release\<版本号>\`：
+
+| 文件 | 内容 |
+|------|------|
+| `clipsync-images-<版本号>.tar.gz` | 镜像包：backend、frontend（各带 `<版本号>` 与 `<提交号>` 标签）、MySQL |
+| `clipsync-deploy-<版本号>.tar.gz` | 部署包：与测试构建的部署包相同，只有两处不同：`.env.example` 的 `CLIPSYNC_TAG` 预填为 `<版本号>`；`VERSION` 多了 `version=`、`published=` 两行 |
+| `SHA256SUMS` | 两个包的 SHA-256 |
+
+使用发布包部署：
+
+```bash
+cd /root && sha256sum -c SHA256SUMS          # 两行都显示 OK 再继续
+docker load -i clipsync-images-<版本号>.tar.gz
+mkdir -p /opt/clipsync && tar -xzf clipsync-deploy-<版本号>.tar.gz -C /opt/clipsync
+```
+
+- 首次部署：从 `.env.example` 复制出的 `.env` 已经是 `CLIPSYNC_TAG=<版本号>`，不用修改。
+- 已有部署更新到正式版本：解压部署包不会覆盖 `.env`，要手动把 `.env` 的 `CLIPSYNC_TAG` 改成 `<版本号>`。发布包里没有 `latest` 标签，`CLIPSYNC_TAG` 仍是 `latest` 时会用回旧镜像，或因找不到镜像而启动失败。
+- 核对和测试过的是同一份镜像：发布脚本最后打印的镜像 ID，与测试服务器上 `docker images clipsync-backend` 显示的 IMAGE ID 相同。开发机启用了 containerd 镜像存储时，本机 `docker images` 显示的 ID 是另一种摘要，以脚本打印的为准。
 
 ## 5. 方式 B：服务器上从源码构建
 
@@ -150,7 +181,7 @@ vi .env          # 至少修改 CORS_ORIGINS
 
 | 变量 | 说明 | 默认 |
 |------|------|------|
-| `CLIPSYNC_TAG` | 使用哪个版本的镜像：`latest` 或提交号（第 2 节） | `latest` |
+| `CLIPSYNC_TAG` | 使用哪个版本的镜像：`latest`、提交号或正式版本号（第 2 节） | `latest`（正式版本发布包里的模板预填版本号） |
 | `HTTP_PORT` | 网站端口。启用 HTTPS 时必须是 80 | `80` |
 | `DB_HOST_PORT` | 数据库在宿主机 `127.0.0.1` 上的端口，3306 被占用时修改 | `3306` |
 | `COMPOSE_FILE` | 启用 HTTPS 时设为 `docker-compose.yml:docker-compose.https.yml`（第 9 节） | 不设置 |
@@ -222,7 +253,7 @@ bash health_check.sh
 # 开发机：在 master 上打包。这次更新没有改 MySQL 版本时加 -AppOnly
 git switch master
 powershell -ExecutionPolicy Bypass -File deployment\docker\build-release.ps1 -AppOnly
-scp release\clipsync-images-<提交号>-app.tar.gz release\clipsync-deploy-<提交号>.tar.gz root@<服务器IP>:/root/
+scp release\<提交号>\clipsync-images-<提交号>-app.tar.gz release\<提交号>\clipsync-deploy-<提交号>.tar.gz root@<服务器IP>:/root/
 ```
 
 ```bash
@@ -242,6 +273,8 @@ bash health_check.sh
 
 部署非 master 的测试版本时，先把 `.env` 的 `CLIPSYNC_TAG` 改成打包时显示的提交号，再执行 `docker compose up -d`。
 
+更新到正式版本的发布包时，命令相同，文件名里的 `<提交号>` 换成 `<版本号>`，并在 `docker compose up -d` 前把 `.env` 的 `CLIPSYNC_TAG` 改成 `<版本号>`（第 4.4 节）。
+
 ### 7.2 方式 B
 
 ```bash
@@ -254,17 +287,17 @@ docker compose up -d --force-recreate frontend
 
 ## 8. 回滚
 
-方式 A 的旧版本镜像在 `docker load` 后会一直保留在服务器上（`docker images clipsync-backend` 可以看到各个提交号）。
+方式 A 的旧版本镜像在 `docker load` 后会一直保留在服务器上（`docker images clipsync-backend` 可以看到各个提交号和版本号）。
 
 ```bash
 bash backup.sh
-vi .env                     # CLIPSYNC_TAG 改成旧的提交号
+vi .env                     # CLIPSYNC_TAG 改成旧的版本号或提交号
 docker compose up -d
 ```
 
 - 如果要回滚的那次更新包含数据库迁移，旧版本可能无法使用新的表结构：先按第 10.3 节用更新前的备份恢复数据库，再回滚。
 - 新旧版本的 compose 或 Nginx 配置有差别时，再把旧版本的部署包解压到部署目录，然后执行 `docker compose up -d --force-recreate backend frontend`。所以建议在服务器上保留最近几次的部署包。
-- 旧镜像占用磁盘时删除：`docker rmi clipsync-backend:<提交号> clipsync-frontend:<提交号>`。
+- 旧镜像占用磁盘时删除：`docker rmi clipsync-backend:<提交号> clipsync-frontend:<提交号>`（正式版本还要删掉 `<版本号>` 标签，同一个镜像的标签全部删掉后才会释放空间）。
 ## 9. 使用 HTTPS
 
 HTTP 下密码、登录令牌和所有内容都以明文传输，只适合测试或可信内网。正式使用、尤其是暴露在公网时，应启用 HTTPS。
@@ -460,6 +493,7 @@ docker image prune                        # 删除没有标签的旧镜像层（
 | `docker compose up` 报 `required variable DB_PASSWORD is missing` 等 | `.env` 里的必填项为空，或者没有在部署目录执行命令 |
 | `pull access denied for clipsync-backend`、`No such image` | 镜像没有导入，或 `CLIPSYNC_TAG` 指向不存在的标签。`docker images clipsync-backend` 查看已有的标签，重新 `docker load` |
 | 部署了测试分支，页面却还是旧版本 | 非 master 的镜像没有 `latest` 标签，要把 `CLIPSYNC_TAG` 改成提交号 |
+| 导入了正式版本的发布包，页面却还是旧版本，或提示找不到镜像 | 发布包里的镜像没有 `latest` 标签，要把 `.env` 的 `CLIPSYNC_TAG` 改成版本号 |
 | backend 反复重启，日志提示 `JWT_SECRET 过弱` | `JWT_SECRET` 少于 32 位或含示例占位文字，用 `openssl rand -hex 32` 重新生成 |
 | backend 日志 `Access denied for user` | `.env` 的数据库密码与数据库里实际的账号不一致，常见于数据卷已存在后又修改了密码（第 6.2 节） |
 | db 一直不是 healthy | `docker compose logs db`。磁盘满、数据目录损坏、内存不足都会导致 MySQL 启动失败 |
