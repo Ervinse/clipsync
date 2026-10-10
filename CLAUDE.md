@@ -49,7 +49,7 @@
 - 分支命名规范：`feature/功能名`、`fix/问题描述`、`refactor/重构内容`、`docs/文档改动`（仅改文档 `*.md` 或纯注释时用）。
 - 提交信息用中文，简明扼要说明改动内容；多文件改动按模块分组描述。
 - 提交前按改动范围验证（见下方「按改动范围验证」），不要对无关改动跑全套验证。
-- `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/storage/`（上传文件）、编译产物、`release/`（`build-release.ps1` 生成的镜像包与部署包）、`deployment/docker/acme/` 与 `deployment/docker/letsencrypt/`（在该目录直接运行 compose 时生成）。
+- `.gitignore` 已配置排除：虚拟环境、`node_modules/`、`.env`、`backend/storage/`（上传文件）、编译产物、`release/`（镜像包与部署包，见「发布与发布说明」）、`deployment/docker/acme/` 与 `deployment/docker/letsencrypt/`（在该目录直接运行 compose 时生成）。
 
 ### 分支生命周期（开分支 → 提交 → 等用户指令合并 → 删分支）
 1. **每次新的更新都在 `feature/*`、`fix/*`、`refactor/*` 或 `docs/*` 分支上进行**：从最新的 master 开分支 `git checkout master && git checkout -b <type>/<name>`（仅改文档或注释用 `docs/*`），不要从其他未合并的分支上接着开。
@@ -59,7 +59,8 @@
 4. **合并后在 master 上复验**：按本次合并涉及的改动范围复验（见下方「按改动范围验证」）；只含文档的合并不需要复验。
 5. **删除已合并的分支**：用 `git branch -d <分支>`（只删已合并分支）；**禁止**用 `-D` 强删，除非用户明确要求。
 6. **会话开始时检查分支状态**：若有未合并的分支或未提交的改动，先向用户报告，再开始新工作。
-- 删除分支、推送远端同样需要先汇报并等用户确认；有冲突时停下来向用户说明，不要自行取舍。
+- 删除分支需要先汇报并等用户确认；有冲突时停下来向用户说明，不要自行取舍。
+- **远程操作一律由用户执行**（`git push`、推送标签、创建 GitHub Release、上传发布文件等）：Claude 只做本地操作，需要远程操作时给出命令，由用户自己执行。
 
 ### 按改动范围验证
 提交前与合并后，只跑与改动相关的验证：
@@ -93,6 +94,21 @@
   3. 部署包内 `VERSION` 文件，含 `commit=` / `branch=` / `latest=` / `built=` 四个字段
   4. 两个产物的文件名：`clipsync-images-<commit>[-app].tar.gz`、`clipsync-deploy-<commit>.tar.gz`
 - 打包只取**已提交**的代码（`git archive`），工作区未提交的改动不进镜像；打包的不是 master 最新提交或工作区不干净时，脚本要求确认。
+
+## 发布与发布说明（产物与 notes 的存放、写 notes 的规矩）
+- **版本号**：按 SemVer（如 `1.0.0`、`1.0.0-alpha.1`）。Git 标签带 `v`（`v1.0.0-alpha.1`，附注标签）；目录名、镜像版本号标签不带 `v`。
+- **产物目录 `release/`**（`.gitignore` 排除）：只放镜像包与部署包，按版本分子目录，不放任何其他文件。
+  - 测试构建：`release/<commit>/`。`build-release.ps1` 把产物输出在 `release/` 根目录，构建完成后移入 `release/<commit>/`。
+  - 正式版本：`release/<版本号>/`，放发布到 GitHub Release 的文件。
+  - 清理磁盘时按子目录删除；已发布版本的目录与其对应的测试构建目录保留到下一个正式版发布后。
+- **发布说明目录 `release-notes/`**（`.git/info/exclude` 本地忽略，不进 git，与 `release/` 分开，不随产物清理）。每个版本两个文件：
+  - `v<版本号>.md`：发布页正文，原样粘贴到 GitHub Release。
+  - `v<版本号>.internal.md`：内部记录，不发布。内容：标签对应的完整提交、对应测试构建目录及其 SHA-256、正式发布文件的 SHA-256、测试情况、改动范围、遗留事项。
+- **写 notes 的规矩**：
+  - 动笔前先读上一版的 `.internal.md`，用 `git log v<上一版>..v<新版> --first-parent --oneline` 查本版改动范围。
+  - 发布页正文的读者是下载部署的使用者：不提开发者本人、开发机或某台服务器，不写内部流程；写本版功能或与上一版的差别（新增 / 修复 / 变更 / 升级注意）、部署方式、安全提示、已知限制、下载文件说明。
+  - 文件名、标签、提交号、校验值必须对照实际产物核对后再写（`sha256sum` 实算、部署包内 `VERSION` 实读），不凭记忆填写。
+- 发布到 GitHub（推送标签、创建 Release、上传文件）由用户执行，见「Git 工作流程」中的远程操作规则。
 
 ## 工作方式
 - 新功能先对照第 15 节的实现范围与 TODO.md，确认不与已有设计冲突再动手。
