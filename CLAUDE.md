@@ -83,6 +83,17 @@
 - 有哪些分支尚未合并回 master（`git branch --no-merged master`）
 - 最近的提交图（`git log --oneline --graph -n 10`）
 
+## 部署打包（镜像标签与版本一致性）
+- 本项目没有 CI/CD；镜像构建、打标签、打包只在 `deployment/docker/build-release.ps1` 一处完成，它是本规范的权威实现。调整打包策略即改这个脚本，并同步更新本节。
+- **commit 哈希标签（必打）**：用 `git rev-parse --verify <ref>^{commit}`（`<ref>` 默认 `HEAD`，可用 `-Ref` 指定分支或提交）取完整哈希，截前 12 位作为标签，如 `clipsync-backend:9718d16c4fde`。每个镜像一定有这个标签，用于精确追溯。
+- **latest 标签（有条件）**：仅当「要打包的提交哈希」等于「`master` 当前提交哈希」（按哈希比对，非分支名）时，才额外追加 `:latest`；非 master 或旧提交只有 commit 哈希标签。服务器 `.env` 的 `CLIPSYNC_TAG` 默认 `latest`，故测试分支的镜像导入后不会被误用。
+- **版本一致性**：同一个 commit 哈希（脚本里的 `$Commit` 变量）必须同时写入这几处，保证永远一致：
+  1. 镜像标签（`-t <镜像名>:<commit>`）
+  2. 镜像 label `org.opencontainers.image.revision=<commit>`（`health_check.sh` 据此显示运行中的提交）
+  3. 部署包内 `VERSION` 文件，含 `commit=` / `branch=` / `latest=` / `built=` 四个字段
+  4. 两个产物的文件名：`clipsync-images-<commit>[-app].tar.gz`、`clipsync-deploy-<commit>.tar.gz`
+- 打包只取**已提交**的代码（`git archive`），工作区未提交的改动不进镜像；打包的不是 master 最新提交或工作区不干净时，脚本要求确认。
+
 ## 工作方式
 - 新功能先对照第 15 节的实现范围与 TODO.md，确认不与已有设计冲突再动手。
 - 新增/修改接口后，同步更新前端 api 封装与对应 store。
