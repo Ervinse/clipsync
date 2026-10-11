@@ -40,7 +40,8 @@ async def _recreate_database():
     async with conn.cursor() as cur:
         await cur.execute(f"DROP DATABASE IF EXISTS `{TEST_DB_NAME}`")
         await cur.execute(
-            f"CREATE DATABASE `{TEST_DB_NAME}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+            # 排序规则与部署环境一致：docker compose 由 MYSQL_DATABASE 自动建库，用 MySQL 8.4 的服务器默认规则
+            f"CREATE DATABASE `{TEST_DB_NAME}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
         )
     conn.close()
 

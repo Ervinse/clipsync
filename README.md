@@ -266,7 +266,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
-| POST | /api/access-codes | 登录 | 为「当前文本」或「某个文件」生成访问码；`expires_at` 必须晚于当前时间，且不超过 8760 小时后；广播 `access_codes_changed` |
+| POST | /api/access-codes | 登录 | 为「当前文本」或「某个文件」生成访问码；`expires_at` 必须晚于当前时间，且不超过 8760 小时后（超出可表示范围的时间同样返回 400）；文件码创建时文件已被删除返回 404；广播 `access_codes_changed` |
 | GET | /api/access-codes | 登录 | 列出自己创建的访问码（含已撤销的；已过期的会被定时任务删除） |
 | DELETE | /api/access-codes/{id} | 归属 | 撤销访问码（标记 `is_revoked`，记录保留），广播 `access_codes_changed` |
 | GET | /api/access/{code} | **公开** | 免登录：**仅文本码**，返回属主当前最新文本 + 属主用户名 |
@@ -278,14 +278,14 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
-| GET | /api/admin/stats | admin+ | 系统统计（用户总数、活跃用户、文件总数、总存储、访问码总数、有效访问码数） |
+| GET | /api/admin/stats | admin+ | 系统统计（用户总数、活跃用户、文件总数、总存储、访问码总数、有效访问码数；有效 = 未撤销、未过期、属主未被禁用，与免登录访问的判定一致） |
 | GET | /api/admin/users | admin+ | 用户列表，分页 `skip`/`limit`（≤100），含配额、已用空间、文件数 |
 | GET | /api/admin/users/{id} | admin+ | 用户详情（元数据，含剪贴板更新时间，不含内容） |
 | PATCH | /api/admin/users/{id}/quota | **superadmin** | 修改配额 `{quota_bytes}`（0 到 1TB），给目标用户广播 `quota_updated` |
 | PATCH | /api/admin/users/{id}/status | **superadmin** | 启用/禁用 `{is_active}`；禁用时立即断开其 WebSocket；不能操作自己（400）或其他 superadmin（403） |
 | DELETE | /api/admin/users/{id} | **superadmin** | 删除用户及其全部数据并断开其 WebSocket；不能删除自己（400）或其他 superadmin（403） |
 | GET | /api/admin/invite-codes | admin+ | 邀请码列表与状态 |
-| POST | /api/admin/invite-codes | admin+ | 生成 16 位邀请码 `{expires_at?}`；`expires_at` 必须晚于当前时间 |
+| POST | /api/admin/invite-codes | admin+ | 生成 16 位邀请码 `{expires_at?}`；`expires_at` 必须晚于当前时间，换算成 UTC 后超出可表示范围（如 `9999-12-31T23:59:59-05:00`）返回 400 |
 | DELETE | /api/admin/invite-codes/{id} | admin+ | 删除未使用的邀请码；已使用的保留作审计记录，返回 409 |
 | GET | /api/admin/files | admin+ | 全站文件**元数据**，分页（无下载入口） |
 | GET | /api/admin/settings | admin+ | 读取系统设置 `{default_quota_bytes, registration_enabled}` |
@@ -423,7 +423,9 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
 1. init     → POST /api/files/upload/init  JSON {original_name, total_size, chunk_size}
               清理本用户过期会话 → 校验单文件上限、并发会话数、配额
               chunk_size 取请求值，不超过 CHUNK_SIZE，且分片总数不超过 10000（过小时自动调大）
-              → 建 upload_session，返回 {upload_id, total_chunks, chunk_size}（以服务端返回为准）
+              → 先建 tmp/{upload_id} 目录，再写 upload_session 行并提交（顺序不能反：建目录失败时不会留下客户端拿不到
+                 upload_id、无法取消的会话；提交失败时删掉刚建的目录）
+              → 返回 {upload_id, total_chunks, chunk_size}（以服务端返回为准）
 2. chunk×N  → POST /api/files/upload/chunk  multipart {upload_id, chunk_index, chunk_data}
               校验归属、会话未过期、chunk_index < total_chunks
               每片大小必须等于期望值：非最后一片 = chunk_size，最后一片 = 剩余字节；超出 413，不足 400
@@ -431,17 +433,19 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
               失败可重传该片（断点续传）；同一片并发重传不会互相截断
 3. complete → POST /api/files/upload/complete  JSON {upload_id}
               同一 upload_id 并发 complete 返回 409；会话过期返回 404
-              校验分片 0..N-1 齐全 → 线程池中按序流式合并到 storage/{user_id}/{uuid}
+              校验分片 0..N-1 齐全 → 先提交结束事务（合并耗时长，期间不占着数据库连接）
+              → 线程池中按序流式合并到 storage/{user_id}/{uuid}
               实际大小必须等于 total_size → 按实际大小再校验配额
               写 files 记录 → 删会话与 tmp → 广播 file_added
-              提交失败时删除已合并的文件，不留孤儿文件
+              合并之后、提交完成之前的失败（数据库死锁、连接断开、用户被并发删除）会删除已合并的文件，
+              会话行与分片保留，客户端可重试 complete，不留不计配额的孤儿文件
 ```
 
 - 分片大小：前端请求 1MB，服务端上限 `CHUNK_SIZE`（`.env`，默认 5MB），不能在后台修改。
 - 配额：已用 = 已落盘文件 + **进行中会话的声明大小**，防止并发开会话超配；init 预校验，complete 按实际大小最终确认。
 - 取消：上传中途失败时前端调 `DELETE /api/files/upload/{upload_id}` 立即释放配额；关掉页面等无法取消的会话，靠 `/auth/me` 与 `GET /api/files` 返回的 `reserved_bytes`（侧栏显示「上传中」）让用户看见，并在 TTL 后清理。
 - 每用户进行中的上传会话不超过 `MAX_UPLOAD_SESSIONS_PER_USER`（默认 5），超出返回 429。
-- 会话过期：超过 `UPLOAD_SESSION_TTL_HOURS`（默认 24）的会话，在该用户下次 init 时清理；定时任务 `backend/scripts/cleanup_expired.py`（宿主机 cron 经 `docker compose exec` 每小时执行）清理全站过期会话与 tmp 目录，并做孤儿扫描（超过 TTL 且无会话记录的 tmp 目录、用户已不存在的 `storage/<uid>` 目录）。
+- 会话过期：超过 `UPLOAD_SESSION_TTL_HOURS`（默认 24）的会话，在该用户下次 init 时清理；定时任务 `backend/scripts/cleanup_expired.py`（宿主机 cron 经 `docker compose exec` 每小时执行）清理全站过期会话与 tmp 目录，并做孤儿扫描（超过 TTL 且无会话记录的 tmp 目录、用户已不存在的 `storage/<uid>` 目录；删用户目录前会针对该 id 再查一次 users 表，扫描期间新注册的用户不会被误删）。
 - 下载：线程池中先打开文件再 `fstat` 取大小，下载途中文件被删也能读完；文件不存在返回 404（公开访问码路径统一提示「访问码无效或已失效」）。
 - `upload_id` 必须是服务端生成的标准小写 UUID，其他写法（含大写）在入口一律按「会话不存在」返回 404。
 - 应用内磁盘删除失败只记日志（`rmtree` 用 `onexc` 回调），不影响接口结果。残留的目录（临时分片目录、已删用户的目录）由孤儿扫描兜底；删除单个文件失败时，磁盘上会留下没有记录的文件，孤儿扫描不处理（见 TODO.md）。
@@ -650,8 +654,10 @@ docker run -d --name clipsync-dev-mysql -p 127.0.0.1:3307:3306 \
 ```
 
 ```sql
-CREATE DATABASE clipsync CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE clipsync CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 ```
+
+排序规则与部署环境一致：docker compose 由 `MYSQL_DATABASE` 自动建库，用 MySQL 8.4 的服务器默认规则 `utf8mb4_0900_ai_ci`。该规则不区分大小写与重音，行尾空格有意义（`utf8mb4_unicode_ci` 会忽略行尾空格）。测试库 `clipsync_test` 同样用这个规则。
 
 ### 2. 后端
 

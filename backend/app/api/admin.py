@@ -80,10 +80,13 @@ async def get_system_stats(
     result = await db.execute(select(func.count(AccessCode.id)))
     total_access_codes = result.scalar()
 
-    # 有效 = 未撤销且未过期
+    # 有效 = 未撤销、未过期、属主未被禁用（与免登录访问时的校验口径一致：属主被禁用后其访问码一并失效）
     result = await db.execute(
-        select(func.count(AccessCode.id)).where(
+        select(func.count(AccessCode.id))
+        .join(User, AccessCode.owner_id == User.id)
+        .where(
             AccessCode.is_revoked == False,  # noqa: E712
+            User.is_active == True,  # noqa: E712
             AccessCode.expires_at.is_(None) | (AccessCode.expires_at > utcnow()),
         )
     )
@@ -398,7 +401,13 @@ async def create_invite_code(
         )
 
     # 2. 创建邀请码（过期时间统一转 naive UTC，与 register 中的 utcnow() 比较口径一致）
-    expires_at = to_naive_utc(data.expires_at)
+    try:
+        expires_at = to_naive_utc(data.expires_at)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="过期时间超出有效范围",
+        )
     if expires_at is not None and expires_at <= utcnow():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

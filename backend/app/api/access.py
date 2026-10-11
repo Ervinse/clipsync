@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -117,7 +118,10 @@ async def create_access_code(
     - 文本码：不存快照，实时指向属主当前文本；不允许携带 file_id
     - 文件码：校验 file_id 归属于当前用户
     """
-    expires_at = to_naive_utc(data.expires_at)
+    try:
+        expires_at = to_naive_utc(data.expires_at)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="过期时间超出有效范围")
     if expires_at is not None and expires_at <= utcnow():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="过期时间必须晚于当前时间")
     # 最长有效期 1 年（前端同样校验）；留 1 分钟余量，避免前端按 8760 小时计算后因时钟误差被拒
@@ -159,7 +163,16 @@ async def create_access_code(
         created_at=utcnow(),
     )
     db.add(access_code)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        # 归属检查之后、写入之前，文件被另一个终端删除了（外键 file_id 校验失败）：与检查不通过同样处理
+        if file_id is not None:
+            still_there = await db.execute(select(File.id).where(File.id == file_id))
+            if still_there.scalar_one_or_none() is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在或无权访问")
+        raise
     await db.refresh(access_code)
 
     # 通知该用户其他终端刷新访问码列表（只发信号）
