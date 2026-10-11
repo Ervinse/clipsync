@@ -240,19 +240,26 @@ async def init_upload(
     total_chunks = (data.total_size + chunk_size - 1) // chunk_size
 
     upload_id = str(uuid.uuid4())
-    db.add(UploadSession(
-        upload_id=upload_id,
-        user_id=current_user.id,
-        original_name=data.original_name,
-        total_size=data.total_size,
-        total_chunks=total_chunks,
-        received_chunks=0,
-        chunk_size=chunk_size,
-        created_at=utcnow(),
-    ))
-    await db.commit()
-
+    # 先建临时目录再写会话行：建目录失败（磁盘满、权限问题）时没有会话行留下。
+    # 反过来的话，会话行已提交而客户端拿不到 upload_id，无法取消，要白占名额和配额直到过期
     await run_in_threadpool(ensure_upload_temp_dir, upload_id)
+    try:
+        db.add(UploadSession(
+            upload_id=upload_id,
+            user_id=current_user.id,
+            original_name=data.original_name,
+            total_size=data.total_size,
+            total_chunks=total_chunks,
+            received_chunks=0,
+            chunk_size=chunk_size,
+            created_at=utcnow(),
+        ))
+        await db.commit()
+    except Exception:
+        # 提交失败（数据库死锁、连接断开等）：删掉刚建的目录，不留孤儿目录。
+        # 不捕获 BaseException：请求被取消时提交结果不确定，保留目录，由过期清理处理
+        await run_in_threadpool(cleanup_upload_temp, upload_id)
+        raise
 
     return UploadInitResponse(upload_id=upload_id, total_chunks=total_chunks, chunk_size=chunk_size)
 
@@ -454,6 +461,11 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
             detail=f"分片不完整（已收到 {len(received)} / {session.total_chunks}）",
         )
 
+    # 合并是长耗时的线程池操作（最大 500MB）：先结束事务，把数据库连接还回连接池。
+    # 否则合并期间一直占着连接，十几个大文件同时合并就会耗尽连接池（默认 15 个），其他请求等待超时。
+    # expire_on_commit=False：提交后 session / current_user 仍可读取；之后的查询在新事务里读到最新数据
+    await db.commit()
+
     stored_name = generate_stored_name()
     final_path = (await run_in_threadpool(ensure_user_storage_dir, current_user.id)) / stored_name
 
@@ -475,29 +487,32 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
         await db.commit()
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=detail)
 
-    if actual_size != session.total_size:
-        await _abort("文件实际大小与声明不符")
-
-    reserved = await _reserved_bytes(db, current_user.id, exclude_upload_id=data.upload_id)
-    if reserved + actual_size > current_user.quota_bytes:
-        await _abort("存储配额不足")
-
-    mime_type, _ = mimetypes.guess_type(session.original_name)
-
-    file_record = File(
-        user_id=current_user.id,
-        original_name=session.original_name,
-        stored_name=stored_name,
-        size=actual_size,
-        mime_type=mime_type or "application/octet-stream",
-        created_at=utcnow(),
-    )
-    db.add(file_record)
-    await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id))
     try:
+        if actual_size != session.total_size:
+            await _abort("文件实际大小与声明不符")
+
+        reserved = await _reserved_bytes(db, current_user.id, exclude_upload_id=data.upload_id)
+        if reserved + actual_size > current_user.quota_bytes:
+            await _abort("存储配额不足")
+
+        mime_type, _ = mimetypes.guess_type(session.original_name)
+
+        file_record = File(
+            user_id=current_user.id,
+            original_name=session.original_name,
+            stored_name=stored_name,
+            size=actual_size,
+            mime_type=mime_type or "application/octet-stream",
+            created_at=utcnow(),
+        )
+        db.add(file_record)
+        await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id))
         await db.commit()
     except Exception:
-        # 提交失败：记录未落库，删掉已合并的文件，避免磁盘上留下不计配额的孤儿文件
+        # 合并之后、提交完成之前的失败（数据库死锁、连接断开、用户被并发删除）：
+        # 记录没有落库，删掉已合并的文件，避免磁盘上留下不计配额的文件。
+        # 会话行和分片还在，客户端可以重试 complete（_abort 已自行清理时这里是无害的重复删除）。
+        # 不捕获 BaseException：请求被取消时提交可能已经成功，此时删文件会留下「有记录没文件」，比残留文件更糟
         await run_in_threadpool(final_path.unlink, missing_ok=True)
         raise
     # 无需 refresh：flush 后 id 已回填，created_at 显式赋值，expire_on_commit=False

@@ -48,6 +48,12 @@ async def cleanup():
     await scan_orphans(cutoff)
 
 
+async def _user_exists(user_id: int) -> bool:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User.id).where(User.id == user_id))
+        return result.first() is not None
+
+
 async def scan_orphans(cutoff):
     """
     孤儿扫描：应用内磁盘删除失败只记日志，残留目录在这里兜底清理。
@@ -86,6 +92,10 @@ async def scan_orphans(cutoff):
         if not entry.is_dir() or not entry.name.isdigit():
             continue
         if int(entry.name) in live_users:
+            continue
+        # live_users 是扫描开始时取的快照：清理临时目录期间新注册并上传的用户不在其中，
+        # 删目录前针对这个 id 再确认一次，避免把刚创建的用户的文件当孤儿删掉
+        if await _user_exists(int(entry.name)):
             continue
         delete_user_storage(int(entry.name))
         removed_users += 1

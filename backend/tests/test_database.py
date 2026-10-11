@@ -7,7 +7,7 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from tests.conftest import TEST_DB_NAME
+from tests.conftest import TEST_DB_NAME, TEST_PASSWORD
 
 VERSIONS_DIR = Path(__file__).resolve().parent.parent / "alembic" / "versions"
 
@@ -59,6 +59,31 @@ def test_alembic_version_is_latest_revision(db):
     heads = revisions - parents
     assert len(heads) == 1, f"迁移有多个 head：{heads}"
     assert _scalar(db, "SELECT version_num FROM alembic_version") == heads.pop()
+
+
+async def _username_collation(session):
+    result = await session.execute(
+        text(
+            "SELECT COLLATION_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = 'users' AND COLUMN_NAME = 'username'"
+        ),
+        {"schema": TEST_DB_NAME},
+    )
+    return result.scalar()
+
+
+def test_collation_matches_docker_deployment(db):
+    # docker compose 由 MYSQL_DATABASE 自动建库，用 MySQL 8.4 的服务器默认规则 utf8mb4_0900_ai_ci（行尾空格有意义）；
+    # 测试库必须同一规则，否则测不到部署环境的真实匹配行为（如 utf8mb4_unicode_ci 会忽略行尾空格）
+    assert db(_username_collation) == "utf8mb4_0900_ai_ci"
+
+
+def test_login_username_with_trailing_space_does_not_match(client, make_user):
+    make_user(username="spacey")
+    ok = client.post("/api/auth/login", json={"username": "spacey", "password": TEST_PASSWORD})
+    assert ok.status_code == 200
+    padded = client.post("/api/auth/login", json={"username": "spacey ", "password": TEST_PASSWORD})
+    assert padded.status_code == 401
 
 
 def test_four_byte_characters_round_trip(client, make_user):

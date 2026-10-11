@@ -8,7 +8,13 @@ def utcnow() -> datetime:
 
 
 def to_naive_utc(value: datetime | None) -> datetime | None:
-    """带时区的时间转为 naive UTC；naive 时间视为已是 UTC"""
+    """
+    带时区的时间转为 naive UTC；naive 时间视为已是 UTC。
+    换算后超出 datetime 能表示的范围（如 9999-12-31T23:59:59-05:00）时抛 ValueError，由调用方转成 400。
+    """
     if value is None or value.tzinfo is None:
         return value
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
+    try:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    except OverflowError:
+        raise ValueError("时间超出可表示的范围")
