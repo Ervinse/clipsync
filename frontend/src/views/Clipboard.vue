@@ -126,7 +126,7 @@ const formatDate = formatRelative
       </div>
     </div>
 
-    <div v-if="saveSuccess" class="save-toast">
+    <div v-if="saveSuccess" class="save-toast" role="status">
       ✓ 保存成功，已同步到所有设备
     </div>
 
@@ -246,27 +246,34 @@ const formatDate = formatRelative
   border-color: #475569;
 }
 
+/* 保存成功提示：固定在窗口底部居中。页头右上角是「查看历史」「保存」按钮，放在顶部会盖住它们；
+   pointer-events: none 让提示条即使盖住别的内容也不挡点击（2 秒后自动消失） */
 .save-toast {
   position: fixed;
-  top: 2rem;
-  right: 2rem;
+  bottom: 2rem;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: max-content;
+  max-width: calc(100vw - 2rem);
   padding: 1rem 1.5rem;
-  background: rgba(34, 211, 238, 0.15);
+  background: #0F172A;
   border: 1px solid #22D3EE;
   border-radius: 8px;
   color: #22D3EE;
   font-size: 0.95rem;
-  animation: slideIn 0.3s ease-out;
+  animation: slideUp 0.3s ease-out;
   z-index: 1000;
+  pointer-events: none;
 }
 
-@keyframes slideIn {
+@keyframes slideUp {
   from {
-    transform: translateX(100%);
+    transform: translateY(1rem);
     opacity: 0;
   }
   to {
-    transform: translateX(0);
+    transform: translateY(0);
     opacity: 1;
   }
 }
