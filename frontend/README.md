@@ -10,6 +10,8 @@
 - **Vue Router**：路由管理
 - **Axios**：HTTP 客户端
 - **WebSocket**：实时通信
+- **@lucide/vue**：图标
+- **@fontsource-variable/inter**：Inter 字体（随前端打包）
 
 ## 开发
 
@@ -69,13 +71,20 @@ src/
 │   ├── AccessCodes.vue # 访问码管理页
 │   ├── Admin.vue   # 管理后台页
 │   └── PublicAccess.vue # 公共访问页
+├── components/     # 多个页面共用的组件
+│   ├── AuthLayout.vue # 登录 / 注册页布局（左侧品牌介绍，窄屏隐藏）
+│   ├── BrandMark.vue  # 品牌标识（图形 + 文字）
+│   ├── ToastHost.vue  # 全局轻提示（窗口底部居中）
+│   └── DialogHost.vue # 全局对话框（确认 / 输入 / 手动复制）
 ├── utils/          # 工具函数
 │   ├── websocket.js # WebSocket 管理器
 │   ├── clipboard.js # 复制到剪贴板（HTTP 下降级为 execCommand）
-│   └── format.js    # 文件大小、UTC 时间格式化
-├── App.vue         # 根组件（全局基础样式与深色主题）
-├── style.css       # 全局样式入口（目前为空，全局样式写在 App.vue）
-└── main.js         # 入口文件（先恢复登录状态再挂载路由，监听跨标签页 token 变化）
+│   ├── format.js    # 文件大小、UTC 时间格式化
+│   ├── toast.js     # 轻提示：toast.success / error / info
+│   └── dialog.js    # 对话框：confirmDialog / promptDialog / copyDialog
+├── App.vue         # 根组件（路由视图 + 提示与对话框宿主，设置图标默认尺寸）
+├── style.css       # 设计变量与全局组件样式（按钮、输入框、表格、弹窗等）
+└── main.js         # 入口文件（引入 Inter 字体与全局样式；先恢复登录状态再挂载路由，监听跨标签页 token 变化）
 ```
 
 ## 功能模块
@@ -186,14 +195,20 @@ server: {
 
 ## 样式规范
 
-- **颜色方案**：深色主题
-  - 背景：`#0B0E14` / `#1E293B`
-  - 边框：`#334155`
-  - 主色：`#38BDF8`（天蓝色）
-  - 文字：`#F8FAFC` / `#CBD5E1` / `#94A3B8`
-- **字体**：`Inter`, `-apple-system`, `BlinkMacSystemFont`
-- **圆角**：`8px` / `12px`
-- **过渡**：`all 0.2s`
+设计变量与共用组件样式都在 `src/style.css`。页面只引用变量（`var(--color-text)` 等）和共用类（`.btn`、`.input`、`.table`、`.modal`……），不写死颜色值；页面自己的 `<style scoped>` 只放该页特有的布局。
+
+- **颜色**：浅色主题，白底、浅灰分层，中性色为主
+  - 主按钮用近黑色（`--color-primary`）；强调色靛蓝（`--color-accent`）只用于链接、焦点框、进度条、开关
+  - 状态色：成功 / 警示 / 危险各有正文色与浅底色（`--color-success`、`--color-success-subtle` 等）
+  - 文字与状态色在白底上满足 4.5:1 对比度
+- **字体**：Inter（`@fontsource-variable/inter` 随前端打包，内网部署也能用，只含拉丁字符）；中文回落到系统字体（苹方、微软雅黑等）；代码与访问码用等宽字体（`.mono`）
+- **字号**：12 / 13 / 14（正文）/ 15 / 17 / 20 / 24（页面标题）/ 32 / 40px
+- **间距**：以 4px 为单位（`--space-1` 至 `--space-16`）
+- **圆角**：6 / 8 / 12px；**阴影**：很轻的 `--shadow-xs` / `--shadow-sm`，弹窗用 `--shadow-lg`
+- **图标**：`@lucide/vue` 细线图标，`App.vue` 统一设默认 16px、线宽 1.75；不用 emoji
+- **提示与确认**：不用浏览器原生 `alert` / `confirm` / `prompt`；操作结果用 `toast`（`utils/toast.js`），确认与输入用 `confirmDialog` / `promptDialog`（`utils/dialog.js`）；复制失败时用 `copyDialog` 显示内容让用户手动复制。危险操作的确认框默认聚焦「取消」
+- **窄屏**：768px 以下侧栏收起为抽屉（顶栏菜单按钮打开），表格可横向滚动；900px 以下登录 / 注册页隐藏左侧品牌介绍
+- **动效**：150ms 颜色过渡；系统开启「减少动态效果」时关闭动画
 
 ## 注意事项
 

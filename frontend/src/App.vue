@@ -1,26 +1,15 @@
 <script setup>
-// 根组件，使用路由视图
+// 根组件：路由视图 + 全局共用的提示条与对话框。全局样式与设计变量在 style.css
+import { setLucideProps } from '@lucide/vue'
+import ToastHost from './components/ToastHost.vue'
+import DialogHost from './components/DialogHost.vue'
+
+// 图标统一的默认尺寸与线宽（单个图标仍可用 :size 覆盖）
+setLucideProps({ size: 16, strokeWidth: 1.75 })
 </script>
 
 <template>
   <router-view />
+  <ToastHost />
+  <DialogHost />
 </template>
-
-<style>
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #0F172A;
-  color: #F8FAFC;
-  min-height: 100vh;
-}
-
-#app {
-  min-height: 100vh;
-}
-</style>

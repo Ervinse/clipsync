@@ -2,6 +2,8 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import router from './router'
 import App from './App.vue'
+// Inter 字体随前端打包（不依赖外网字体服务，内网部署也能用），先于全局样式引入
+import '@fontsource-variable/inter/index.css'
 import './style.css'
 import { useUserStore } from './stores'
 

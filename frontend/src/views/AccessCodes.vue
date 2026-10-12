@@ -1,8 +1,11 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
+import { Plus, Copy, Ban, Link, Clipboard, File, LoaderCircle, X } from '@lucide/vue'
 import { useAccessStore, useFilesStore } from '../stores'
 import { formatDateTime } from '../utils/format'
 import { copyToClipboard } from '../utils/clipboard'
+import toast from '../utils/toast'
+import { confirmDialog, copyDialog } from '../utils/dialog'
 import ws from '../utils/websocket'
 
 const accessStore = useAccessStore()
@@ -29,7 +32,16 @@ onUnmounted(() => {
 // 访问码最长有效期：1 年
 const MAX_EXPIRES_HOURS = 8760
 
+// 常用有效期，点选后填入输入框
+const EXPIRY_PRESETS = [
+  { label: '1 小时', hours: 1 },
+  { label: '1 天', hours: 24 },
+  { label: '7 天', hours: 168 },
+  { label: '永久', hours: 0 },
+]
+
 const showCreateModal = ref(false)
+const isCreating = ref(false)
 const createForm = ref({
   target_type: 'text',
   file_id: null,
@@ -62,54 +74,64 @@ const closeCreateModal = () => {
 }
 
 const handleCreate = async () => {
+  const data = { ...createForm.value }
+
+  // 文件类型必须选择文件
+  if (data.target_type === 'file' && !data.file_id) {
+    toast.error('请选择要分享的文件')
+    return
+  }
+
+  // 文本类型不需要 file_id
+  if (data.target_type === 'text') {
+    delete data.file_id
+  }
+
+  // 后端接收 expires_at（ISO 时间，带时区）；0 或空表示永久有效，最长 8760 小时（后端同样校验）
+  const hours = Number(data.expires_in_hours || 0)
+  if (!Number.isInteger(hours) || hours < 0 || hours > MAX_EXPIRES_HOURS) {
+    toast.error(`有效期必须是 0 到 ${MAX_EXPIRES_HOURS} 之间的整数（小时）`)
+    return
+  }
+  delete data.expires_in_hours
+  data.expires_at = hours > 0
+    ? new Date(Date.now() + hours * 3600 * 1000).toISOString()
+    : null
+
   try {
-    const data = { ...createForm.value }
-
-    // 文件类型必须选择文件
-    if (data.target_type === 'file' && !data.file_id) {
-      alert('请选择要分享的文件')
-      return
-    }
-
-    // 文本类型不需要 file_id
-    if (data.target_type === 'text') {
-      delete data.file_id
-    }
-
-    // 后端接收 expires_at（ISO 时间，带时区）；0 或空表示永久有效，最长 8760 小时（后端同样校验）
-    const hours = Number(data.expires_in_hours || 0)
-    if (!Number.isInteger(hours) || hours < 0 || hours > MAX_EXPIRES_HOURS) {
-      alert(`有效期必须是 0 到 ${MAX_EXPIRES_HOURS} 之间的整数（小时）`)
-      return
-    }
-    delete data.expires_in_hours
-    data.expires_at = hours > 0
-      ? new Date(Date.now() + hours * 3600 * 1000).toISOString()
-      : null
-
+    isCreating.value = true
     await accessStore.createCode(data)
     closeCreateModal()
+    toast.success('访问码已创建')
   } catch (error) {
-    alert('创建失败：' + error.message)
+    toast.error('创建失败：' + error.message)
+  } finally {
+    isCreating.value = false
   }
 }
 
 const handleRevoke = async (code) => {
-  if (!confirm('确定撤销此访问码吗？撤销后链接将失效。')) return
+  const ok = await confirmDialog({
+    title: '撤销这个访问码？',
+    message: '撤销后链接立即失效，无法恢复。',
+    confirmText: '撤销',
+    danger: true,
+  })
+  if (!ok) return
 
   try {
     await accessStore.revokeCode(code.id)
   } catch (error) {
-    alert('撤销失败：' + error.message)
+    toast.error('撤销失败：' + error.message)
   }
 }
 
 // 链接由后端按请求 scheme + host 拼好（access_url），前端不自行拼接
 const copyLink = async (code) => {
   if (await copyToClipboard(code.access_url)) {
-    alert('链接已复制到剪贴板')
+    toast.success('链接已复制')
   } else {
-    prompt('复制失败，请手动复制：', code.access_url)
+    copyDialog({ value: code.access_url })
   }
 }
 
@@ -119,399 +141,375 @@ const getFileName = (fileId) => {
   const file = filesStore.files.find(f => f.id === fileId)
   return file?.original_name || '未知文件'
 }
+
+const statusOf = (code) => {
+  if (code.is_revoked) return { label: '已撤销', cls: '' }
+  if (code.expired) return { label: '已过期', cls: '' }
+  return { label: '有效', cls: 'badge-success' }
+}
 </script>
 
 <template>
-  <div class="access-page">
+  <div class="page">
     <div class="page-header">
       <div>
-        <h2>访问码管理</h2>
-        <p>创建免登录分享链接</p>
+        <h1 class="page-title">访问码</h1>
+        <p class="page-subtitle">生成免登录的分享链接，对方打开链接即可查看文本或下载文件</p>
       </div>
-      <button class="btn-primary" @click="openCreateModal">
-        + 创建访问码
-      </button>
+      <div class="page-actions">
+        <button class="btn btn-primary" @click="openCreateModal">
+          <Plus />
+          创建访问码
+        </button>
+      </div>
     </div>
 
-    <div v-if="accessStore.isLoading" class="loading-state">
-      加载中...
+    <div v-if="accessStore.isLoading" class="loading">
+      <LoaderCircle class="spin" />
+      加载中…
     </div>
 
-    <div v-else-if="accessStore.codes.length === 0" class="empty-state">
-      <div class="empty-icon">🔗</div>
-      <p>还没有创建访问码</p>
-      <button class="btn-secondary" @click="openCreateModal">
+    <div v-else-if="accessStore.codes.length === 0" class="empty">
+      <span class="empty-icon"><Link :size="20" /></span>
+      <p class="empty-title">还没有访问码</p>
+      <p class="empty-text">分享当前文本或某个文件给没有账号的人</p>
+      <button class="btn btn-secondary" @click="openCreateModal">
+        <Plus />
         创建第一个访问码
       </button>
     </div>
 
-    <div v-else class="codes-list">
-      <div
-        v-for="code in accessStore.sortedCodes"
-        :key="code.id"
-        class="code-card"
-      >
-        <div class="code-header">
-          <span class="code-type" :class="code.target_type">
-            {{ code.target_type === 'text' ? '📋 文本' : '📁 文件' }}
-          </span>
-          <span class="code-status" :class="{ expired: code.is_invalid }">
-            {{ code.is_revoked ? '已撤销' : code.expired ? '已过期' : '有效' }}
-          </span>
-        </div>
-
-        <div class="code-body">
-          <div class="code-info">
-            <div class="code-label">访问码</div>
-            <div class="code-value">{{ code.code }}</div>
-          </div>
-
-          <div v-if="code.target_type === 'file'" class="code-info">
-            <div class="code-label">文件</div>
-            <div class="code-value">{{ getFileName(code.file_id) }}</div>
-          </div>
-
-          <div class="code-info">
-            <div class="code-label">过期时间</div>
-            <div class="code-value">{{ formatDate(code.expires_at) }}</div>
-          </div>
-
-          <div class="code-info">
-            <div class="code-label">创建时间</div>
-            <div class="code-value">{{ formatDate(code.created_at) }}</div>
-          </div>
-        </div>
-
-        <div class="code-actions">
-          <button
-            class="btn-secondary"
-            @click="copyLink(code)"
-            :disabled="code.is_invalid"
+    <div v-else class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>内容</th>
+            <th>访问码</th>
+            <th>状态</th>
+            <th>过期时间</th>
+            <th class="col-created">创建时间</th>
+            <th class="cell-actions"><span class="sr-only">操作</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="code in accessStore.sortedCodes"
+            :key="code.id"
+            :class="{ invalid: code.is_invalid }"
           >
-            复制链接
-          </button>
-          <button
-            class="btn-danger"
-            @click="handleRevoke(code)"
-            :disabled="code.is_invalid"
-          >
-            撤销
-          </button>
-        </div>
-      </div>
+            <td>
+              <span class="target">
+                <span class="target-icon">
+                  <Clipboard v-if="code.target_type === 'text'" />
+                  <File v-else />
+                </span>
+                <span class="target-text">
+                  <span class="target-type">{{ code.target_type === 'text' ? '当前文本' : '文件' }}</span>
+                  <span v-if="code.target_type === 'file'" class="target-name" :title="getFileName(code.file_id)">
+                    {{ getFileName(code.file_id) }}
+                  </span>
+                  <span v-else class="target-name">实时指向最新内容</span>
+                </span>
+              </span>
+            </td>
+            <td><span class="code mono">{{ code.code }}</span></td>
+            <td>
+              <span class="badge badge-dot" :class="statusOf(code).cls">{{ statusOf(code).label }}</span>
+            </td>
+            <td class="cell-muted">{{ formatDate(code.expires_at) }}</td>
+            <td class="cell-muted col-created">{{ formatDate(code.created_at) }}</td>
+            <td class="cell-actions">
+              <span class="row-actions">
+                <button
+                  class="btn btn-secondary btn-sm"
+                  :disabled="code.is_invalid"
+                  @click="copyLink(code)"
+                >
+                  <Copy :size="14" />
+                  复制链接
+                </button>
+                <button
+                  class="btn-icon danger"
+                  title="撤销"
+                  aria-label="撤销"
+                  :disabled="code.is_invalid"
+                  @click="handleRevoke(code)"
+                >
+                  <Ban />
+                </button>
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
     <!-- 创建访问码弹窗 -->
-    <div v-if="showCreateModal" class="modal-overlay" @click="closeCreateModal">
-      <div class="modal-content" @click.stop>
-        <h3>创建访问码</h3>
-
-        <div class="form-group">
-          <label>分享类型</label>
-          <select v-model="createForm.target_type">
-            <option value="text">当前文本（实时同步）</option>
-            <option value="file">指定文件</option>
-          </select>
+    <div v-if="showCreateModal" class="modal-overlay" @mousedown.self="closeCreateModal">
+      <form
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-code-title"
+        @submit.prevent="handleCreate"
+        @keydown.esc="closeCreateModal"
+      >
+        <div class="modal-header header-with-close">
+          <div>
+            <h2 id="create-code-title" class="modal-title">创建访问码</h2>
+            <p class="modal-desc">拿到链接的人无需登录即可访问</p>
+          </div>
+          <button type="button" class="btn-icon" aria-label="关闭" @click="closeCreateModal">
+            <X />
+          </button>
         </div>
 
-        <div v-if="createForm.target_type === 'file'" class="form-group">
-          <label>选择文件</label>
-          <select v-model="createForm.file_id">
-            <option :value="null">-- 请选择文件 --</option>
-            <option
-              v-for="file in filesStore.files"
-              :key="file.id"
-              :value="file.id"
-            >
-              {{ file.original_name }}
-            </option>
-          </select>
-        </div>
+        <div class="modal-body">
+          <div class="field">
+            <span class="field-label">分享内容</span>
+            <div class="choice-group" role="radiogroup">
+              <label class="choice" :class="{ active: createForm.target_type === 'text' }">
+                <input v-model="createForm.target_type" type="radio" value="text" class="sr-only" />
+                <Clipboard />
+                <span>
+                  <span class="choice-title">当前文本</span>
+                  <span class="choice-desc">实时同步最新内容</span>
+                </span>
+              </label>
+              <label class="choice" :class="{ active: createForm.target_type === 'file' }">
+                <input v-model="createForm.target_type" type="radio" value="file" class="sr-only" />
+                <File />
+                <span>
+                  <span class="choice-title">指定文件</span>
+                  <span class="choice-desc">分享一个已上传的文件</span>
+                </span>
+              </label>
+            </div>
+          </div>
 
-        <div class="form-group">
-          <label>有效期（小时）</label>
-          <input
-            v-model.number="createForm.expires_in_hours"
-            type="number"
-            min="0"
-            max="8760"
-            placeholder="24"
-          />
-          <div class="form-hint">
-            0 表示永久有效，最长 8760 小时（1 年）
+          <label v-if="createForm.target_type === 'file'" class="field">
+            <span class="field-label">选择文件</span>
+            <select v-model="createForm.file_id" class="select">
+              <option :value="null">请选择文件</option>
+              <option v-for="file in filesStore.files" :key="file.id" :value="file.id">
+                {{ file.original_name }}
+              </option>
+            </select>
+            <span v-if="filesStore.files.length === 0" class="field-hint">还没有上传文件，请先到「文件」页上传</span>
+          </label>
+
+          <div class="field">
+            <label class="field-label" for="expires-hours">有效期</label>
+            <div class="presets">
+              <button
+                v-for="preset in EXPIRY_PRESETS"
+                :key="preset.label"
+                type="button"
+                class="preset"
+                :class="{ active: Number(createForm.expires_in_hours || 0) === preset.hours }"
+                @click="createForm.expires_in_hours = preset.hours"
+              >
+                {{ preset.label }}
+              </button>
+            </div>
+            <span class="input-with-suffix">
+              <input
+                id="expires-hours"
+                v-model.number="createForm.expires_in_hours"
+                class="input"
+                type="number"
+                min="0"
+                :max="MAX_EXPIRES_HOURS"
+                placeholder="24"
+              />
+              <span class="input-suffix">小时</span>
+            </span>
+            <span class="field-hint">0 表示永久有效，最长 8760 小时（1 年）</span>
           </div>
         </div>
 
-        <div class="modal-actions">
-          <button class="btn-secondary" @click="closeCreateModal">
-            取消
-          </button>
-          <button class="btn-primary" @click="handleCreate">
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" @click="closeCreateModal">取消</button>
+          <button type="submit" class="btn btn-primary" :disabled="isCreating">
+            <LoaderCircle v-if="isCreating" class="spin" />
             创建
           </button>
         </div>
-      </div>
+      </form>
     </div>
   </div>
 </template>
 
 <style scoped>
-.access-page {
-  padding: 2rem;
-  max-width: 1400px;
-  margin: 0 auto;
+tr.invalid td {
+  color: var(--color-text-tertiary);
 }
 
-.page-header {
+.target {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 2rem;
-}
-
-.page-header h2 {
-  font-size: 1.75rem;
-  font-weight: 700;
-  color: #F8FAFC;
-  margin-bottom: 0.5rem;
-}
-
-.page-header p {
-  font-size: 0.95rem;
-  color: #94A3B8;
-}
-
-.btn-primary,
-.btn-secondary,
-.btn-danger {
-  padding: 0.75rem 1.5rem;
-  border: none;
-  border-radius: 8px;
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-primary {
-  background: #38BDF8;
-  color: #0F172A;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: #22D3EE;
-  transform: translateY(-1px);
-}
-
-.btn-secondary {
-  background: rgba(148, 163, 184, 0.1);
-  color: #CBD5E1;
-  border: 1px solid #334155;
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: rgba(148, 163, 184, 0.15);
-  border-color: #475569;
-}
-
-.btn-secondary:disabled,
-.btn-danger:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-danger {
-  background: rgba(239, 68, 68, 0.1);
-  color: #FCA5A5;
-  border: 1px solid rgba(239, 68, 68, 0.3);
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.2);
-  border-color: rgba(239, 68, 68, 0.5);
-}
-
-.loading-state,
-.empty-state {
-  text-align: center;
-  padding: 4rem 2rem;
-  color: #64748B;
-}
-
-.empty-icon {
-  font-size: 4rem;
-  margin-bottom: 1rem;
-}
-
-.empty-state p {
-  font-size: 1.1rem;
-  margin-bottom: 1.5rem;
-}
-
-.codes-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-  gap: 1.5rem;
-}
-
-.code-card {
-  padding: 1.5rem;
-  background: #1E293B;
-  border: 1px solid #334155;
-  border-radius: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.code-header {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
 }
 
-.code-type {
-  padding: 0.375rem 0.75rem;
-  border-radius: 6px;
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.code-type.text {
-  background: rgba(56, 189, 248, 0.15);
-  color: #38BDF8;
-  border: 1px solid rgba(56, 189, 248, 0.3);
-}
-
-.code-type.file {
-  background: rgba(249, 115, 22, 0.15);
-  color: #F97316;
-  border: 1px solid rgba(249, 115, 22, 0.3);
-}
-
-.code-status {
-  padding: 0.25rem 0.625rem;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  background: rgba(34, 211, 238, 0.15);
-  color: #22D3EE;
-  border: 1px solid rgba(34, 211, 238, 0.3);
-}
-
-.code-status.expired {
-  background: rgba(100, 116, 139, 0.15);
-  color: #94A3B8;
-  border-color: #475569;
-}
-
-.code-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.code-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.code-label {
-  font-size: 0.8rem;
-  color: #64748B;
-}
-
-.code-value {
-  font-size: 0.95rem;
-  color: #CBD5E1;
-  font-family: 'IBM Plex Sans', monospace;
-}
-
-.code-actions {
-  display: flex;
-  gap: 0.75rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid #334155;
-}
-
-.code-actions button {
-  flex: 1;
-  padding: 0.625rem;
-  font-size: 0.875rem;
-}
-
-/* 弹窗样式 */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
+.target-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-muted);
+  color: var(--color-text-secondary);
 }
 
-.modal-content {
-  width: 90%;
-  max-width: 480px;
-  background: #1E293B;
-  border: 1px solid #334155;
-  border-radius: 12px;
-  padding: 2rem;
-}
-
-.modal-content h3 {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #F8FAFC;
-  margin-bottom: 1.5rem;
-}
-
-.form-group {
-  margin-bottom: 1.5rem;
-}
-
-.form-group label {
-  display: block;
-  font-size: 0.9rem;
-  font-weight: 500;
-  color: #CBD5E1;
-  margin-bottom: 0.5rem;
-}
-
-.form-group input,
-.form-group select {
-  width: 100%;
-  padding: 0.75rem 1rem;
-  background: #0F172A;
-  border: 1px solid #334155;
-  border-radius: 8px;
-  color: #F8FAFC;
-  font-size: 0.95rem;
-  transition: all 0.2s;
-}
-
-.form-group input:focus,
-.form-group select:focus {
-  outline: none;
-  border-color: #38BDF8;
-  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.1);
-}
-
-.form-hint {
-  margin-top: 0.5rem;
-  font-size: 0.85rem;
-  color: #64748B;
-}
-
-.modal-actions {
+.target-text {
   display: flex;
-  gap: 1rem;
-  justify-content: flex-end;
-  margin-top: 2rem;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.target-type {
+  font-weight: 500;
+}
+
+.target-name {
+  max-width: 220px;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.code {
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-muted);
+  color: var(--color-text);
+}
+
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.header-with-close {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.choice-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: border-color var(--duration) var(--ease), background-color var(--duration) var(--ease);
+}
+
+.choice svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.choice:hover {
+  border-color: var(--color-border-hover);
+}
+
+.choice.active {
+  border-color: var(--color-text);
+  box-shadow: 0 0 0 1px var(--color-text);
+  color: var(--color-text);
+}
+
+.choice:focus-within {
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+.choice-title {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.choice-desc {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.preset {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  transition: all var(--duration) var(--ease);
+}
+
+.preset:hover {
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+}
+
+.preset.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-text-inverse);
+}
+
+.input-with-suffix {
+  position: relative;
+  display: block;
+}
+
+.input-with-suffix .input {
+  padding-right: 52px;
+}
+
+.input-suffix {
+  position: absolute;
+  right: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--text-sm);
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+/* 中等宽度时省掉次要的「创建时间」列，表格不必横向滚动 */
+@media (max-width: 1280px) {
+  .col-created {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .choice-group {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
