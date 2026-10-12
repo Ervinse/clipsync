@@ -1,8 +1,11 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { Copy, Download, File, LoaderCircle, TriangleAlert } from '@lucide/vue'
 import api from '../api'
 import { copyToClipboard } from '../utils/clipboard'
+import toast from '../utils/toast'
+import BrandMark from '../components/BrandMark.vue'
 
 const route = useRoute()
 
@@ -37,9 +40,9 @@ onMounted(async () => {
 // HTTP 部署下 navigator.clipboard 不可用，copyToClipboard 会降级
 const copyText = async () => {
   if (await copyToClipboard(data.value)) {
-    alert('文本已复制到剪贴板')
+    toast.success('文本已复制')
   } else {
-    alert('复制失败，请手动选中文本复制')
+    toast.error('复制失败，请手动选中文本复制')
   }
 }
 
@@ -79,235 +82,194 @@ const downloadFile = async () => {
 </script>
 
 <template>
-  <div class="public-access-page">
-    <div class="access-container">
-      <div class="access-header">
-        <h1>ClipSync</h1>
-        <p>分享内容</p>
+  <div class="public">
+    <header class="public-header">
+      <BrandMark :size="24" />
+      <span class="header-note">分享内容</span>
+    </header>
+
+    <main class="public-main">
+      <div v-if="loading" class="loading">
+        <LoaderCircle class="spin" />
+        加载中…
       </div>
 
-      <div v-if="loading" class="loading-state">
-        <div class="spinner"></div>
-        <p>加载中...</p>
-      </div>
-
-      <div v-else-if="error" class="error-state">
-        <div class="error-icon">⚠️</div>
-        <h3>访问失败</h3>
-        <p>{{ error }}</p>
+      <div v-else-if="error" class="state card" role="alert">
+        <span class="state-icon danger"><TriangleAlert :size="20" /></span>
+        <h1 class="state-title">无法访问</h1>
+        <p class="state-text">{{ error }}</p>
+        <p class="state-hint">链接可能已过期或被撤销，请联系分享者重新获取。</p>
       </div>
 
       <!-- 文本内容 -->
-      <div v-else-if="targetType === 'text'" class="content-box">
-        <div class="content-header">
-          <h3>📋 文本内容</h3>
-          <button class="btn-primary" @click="copyText">
-            复制文本
+      <section v-else-if="targetType === 'text'" class="text-card card">
+        <div class="text-header">
+          <div>
+            <h1 class="text-title">分享的文本</h1>
+            <p class="text-meta">{{ (data || '').length.toLocaleString() }} 字符</p>
+          </div>
+          <button class="btn btn-primary" @click="copyText">
+            <Copy />
+            复制全部
           </button>
         </div>
-        <div class="text-content">
-          {{ data }}
-        </div>
-      </div>
+        <pre class="text-body">{{ data }}</pre>
+      </section>
 
       <!-- 文件下载 -->
-      <div v-else-if="targetType === 'file'" class="content-box">
-        <div class="file-info">
-          <div class="file-icon">📄</div>
-          <div class="file-details">
-            <h3>文件访问码</h3>
-            <p class="file-size">点击下方按钮下载（链接失效时会提示错误）</p>
-          </div>
-        </div>
-        <button class="btn-primary btn-large" :disabled="isChecking" @click="downloadFile">
-          {{ isChecking ? '检查中...' : '⬇️ 下载文件' }}
+      <div v-else-if="targetType === 'file'" class="state card">
+        <span class="state-icon"><File :size="20" /></span>
+        <h1 class="state-title">有人向你分享了一个文件</h1>
+        <p class="state-text">点击下方按钮下载；链接失效时会在这里提示。</p>
+        <button class="btn btn-primary btn-lg download-btn" :disabled="isChecking" @click="downloadFile">
+          <LoaderCircle v-if="isChecking" class="spin" />
+          <Download v-else />
+          {{ isChecking ? '检查中…' : '下载文件' }}
         </button>
       </div>
-    </div>
+    </main>
 
-    <div class="access-footer">
-      <p>由 <strong>ClipSync</strong> 提供 | 跨设备剪贴板与文件同步</p>
-    </div>
+    <footer class="public-footer">
+      由 ClipSync 提供 · 跨设备剪贴板与文件同步
+    </footer>
   </div>
 </template>
 
 <style scoped>
-.public-access-page {
-  min-height: 100vh;
+.public {
   display: flex;
   flex-direction: column;
+  min-height: 100vh;
+  background: var(--color-bg-subtle);
+}
+
+.public-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 60px;
+  padding: 0 var(--space-6);
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.header-note {
+  font-size: var(--text-sm);
+  color: var(--color-text-tertiary);
+}
+
+.public-main {
+  flex: 1;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: var(--space-12) var(--space-4);
+}
+
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: var(--space-12) var(--space-6);
+}
+
+.state-icon {
+  display: flex;
   align-items: center;
   justify-content: center;
-  background: #0B0E14;
-  padding: 2rem;
+  width: 44px;
+  height: 44px;
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-muted);
+  color: var(--color-text-secondary);
 }
 
-.access-container {
-  width: 100%;
-  max-width: 680px;
-  background: #1E293B;
-  border: 1px solid #334155;
-  border-radius: 12px;
-  padding: 3rem 2.5rem;
+.state-icon.danger {
+  background: var(--color-danger-subtle);
+  color: var(--color-danger);
 }
 
-.access-header {
-  text-align: center;
-  margin-bottom: 2.5rem;
-}
-
-.access-header h1 {
-  font-size: 2rem;
-  font-weight: 700;
-  color: #F8FAFC;
-  margin-bottom: 0.5rem;
-}
-
-.access-header p {
-  font-size: 0.95rem;
-  color: #94A3B8;
-}
-
-.loading-state {
-  text-align: center;
-  padding: 3rem 0;
-}
-
-.spinner {
-  width: 48px;
-  height: 48px;
-  border: 4px solid #334155;
-  border-top-color: #38BDF8;
-  border-radius: 50%;
-  margin: 0 auto 1.5rem;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.loading-state p {
-  color: #94A3B8;
-  font-size: 0.95rem;
-}
-
-.error-state {
-  text-align: center;
-  padding: 3rem 0;
-}
-
-.error-icon {
-  font-size: 4rem;
-  margin-bottom: 1.5rem;
-}
-
-.error-state h3 {
-  font-size: 1.5rem;
-  color: #F8FAFC;
-  margin-bottom: 0.75rem;
-}
-
-.error-state p {
-  color: #FCA5A5;
-  font-size: 0.95rem;
-}
-
-.content-box {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-.content-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid #334155;
-}
-
-.content-header h3 {
-  font-size: 1.25rem;
+.state-title {
+  font-size: var(--text-xl);
   font-weight: 600;
-  color: #F8FAFC;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
 }
 
-.text-content {
-  padding: 1.5rem;
-  background: #0F172A;
-  border: 1px solid #334155;
-  border-radius: 8px;
-  color: #CBD5E1;
-  font-size: 0.95rem;
+.state-text {
+  margin-top: var(--space-2);
+  font-size: var(--text-base);
+  color: var(--color-text-secondary);
+  word-break: break-word;
+}
+
+.state-hint {
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--color-text-tertiary);
+}
+
+.download-btn {
+  margin-top: var(--space-6);
+  min-width: 200px;
+}
+
+.text-card {
+  overflow: hidden;
+}
+
+.text-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.text-title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.text-meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+
+.text-body {
+  max-height: 60vh;
+  overflow: auto;
+  padding: var(--space-5);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
   line-height: 1.7;
+  color: var(--color-text);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 500px;
-  overflow-y: auto;
 }
 
-.file-info {
-  display: flex;
-  align-items: center;
-  gap: 1.5rem;
-  padding: 2rem;
-  background: #0F172A;
-  border: 1px solid #334155;
-  border-radius: 8px;
-}
-
-.file-icon {
-  font-size: 3.5rem;
-}
-
-.file-details h3 {
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: #F8FAFC;
-  margin-bottom: 0.5rem;
-  word-break: break-word;
-}
-
-.file-size {
-  font-size: 0.9rem;
-  color: #94A3B8;
-}
-
-.btn-primary {
-  padding: 0.75rem 1.5rem;
-  background: #38BDF8;
-  color: #0F172A;
-  border: none;
-  border-radius: 8px;
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-primary:hover {
-  background: #22D3EE;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(56, 189, 248, 0.3);
-}
-
-.btn-primary.btn-large {
-  width: 100%;
-  padding: 1rem 2rem;
-  font-size: 1.1rem;
-}
-
-.access-footer {
-  margin-top: 2rem;
+.public-footer {
+  padding: var(--space-6) var(--space-4);
   text-align: center;
-  color: #64748B;
-  font-size: 0.85rem;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
 }
 
-.access-footer strong {
-  color: #94A3B8;
+@media (max-width: 768px) {
+  .public-header {
+    padding: 0 var(--space-4);
+  }
+
+  .public-main {
+    padding-top: var(--space-6);
+  }
+
+  .text-header {
+    flex-wrap: wrap;
+  }
 }
 </style>

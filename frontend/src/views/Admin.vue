@@ -1,16 +1,31 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
+import {
+  ChartColumn, Users, UserCheck, Ticket, Folder, Settings, File, HardDrive,
+  Plus, Copy, Trash2, Ban, CircleCheck, Pencil, ChevronLeft, ChevronRight,
+  CircleAlert, Info, LoaderCircle, X,
+} from '@lucide/vue'
 import { useAdminStore, useUserStore } from '../stores'
 import { PAGE_SIZE } from '../stores/admin'
 import { formatDateTime, formatSize } from '../utils/format'
 import { copyToClipboard } from '../utils/clipboard'
+import toast from '../utils/toast'
+import { confirmDialog, promptDialog, copyDialog } from '../utils/dialog'
 
 // 访问权限由路由守卫（meta.requiresAdmin）拦截，后端接口再做最终校验
 const adminStore = useAdminStore()
 const userStore = useUserStore()
 
+const TABS = [
+  { key: 'stats', label: '概览', icon: ChartColumn },
+  { key: 'users', label: '用户', icon: Users },
+  { key: 'invites', label: '邀请码', icon: Ticket },
+  { key: 'files', label: '文件', icon: Folder },
+  { key: 'settings', label: '设置', icon: Settings },
+]
 const activeTab = ref('stats')
 const showCreateInviteModal = ref(false)
+const isCreatingInvite = ref(false)
 // 邀请码一次性使用，后端只接收 expires_at
 const inviteForm = ref({
   expires_in_days: 7,
@@ -31,11 +46,17 @@ onMounted(async () => {
 
   const failed = tasks.filter((_, i) => results[i].status === 'rejected').map(([name]) => name)
   if (failed.length > 0) {
-    alert(`部分数据加载失败：${failed.join('、')}`)
+    toast.error(`部分数据加载失败：${failed.join('、')}`)
   }
 })
 
 const stats = computed(() => adminStore.stats || {})
+const STAT_CARDS = computed(() => [
+  { label: '用户总数', value: stats.value.total_users || 0, icon: Users },
+  { label: '活跃用户', value: stats.value.active_users || 0, icon: UserCheck },
+  { label: '文件总数', value: stats.value.total_files || 0, icon: File },
+  { label: '总存储', value: formatSize(stats.value.total_storage_bytes || 0), icon: HardDrive },
+])
 
 // 系统设置：后端 GET 对 admin 及以上开放，PATCH 仅 superadmin；目前只有这两项存库
 const settingsForm = ref({
@@ -55,17 +76,17 @@ const syncSettingsForm = () => {
 
 const handleSaveSettings = async () => {
   if (!userStore.isSuperAdmin) {
-    alert('仅超级管理员可修改系统设置')
+    toast.error('仅超级管理员可修改系统设置')
     return
   }
   // 设置没加载成功时，表单里是初始默认值而不是真实设置，此时保存会把真实设置改成默认值
   if (!adminStore.settings) {
-    alert('当前设置未能加载，请刷新页面后再保存')
+    toast.error('当前设置未能加载，请刷新页面后再保存')
     return
   }
   const quotaMB = Number(settingsForm.value.default_quota_mb)
   if (!Number.isInteger(quotaMB) || quotaMB < 0) {
-    alert('默认配额必须是非负整数（MB）')
+    toast.error('默认配额必须是非负整数（MB）')
     return
   }
   try {
@@ -75,9 +96,9 @@ const handleSaveSettings = async () => {
       default_quota_bytes: quotaMB * 1024 * 1024,
     })
     syncSettingsForm()
-    alert('系统设置已保存')
+    toast.success('系统设置已保存')
   } catch (error) {
-    alert('保存失败：' + error.message)
+    toast.error('保存失败：' + error.message)
   } finally {
     isSavingSettings.value = false
   }
@@ -92,6 +113,7 @@ const openCreateInviteModal = () => {
 
 const handleCreateInvite = async () => {
   try {
+    isCreatingInvite.value = true
     // 0 或空表示永久有效；其余换算为带时区的 ISO 时间
     const days = Number(inviteForm.value.expires_in_days)
     await adminStore.createInviteCode({
@@ -100,69 +122,104 @@ const handleCreateInvite = async () => {
         : null,
     })
     showCreateInviteModal.value = false
-    alert('邀请码创建成功')
+    toast.success('邀请码已创建')
   } catch (error) {
-    alert('创建失败：' + error.message)
+    toast.error('创建失败：' + error.message)
+  } finally {
+    isCreatingInvite.value = false
   }
 }
 
 const handleDeleteInvite = async (id) => {
-  if (!confirm('确定删除此邀请码吗？')) return
+  const ok = await confirmDialog({
+    title: '删除这个邀请码？',
+    message: '删除后该邀请码无法再用于注册。',
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) return
 
   try {
     await adminStore.deleteInviteCode(id)
   } catch (error) {
-    alert('删除失败：' + error.message)
+    toast.error('删除失败：' + error.message)
   }
 }
 
 const handleToggleUserStatus = async (user) => {
   if (!userStore.isSuperAdmin) {
-    alert('仅超级管理员可执行此操作')
+    toast.error('仅超级管理员可执行此操作')
     return
+  }
+
+  // 禁用会立即断开该用户的连接，先确认；启用直接执行
+  if (user.is_active) {
+    const ok = await confirmDialog({
+      title: `禁用用户「${user.username}」？`,
+      message: '禁用后该用户无法登录，已打开的页面会立即断开。数据会保留，之后可以重新启用。',
+      confirmText: '禁用',
+      danger: true,
+    })
+    if (!ok) return
   }
 
   try {
     await adminStore.updateUserStatus(user.id, !user.is_active)
   } catch (error) {
-    alert('操作失败：' + error.message)
+    toast.error('操作失败：' + error.message)
   }
 }
 
 const handleUpdateQuota = async (user) => {
   if (!userStore.isSuperAdmin) {
-    alert('仅超级管理员可执行此操作')
+    toast.error('仅超级管理员可执行此操作')
     return
   }
 
-  const input = prompt('请输入新配额（MB）', Math.round(user.quota_bytes / 1024 / 1024))
+  const input = await promptDialog({
+    title: `修改「${user.username}」的配额`,
+    message: `当前已使用 ${formatSize(user.used_bytes || 0)}。`,
+    label: '新配额',
+    defaultValue: Math.round(user.quota_bytes / 1024 / 1024),
+    inputType: 'number',
+    suffix: 'MB',
+    confirmText: '保存',
+  })
   if (input === null || input.trim() === '') return
   // 与系统设置同样的校验：非负整数（MB）
   const quotaMB = Number(input.trim())
   if (!Number.isInteger(quotaMB) || quotaMB < 0) {
-    alert('配额必须是非负整数（MB）')
+    toast.error('配额必须是非负整数（MB）')
     return
   }
 
   try {
     await adminStore.updateUserQuota(user.id, quotaMB * 1024 * 1024)
+    toast.success('配额已更新')
   } catch (error) {
-    alert('更新失败：' + error.message)
+    toast.error('更新失败：' + error.message)
   }
 }
 
 const handleDeleteUser = async (user) => {
   if (!userStore.isSuperAdmin) {
-    alert('仅超级管理员可执行此操作')
+    toast.error('仅超级管理员可执行此操作')
     return
   }
 
-  if (!confirm(`确定删除用户 "${user.username}" 吗？此操作不可撤销。`)) return
+  const ok = await confirmDialog({
+    title: `删除用户「${user.username}」？`,
+    message: '该用户的文本、历史、文件和访问码会被全部删除，此操作不可撤销。',
+    confirmText: '删除用户',
+    danger: true,
+  })
+  if (!ok) return
 
   try {
     await adminStore.deleteUser(user.id)
+    toast.success('用户已删除')
   } catch (error) {
-    alert('删除失败：' + error.message)
+    toast.error('删除失败：' + error.message)
   }
 }
 
@@ -173,7 +230,20 @@ const inviteStatus = (invite) => {
   if (invite.expires_at && new Date(invite.expires_at + 'Z').getTime() <= Date.now()) return 'expired'
   return 'available'
 }
-const INVITE_STATUS_LABEL = { used: '已使用', expired: '已过期', available: '可用' }
+const INVITE_STATUS = {
+  used: { label: '已使用', cls: '' },
+  expired: { label: '已过期', cls: 'badge-warning' },
+  available: { label: '可用', cls: 'badge-success' },
+}
+
+const ROLE_LABEL = { superadmin: '超级管理员', admin: '管理员', user: '普通用户' }
+const ROLE_CLASS = { superadmin: 'badge-accent', admin: 'badge-accent', user: '' }
+
+// 用户行里的用量条：配额为 0 时按已满处理
+const usagePercent = (user) => {
+  if (!user.quota_bytes) return user.used_bytes ? 100 : 0
+  return Math.min(100, Math.round(((user.used_bytes || 0) / user.quota_bytes) * 100))
+}
 
 // 分页：skip 为当前页起点
 const pageInfo = (skip, total) => ({
@@ -189,14 +259,14 @@ const gotoUsersPage = async (delta) => {
   try {
     await adminStore.fetchUsers(Math.max(0, adminStore.usersSkip + delta * PAGE_SIZE))
   } catch (error) {
-    alert('加载失败：' + error.message)
+    toast.error('加载失败：' + error.message)
   }
 }
 const gotoFilesPage = async (delta) => {
   try {
     await adminStore.fetchFiles(Math.max(0, adminStore.filesSkip + delta * PAGE_SIZE))
   } catch (error) {
-    alert('加载失败：' + error.message)
+    toast.error('加载失败：' + error.message)
   }
 }
 
@@ -206,712 +276,601 @@ const formatDate = (value) => formatDateTime(value, '永久有效', false)
 // HTTP 部署下 navigator.clipboard 不可用，copyToClipboard 会降级
 const copyInviteCode = async (code) => {
   if (await copyToClipboard(code)) {
-    alert('邀请码已复制')
+    toast.success('邀请码已复制')
   } else {
-    prompt('复制失败，请手动复制：', code)
+    copyDialog({ value: code })
   }
 }
 </script>
 
 <template>
-  <div class="admin-page">
+  <div class="page">
     <div class="page-header">
       <div>
-        <h2>管理后台</h2>
-        <p>系统管理与监控</p>
+        <h1 class="page-title">管理后台</h1>
+        <p class="page-subtitle">用户、邀请码与系统设置</p>
       </div>
     </div>
 
-    <div class="tabs">
+    <div class="tabs" role="tablist">
       <button
+        v-for="tab in TABS"
+        :key="tab.key"
         class="tab"
-        :class="{ active: activeTab === 'stats' }"
-        @click="activeTab = 'stats'"
+        :class="{ active: activeTab === tab.key }"
+        role="tab"
+        :aria-selected="activeTab === tab.key"
+        @click="activeTab = tab.key"
       >
-        📊 统计
-      </button>
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'users' }"
-        @click="activeTab = 'users'"
-      >
-        👥 用户
-      </button>
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'invites' }"
-        @click="activeTab = 'invites'"
-      >
-        🎫 邀请码
-      </button>
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'files' }"
-        @click="activeTab = 'files'"
-      >
-        📁 文件
-      </button>
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'settings' }"
-        @click="activeTab = 'settings'"
-      >
-        ⚙️ 设置
+        <component :is="tab.icon" />
+        {{ tab.label }}
       </button>
     </div>
 
-    <!-- 统计面板 -->
-    <div v-if="activeTab === 'stats'" class="tab-content">
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-icon">👥</div>
-          <div class="stat-value">{{ stats.total_users || 0 }}</div>
-          <div class="stat-label">总用户数</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">✅</div>
-          <div class="stat-value">{{ stats.active_users || 0 }}</div>
-          <div class="stat-label">活跃用户</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">📁</div>
-          <div class="stat-value">{{ stats.total_files || 0 }}</div>
-          <div class="stat-label">文件总数</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">💾</div>
-          <div class="stat-value">{{ formatSize(stats.total_storage_bytes || 0) }}</div>
-          <div class="stat-label">总存储</div>
+    <!-- 概览 -->
+    <div v-if="activeTab === 'stats'" class="tab-panel">
+      <div class="stat-grid">
+        <div v-for="card in STAT_CARDS" :key="card.label" class="stat-card card">
+          <div class="stat-head">
+            <span class="stat-label">{{ card.label }}</span>
+            <component :is="card.icon" class="stat-icon" />
+          </div>
+          <div class="stat-value">{{ card.value }}</div>
         </div>
       </div>
     </div>
 
     <!-- 用户管理 -->
-    <div v-if="activeTab === 'users'" class="tab-content">
-      <div class="users-table">
-        <table>
+    <div v-if="activeTab === 'users'" class="tab-panel">
+      <div class="table-wrap">
+        <table class="table">
           <thead>
             <tr>
-              <th>用户名</th>
+              <th>用户</th>
               <th>角色</th>
-              <th>配额</th>
-              <th>使用</th>
+              <th>存储使用</th>
               <th>状态</th>
               <th>注册时间</th>
-              <th v-if="userStore.isSuperAdmin">操作</th>
+              <th v-if="userStore.isSuperAdmin" class="cell-actions"><span class="sr-only">操作</span></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="user in adminStore.users" :key="user.id">
-              <td>{{ user.username }}</td>
               <td>
-                <span class="role-badge" :class="user.role">
-                  {{ user.role === 'superadmin' ? '超管' : user.role === 'admin' ? '管理' : '普通' }}
+                <span class="user-cell">
+                  <span class="avatar" aria-hidden="true">{{ user.username.slice(0, 1).toUpperCase() }}</span>
+                  <span class="user-name">{{ user.username }}</span>
                 </span>
               </td>
-              <td>{{ formatSize(user.quota_bytes) }}</td>
-              <td>{{ formatSize(user.used_bytes || 0) }}</td>
               <td>
-                <span class="status-badge" :class="{ active: user.is_active }">
-                  {{ user.is_active ? '正常' : '禁用' }}
+                <span class="badge" :class="ROLE_CLASS[user.role]">{{ ROLE_LABEL[user.role] || user.role }}</span>
+              </td>
+              <td>
+                <span class="usage">
+                  <span class="usage-text">{{ formatSize(user.used_bytes || 0) }} / {{ formatSize(user.quota_bytes) }}</span>
+                  <span class="progress usage-bar">
+                    <span
+                      class="progress-fill"
+                      :class="{ warning: usagePercent(user) >= 80 && usagePercent(user) < 95, danger: usagePercent(user) >= 95 }"
+                      :style="{ width: usagePercent(user) + '%' }"
+                    ></span>
+                  </span>
                 </span>
               </td>
-              <td>{{ formatDate(user.created_at) }}</td>
-              <td v-if="userStore.isSuperAdmin">
-                <div class="action-buttons">
-                  <button class="btn-icon" title="修改配额" @click="handleUpdateQuota(user)">
-                    💾
+              <td>
+                <span class="badge badge-dot" :class="user.is_active ? 'badge-success' : 'badge-danger'">
+                  {{ user.is_active ? '正常' : '已禁用' }}
+                </span>
+              </td>
+              <td class="cell-muted">{{ formatDate(user.created_at) }}</td>
+              <td v-if="userStore.isSuperAdmin" class="cell-actions">
+                <span class="row-actions">
+                  <button class="btn-icon" title="修改配额" aria-label="修改配额" @click="handleUpdateQuota(user)">
+                    <Pencil />
                   </button>
                   <!-- superadmin 之间互不可禁用 / 删除（后端返回 403），按钮不显示 -->
                   <button
                     v-if="user.role !== 'superadmin'"
                     class="btn-icon"
                     :title="user.is_active ? '禁用' : '启用'"
+                    :aria-label="user.is_active ? '禁用' : '启用'"
                     @click="handleToggleUserStatus(user)"
                   >
-                    {{ user.is_active ? '🚫' : '✅' }}
+                    <Ban v-if="user.is_active" />
+                    <CircleCheck v-else />
                   </button>
                   <button
                     v-if="user.role !== 'superadmin'"
-                    class="btn-icon btn-danger"
+                    class="btn-icon danger"
                     title="删除"
+                    aria-label="删除"
                     @click="handleDeleteUser(user)"
                   >
-                    🗑️
+                    <Trash2 />
                   </button>
-                </div>
+                </span>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
       <div v-if="usersPage.pages > 1" class="pagination">
-        <button class="btn-secondary" :disabled="!usersPage.hasPrev" @click="gotoUsersPage(-1)">上一页</button>
         <span>第 {{ usersPage.page }} / {{ usersPage.pages }} 页，共 {{ adminStore.usersTotal }} 个用户</span>
-        <button class="btn-secondary" :disabled="!usersPage.hasNext" @click="gotoUsersPage(1)">下一页</button>
+        <span class="pagination-buttons">
+          <button class="btn btn-secondary btn-sm" :disabled="!usersPage.hasPrev" @click="gotoUsersPage(-1)">
+            <ChevronLeft :size="14" />上一页
+          </button>
+          <button class="btn btn-secondary btn-sm" :disabled="!usersPage.hasNext" @click="gotoUsersPage(1)">
+            下一页<ChevronRight :size="14" />
+          </button>
+        </span>
       </div>
     </div>
 
     <!-- 邀请码管理 -->
-    <div v-if="activeTab === 'invites'" class="tab-content">
-      <div class="invite-header">
-        <button class="btn-primary" @click="openCreateInviteModal">
-          + 创建邀请码
+    <div v-if="activeTab === 'invites'" class="tab-panel">
+      <div class="panel-toolbar">
+        <p class="toolbar-text">邀请码只能使用一次，注册时填写</p>
+        <button class="btn btn-primary" @click="openCreateInviteModal">
+          <Plus />
+          创建邀请码
         </button>
       </div>
 
-      <div class="invites-grid">
-        <div
-          v-for="invite in adminStore.inviteCodes"
-          :key="invite.id"
-          class="invite-card"
-        >
-          <div class="invite-code">{{ invite.code }}</div>
-          <div class="invite-info">
-            <div class="info-row">
-              <span>状态</span>
-              <span>{{ INVITE_STATUS_LABEL[inviteStatus(invite)] }}</span>
-            </div>
-            <div class="info-row">
-              <span>过期时间</span>
-              <span>{{ formatDate(invite.expires_at) }}</span>
-            </div>
-            <div v-if="invite.used_by" class="info-row">
-              <span>使用者</span>
-              <span>{{ invite.used_by_username || invite.used_by }}</span>
-            </div>
-          </div>
-          <div class="invite-actions">
-            <button class="btn-secondary" @click="copyInviteCode(invite.code)">
-              复制
-            </button>
-            <!-- 已使用的邀请码后端禁止删除（409），按钮不显示 -->
-            <button
-              v-if="inviteStatus(invite) !== 'used'"
-              class="btn-danger"
-              @click="handleDeleteInvite(invite.id)"
-            >
-              删除
-            </button>
-          </div>
-        </div>
+      <div v-if="adminStore.inviteCodes.length === 0" class="empty">
+        <span class="empty-icon"><Ticket :size="20" /></span>
+        <p class="empty-title">还没有邀请码</p>
+        <p class="empty-text">创建邀请码后发给要注册的人</p>
+      </div>
+
+      <div v-else class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>邀请码</th>
+              <th>状态</th>
+              <th>过期时间</th>
+              <th>使用者</th>
+              <th class="cell-actions"><span class="sr-only">操作</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="invite in adminStore.inviteCodes" :key="invite.id">
+              <td><span class="code mono">{{ invite.code }}</span></td>
+              <td>
+                <span class="badge badge-dot" :class="INVITE_STATUS[inviteStatus(invite)].cls">
+                  {{ INVITE_STATUS[inviteStatus(invite)].label }}
+                </span>
+              </td>
+              <td class="cell-muted">{{ formatDate(invite.expires_at) }}</td>
+              <td class="cell-muted">{{ invite.used_by ? (invite.used_by_username || invite.used_by) : '—' }}</td>
+              <td class="cell-actions">
+                <span class="row-actions">
+                  <button class="btn btn-secondary btn-sm" @click="copyInviteCode(invite.code)">
+                    <Copy :size="14" />
+                    复制
+                  </button>
+                  <!-- 已使用的邀请码后端禁止删除（409），按钮不显示 -->
+                  <button
+                    v-if="inviteStatus(invite) !== 'used'"
+                    class="btn-icon danger"
+                    title="删除"
+                    aria-label="删除"
+                    @click="handleDeleteInvite(invite.id)"
+                  >
+                    <Trash2 />
+                  </button>
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
     <!-- 文件元数据（admin 及以上；安全红线：只展示元数据，无下载入口） -->
-    <div v-if="activeTab === 'files'" class="tab-content">
-      <div class="files-table">
-        <table>
+    <div v-if="activeTab === 'files'" class="tab-panel">
+      <div class="alert alert-info panel-note">
+        <Info />
+        <span>这里只显示文件的元数据，管理员无法查看或下载其他用户的文件内容。</span>
+      </div>
+      <div v-if="adminStore.files.length === 0" class="empty">
+        <span class="empty-icon"><Folder :size="20" /></span>
+        <p class="empty-title">还没有文件</p>
+        <p class="empty-text">用户上传的文件会在这里列出</p>
+      </div>
+      <div v-else class="table-wrap">
+        <table class="table">
           <thead>
             <tr>
               <th>文件名</th>
               <th>大小</th>
-              <th>用户</th>
+              <th>所属用户</th>
               <th>上传时间</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="file in adminStore.files" :key="file.id">
-              <td>{{ file.original_name }}</td>
-              <td>{{ formatSize(file.size) }}</td>
+              <td><span class="file-name" :title="file.original_name">{{ file.original_name }}</span></td>
+              <td class="cell-muted num">{{ formatSize(file.size) }}</td>
               <td>{{ file.username }}</td>
-              <td>{{ formatDate(file.created_at) }}</td>
+              <td class="cell-muted">{{ formatDate(file.created_at) }}</td>
             </tr>
           </tbody>
         </table>
       </div>
       <div v-if="filesPage.pages > 1" class="pagination">
-        <button class="btn-secondary" :disabled="!filesPage.hasPrev" @click="gotoFilesPage(-1)">上一页</button>
         <span>第 {{ filesPage.page }} / {{ filesPage.pages }} 页，共 {{ adminStore.filesTotal }} 个文件</span>
-        <button class="btn-secondary" :disabled="!filesPage.hasNext" @click="gotoFilesPage(1)">下一页</button>
+        <span class="pagination-buttons">
+          <button class="btn btn-secondary btn-sm" :disabled="!filesPage.hasPrev" @click="gotoFilesPage(-1)">
+            <ChevronLeft :size="14" />上一页
+          </button>
+          <button class="btn btn-secondary btn-sm" :disabled="!filesPage.hasNext" @click="gotoFilesPage(1)">
+            下一页<ChevronRight :size="14" />
+          </button>
+        </span>
       </div>
     </div>
 
     <!-- 系统设置（admin 只读，superadmin 可修改；后端为最终防线） -->
-    <div v-if="activeTab === 'settings'" class="tab-content">
-      <div class="settings-panel">
-        <div v-if="!userStore.isSuperAdmin" class="settings-hint">
-          仅超级管理员可修改系统设置，当前为只读。
+    <div v-if="activeTab === 'settings'" class="tab-panel">
+      <form class="settings card" @submit.prevent="handleSaveSettings">
+        <div v-if="!adminStore.settings" class="alert alert-warning">
+          <CircleAlert />
+          <span>当前设置未能加载，下面显示的不是真实设置，无法保存。请刷新页面重试。</span>
+        </div>
+        <div v-else-if="!userStore.isSuperAdmin" class="alert alert-info">
+          <Info />
+          <span>仅超级管理员可修改系统设置，当前为只读。</span>
         </div>
 
-        <div class="form-group">
-          <label class="checkbox-label">
+        <div class="setting-row">
+          <div class="setting-text">
+            <span class="setting-title">开放注册</span>
+            <span class="setting-desc">关闭后即使持有有效邀请码也无法注册</span>
+          </div>
+          <label class="switch">
             <input
               v-model="settingsForm.registration_enabled"
               type="checkbox"
               :disabled="!userStore.isSuperAdmin"
+              aria-label="开放注册"
             />
-            开放注册（关闭后即使持有有效邀请码也无法注册）
+            <span class="switch-track"></span>
           </label>
         </div>
 
-        <div class="form-group">
-          <label>新用户默认配额（MB）</label>
-          <input
-            v-model.number="settingsForm.default_quota_mb"
-            type="number"
-            min="0"
-            :disabled="!userStore.isSuperAdmin"
-          />
-          <div class="form-hint">只影响之后注册的用户；已有用户的配额在「用户」页单独修改</div>
+        <div class="setting-row">
+          <div class="setting-text">
+            <label class="setting-title" for="default-quota">新用户默认配额</label>
+            <span class="setting-desc">只影响之后注册的用户；已有用户的配额在「用户」页单独修改</span>
+          </div>
+          <span class="input-with-suffix quota-input">
+            <input
+              id="default-quota"
+              v-model.number="settingsForm.default_quota_mb"
+              class="input"
+              type="number"
+              min="0"
+              :disabled="!userStore.isSuperAdmin"
+            />
+            <span class="input-suffix">MB</span>
+          </span>
         </div>
 
-        <div class="form-hint">
+        <p class="settings-note">
           单文件上限、分片大小、历史保留条数等由 backend/.env 配置，需重启后端生效，不在此修改。
-        </div>
+        </p>
 
-        <div v-if="!adminStore.settings" class="settings-hint">
-          当前设置未能加载，下面显示的不是真实设置，无法保存。请刷新页面重试。
-        </div>
-
-        <div v-if="userStore.isSuperAdmin" class="modal-actions">
+        <div v-if="userStore.isSuperAdmin" class="settings-footer">
           <button
-            class="btn-primary"
+            type="submit"
+            class="btn btn-primary"
             :disabled="isSavingSettings || !adminStore.settings"
-            @click="handleSaveSettings"
           >
-            {{ isSavingSettings ? '保存中...' : '保存设置' }}
+            <LoaderCircle v-if="isSavingSettings" class="spin" />
+            {{ isSavingSettings ? '保存中…' : '保存设置' }}
           </button>
         </div>
-      </div>
+      </form>
     </div>
 
     <!-- 创建邀请码弹窗 -->
-    <div v-if="showCreateInviteModal" class="modal-overlay" @click="showCreateInviteModal = false">
-      <div class="modal-content" @click.stop>
-        <h3>创建邀请码</h3>
-
-        <div class="form-group">
-          <label>有效期（天）</label>
-          <input
-            v-model.number="inviteForm.expires_in_days"
-            type="number"
-            min="0"
-            placeholder="7"
-          />
-          <div class="form-hint">0 表示永久有效</div>
-        </div>
-
-        <div class="modal-actions">
-          <button class="btn-secondary" @click="showCreateInviteModal = false">
-            取消
+    <div v-if="showCreateInviteModal" class="modal-overlay" @mousedown.self="showCreateInviteModal = false">
+      <form
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-invite-title"
+        @submit.prevent="handleCreateInvite"
+        @keydown.esc="showCreateInviteModal = false"
+      >
+        <div class="modal-header header-with-close">
+          <div>
+            <h2 id="create-invite-title" class="modal-title">创建邀请码</h2>
+            <p class="modal-desc">每个邀请码只能注册一个账号</p>
+          </div>
+          <button type="button" class="btn-icon" aria-label="关闭" @click="showCreateInviteModal = false">
+            <X />
           </button>
-          <button class="btn-primary" @click="handleCreateInvite">
+        </div>
+        <div class="modal-body">
+          <label class="field">
+            <span class="field-label">有效期</span>
+            <span class="input-with-suffix">
+              <input
+                v-model.number="inviteForm.expires_in_days"
+                class="input"
+                type="number"
+                min="0"
+                placeholder="7"
+              />
+              <span class="input-suffix">天</span>
+            </span>
+            <span class="field-hint">0 表示永久有效</span>
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" @click="showCreateInviteModal = false">取消</button>
+          <button type="submit" class="btn btn-primary" :disabled="isCreatingInvite">
+            <LoaderCircle v-if="isCreatingInvite" class="spin" />
             创建
           </button>
         </div>
-      </div>
+      </form>
     </div>
   </div>
 </template>
 
 <style scoped>
-.admin-page {
-  padding: 2rem;
-  max-width: 1400px;
-  margin: 0 auto;
-}
-
-.page-header {
-  margin-bottom: 2rem;
-}
-
-.page-header h2 {
-  font-size: 1.75rem;
-  font-weight: 700;
-  color: #F8FAFC;
-  margin-bottom: 0.5rem;
-}
-
-.page-header p {
-  font-size: 0.95rem;
-  color: #94A3B8;
-}
-
-.tabs {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 2rem;
-  border-bottom: 1px solid #334155;
-}
-
-.tab {
-  padding: 0.875rem 1.5rem;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: #94A3B8;
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.tab:hover {
-  color: #CBD5E1;
-}
-
-.tab.active {
-  color: #38BDF8;
-  border-bottom-color: #38BDF8;
-}
-
-.tab-content {
-  animation: fadeIn 0.3s;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.stats-grid {
+.stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 1.5rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-4);
 }
 
 .stat-card {
-  padding: 2rem;
-  background: #1E293B;
-  border: 1px solid #334155;
-  border-radius: 12px;
-  text-align: center;
+  padding: var(--space-5);
 }
 
-.stat-icon {
-  font-size: 3rem;
-  margin-bottom: 1rem;
-}
-
-.stat-value {
-  font-size: 2rem;
-  font-weight: 700;
-  color: #F8FAFC;
-  margin-bottom: 0.5rem;
+.stat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .stat-label {
-  font-size: 0.9rem;
-  color: #94A3B8;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text-secondary);
 }
 
-.users-table,
-.files-table {
-  background: #1E293B;
-  border: 1px solid #334155;
-  border-radius: 12px;
+.stat-icon {
+  color: var(--color-text-tertiary);
+}
+
+.stat-value {
+  margin-top: var(--space-3);
+  font-size: var(--text-3xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.user-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--color-bg-muted);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.user-name {
+  font-weight: 500;
+}
+
+.usage {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+}
+
+.usage-text {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-bar {
+  height: 4px;
+}
+
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.code {
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-muted);
+  color: var(--color-text);
+}
+
+.file-name {
+  display: inline-block;
+  max-width: 360px;
   overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
 }
 
-table {
-  width: 100%;
-  border-collapse: collapse;
+.num {
+  font-variant-numeric: tabular-nums;
 }
 
-thead {
-  background: #0F172A;
-}
-
-th {
-  padding: 1rem;
-  text-align: left;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: #94A3B8;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-td {
-  padding: 1rem;
-  border-top: 1px solid #334155;
-  color: #CBD5E1;
-  font-size: 0.9rem;
-}
-
-.role-badge,
-.status-badge {
-  padding: 0.25rem 0.625rem;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.role-badge.superadmin {
-  background: rgba(249, 115, 22, 0.15);
-  color: #F97316;
-  border: 1px solid rgba(249, 115, 22, 0.3);
-}
-
-.role-badge.admin {
-  background: rgba(56, 189, 248, 0.15);
-  color: #38BDF8;
-  border: 1px solid rgba(56, 189, 248, 0.3);
-}
-
-.role-badge.user {
-  background: rgba(148, 163, 184, 0.15);
-  color: #94A3B8;
-  border: 1px solid #475569;
-}
-
-.status-badge {
-  background: rgba(239, 68, 68, 0.15);
-  color: #FCA5A5;
-  border: 1px solid rgba(239, 68, 68, 0.3);
-}
-
-.status-badge.active {
-  background: rgba(34, 211, 238, 0.15);
-  color: #22D3EE;
-  border: 1px solid rgba(34, 211, 238, 0.3);
-}
-
-.action-buttons {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.btn-icon {
-  width: 32px;
-  height: 32px;
+.panel-toolbar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: rgba(148, 163, 184, 0.1);
-  border: 1px solid #334155;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-size: 1rem;
-}
-
-.btn-icon:hover {
-  background: rgba(56, 189, 248, 0.15);
-  border-color: #38BDF8;
-}
-
-.btn-icon.btn-danger:hover {
-  background: rgba(239, 68, 68, 0.15);
-  border-color: rgba(239, 68, 68, 0.5);
-}
-
-.invite-header {
-  margin-bottom: 1.5rem;
-}
-
-.invites-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 1.5rem;
-}
-
-.invite-card {
-  padding: 1.5rem;
-  background: #1E293B;
-  border: 1px solid #334155;
-  border-radius: 12px;
-}
-
-.invite-code {
-  padding: 0.75rem;
-  background: #0F172A;
-  border: 1px solid #334155;
-  border-radius: 8px;
-  font-family: 'IBM Plex Sans', monospace;
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: #38BDF8;
-  text-align: center;
-  margin-bottom: 1rem;
-}
-
-.invite-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.625rem;
-  margin-bottom: 1rem;
-}
-
-.info-row {
-  display: flex;
   justify-content: space-between;
-  font-size: 0.85rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
-.info-row span:first-child {
-  color: #94A3B8;
+.toolbar-text {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
 }
 
-.info-row span:last-child {
-  color: #CBD5E1;
-  font-weight: 500;
-}
-
-.invite-actions {
-  display: flex;
-  gap: 0.75rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid #334155;
-}
-
-.btn-primary,
-.btn-secondary,
-.btn-danger {
-  padding: 0.625rem 1.25rem;
-  border: none;
-  border-radius: 8px;
-  font-size: 0.875rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-primary {
-  background: #38BDF8;
-  color: #0F172A;
-}
-
-.btn-primary:hover {
-  background: #22D3EE;
-}
-
-.btn-secondary {
-  flex: 1;
-  background: rgba(148, 163, 184, 0.1);
-  color: #CBD5E1;
-  border: 1px solid #334155;
-}
-
-.btn-secondary:hover {
-  background: rgba(148, 163, 184, 0.15);
-}
-
-.btn-danger {
-  flex: 1;
-  background: rgba(239, 68, 68, 0.1);
-  color: #FCA5A5;
-  border: 1px solid rgba(239, 68, 68, 0.3);
-}
-
-.btn-danger:hover {
-  background: rgba(239, 68, 68, 0.2);
-}
-
-/* 弹窗样式 */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.modal-content {
-  width: 90%;
-  max-width: 420px;
-  background: #1E293B;
-  border: 1px solid #334155;
-  border-radius: 12px;
-  padding: 2rem;
-}
-
-.modal-content h3 {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #F8FAFC;
-  margin-bottom: 1.5rem;
-}
-
-.form-group {
-  margin-bottom: 1.5rem;
-}
-
-.form-group label {
-  display: block;
-  font-size: 0.9rem;
-  font-weight: 500;
-  color: #CBD5E1;
-  margin-bottom: 0.5rem;
-}
-
-.form-group input {
-  width: 100%;
-  padding: 0.75rem 1rem;
-  background: #0F172A;
-  border: 1px solid #334155;
-  border-radius: 8px;
-  color: #F8FAFC;
-  font-size: 0.95rem;
-}
-
-.form-group input:focus {
-  outline: none;
-  border-color: #38BDF8;
-}
-
-.form-hint {
-  margin-top: 0.5rem;
-  font-size: 0.8rem;
-  color: #64748B;
-}
-
-.modal-actions {
-  display: flex;
-  gap: 1rem;
-  justify-content: flex-end;
-  margin-top: 2rem;
-}
-
-.settings-panel {
-  max-width: 560px;
-  padding: 1.5rem;
-  background: #1E293B;
-  border: 1px solid #334155;
-  border-radius: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.settings-hint {
-  padding: 0.75rem 1rem;
-  background: rgba(250, 204, 21, 0.1);
-  border: 1px solid rgba(250, 204, 21, 0.4);
-  border-radius: 8px;
-  color: #FACC15;
-  font-size: 0.9rem;
+.panel-note {
+  margin-bottom: var(--space-4);
 }
 
 .pagination {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 1rem;
-  margin-top: 1rem;
-  color: #94A3B8;
-  font-size: 0.875rem;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
 }
 
-.pagination .btn-secondary {
-  flex: none;
+.pagination-buttons {
+  display: inline-flex;
+  gap: var(--space-2);
 }
 
-.pagination .btn-secondary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.settings {
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-6);
 }
 
-.checkbox-label {
+.settings > .alert {
+  margin-top: var(--space-4);
+}
+
+.setting-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-5) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.setting-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.setting-title {
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.setting-desc {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+.quota-input {
+  flex-shrink: 0;
+  width: 140px;
+}
+
+.settings-note {
+  padding: var(--space-4) 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+
+.settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 calc(-1 * var(--space-6));
+  padding: var(--space-4) var(--space-6);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-subtle);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.settings:has(.settings-footer) {
+  padding-bottom: 0;
+}
+
+.header-with-close {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.input-with-suffix {
+  position: relative;
+  display: block;
+}
+
+.input-with-suffix .input {
+  padding-right: 48px;
+}
+
+.input-suffix {
+  position: absolute;
+  right: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--text-sm);
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+@media (max-width: 1024px) {
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .stat-value {
+    font-size: var(--text-2xl);
+  }
+
+  .panel-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .setting-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+
+  .pagination {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 </style>

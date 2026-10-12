@@ -1,7 +1,10 @@
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { History, Save, LoaderCircle, RotateCcw, Trash2, X, Inbox } from '@lucide/vue'
 import { useClipboardStore } from '../stores'
 import { formatRelative } from '../utils/format'
+import toast from '../utils/toast'
+import { confirmDialog } from '../utils/dialog'
 
 const clipboardStore = useClipboardStore()
 
@@ -10,7 +13,8 @@ const textContent = ref('')
 const syncedText = ref('')
 const isSaving = ref(false)
 const showHistory = ref(false)
-const saveSuccess = ref(false)
+
+const isDirty = computed(() => textContent.value !== syncedText.value)
 
 // 其他终端更新后 store.currentText 变化：本地没有未保存编辑时才同步到编辑框，避免覆盖正在输入的内容
 watch(() => clipboardStore.currentText, (value) => {
@@ -33,7 +37,7 @@ onMounted(async () => {
     textContent.value = clipboardStore.currentText
     syncedText.value = clipboardStore.currentText
   } catch (error) {
-    alert('获取剪贴板失败：' + error.message)
+    toast.error('获取剪贴板失败：' + error.message)
   }
 })
 
@@ -50,15 +54,19 @@ const handleSave = async () => {
     const saved = textContent.value
     await clipboardStore.updateText(saved)
     syncedText.value = saved
-
-    saveSuccess.value = true
-    setTimeout(() => {
-      saveSuccess.value = false
-    }, 2000)
+    toast.success('已保存，并同步到所有设备')
   } catch (error) {
-    alert('保存失败：' + error.message)
+    toast.error('保存失败：' + error.message)
   } finally {
     isSaving.value = false
+  }
+}
+
+// Ctrl/⌘ + S 保存
+const onEditorKeydown = (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+    event.preventDefault()
+    if (!isSaving.value) handleSave()
   }
 }
 
@@ -69,7 +77,7 @@ const toggleHistory = async () => {
     try {
       await clipboardStore.fetchHistory()
     } catch (error) {
-      alert('获取历史失败：' + error.message)
+      toast.error('获取历史失败：' + error.message)
     }
   }
 }
@@ -78,26 +86,39 @@ const toggleHistory = async () => {
 const loadHistoryItem = (content) => {
   textContent.value = content
   showHistory.value = false
+  toast.info('已填入编辑框，点击「保存」后才会同步')
 }
 
 // 恢复为当前文本：直接保存并同步到其他终端
 const handleRestore = async (item) => {
-  if (!confirm('将这条历史恢复为当前文本？当前文本会归档到历史。')) return
+  const ok = await confirmDialog({
+    title: '恢复这条历史？',
+    message: '它会成为当前文本并同步到所有设备，现在的文本会归档到历史。',
+    confirmText: '恢复',
+  })
+  if (!ok) return
   try {
     const restored = await clipboardStore.restoreHistory(item.id)
     textContent.value = restored
     syncedText.value = restored
+    toast.success('已恢复为当前文本')
   } catch (error) {
-    alert('恢复失败：' + error.message)
+    toast.error('恢复失败：' + error.message)
   }
 }
 
 const handleDeleteHistory = async (item) => {
-  if (!confirm('确定删除这条历史记录吗？')) return
+  const ok = await confirmDialog({
+    title: '删除这条历史记录？',
+    message: '删除后无法找回。',
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await clipboardStore.deleteHistory(item.id)
   } catch (error) {
-    alert('删除失败：' + error.message)
+    toast.error('删除失败：' + error.message)
   }
 }
 
@@ -106,317 +127,285 @@ const formatDate = formatRelative
 </script>
 
 <template>
-  <div class="clipboard-page">
+  <div class="page">
     <div class="page-header">
       <div>
-        <h2>剪贴板同步</h2>
-        <p>跨设备实时同步文本内容</p>
+        <h1 class="page-title">剪贴板</h1>
+        <p class="page-subtitle">在这里保存的文本会实时同步到你登录的所有设备</p>
       </div>
-      <div class="header-actions">
-        <button class="btn-secondary" @click="toggleHistory">
-          {{ showHistory ? '隐藏历史' : '查看历史' }}
+      <div class="page-actions">
+        <button class="btn btn-secondary" :class="{ pressed: showHistory }" @click="toggleHistory">
+          <History />
+          {{ showHistory ? '收起历史' : '历史记录' }}
         </button>
-        <button
-          class="btn-primary"
-          @click="handleSave"
-          :disabled="isSaving"
-        >
-          {{ isSaving ? '保存中...' : '保存' }}
+        <button class="btn btn-primary" :disabled="isSaving" @click="handleSave">
+          <LoaderCircle v-if="isSaving" class="spin" />
+          <Save v-else />
+          {{ isSaving ? '保存中…' : '保存' }}
         </button>
       </div>
     </div>
 
-    <div v-if="saveSuccess" class="save-toast" role="status">
-      ✓ 保存成功，已同步到所有设备
-    </div>
-
-    <div class="clipboard-container">
-      <div class="editor-panel">
+    <div class="workspace" :class="{ 'with-history': showHistory }">
+      <section class="editor card">
         <textarea
           v-model="textContent"
-          class="text-editor"
-          placeholder="在此输入或粘贴文本..."
+          class="editor-input"
+          placeholder="在此输入或粘贴文本…"
+          aria-label="剪贴板文本"
           :disabled="clipboardStore.isLoading"
+          @keydown="onEditorKeydown"
         ></textarea>
         <div class="editor-footer">
-          <span class="char-count">{{ textContent.length }} 字符</span>
+          <span class="sync-state" :class="{ dirty: isDirty }">
+            <span class="dot" aria-hidden="true"></span>
+            {{ isDirty ? '有未保存的修改' : '已同步' }}
+          </span>
+          <span class="editor-meta">
+            {{ textContent.length.toLocaleString() }} 字符
+            <span class="kbd-hint">· Ctrl + S 保存</span>
+          </span>
         </div>
-      </div>
+      </section>
 
-      <div v-if="showHistory" class="history-panel">
-        <h3>历史记录</h3>
-        <div v-if="clipboardStore.history.length === 0" class="empty-state">
-          暂无历史记录
+      <aside v-if="showHistory" class="history card" aria-label="历史记录">
+        <div class="history-header">
+          <h2 class="section-title">历史记录</h2>
+          <button class="btn-icon" aria-label="收起历史" @click="showHistory = false">
+            <X />
+          </button>
         </div>
-        <div v-else class="history-list">
-          <div
+
+        <div v-if="clipboardStore.history.length === 0" class="history-empty">
+          <Inbox :size="20" />
+          <span>暂无历史记录</span>
+        </div>
+
+        <ul v-else class="history-list">
+          <li
             v-for="item in clipboardStore.history"
             :key="item.id"
             class="history-item"
+            tabindex="0"
+            title="点击填入编辑框（不保存）"
             @click="loadHistoryItem(item.content)"
+            @keydown.enter="loadHistoryItem(item.content)"
           >
-            <div class="history-content">
-              {{ item.content.substring(0, 100) }}
-              <span v-if="item.content.length > 100">...</span>
-            </div>
+            <p class="history-content">{{ item.content.substring(0, 140) }}<span v-if="item.content.length > 140">…</span></p>
             <div class="history-meta">
-              <span class="history-time">{{ formatDate(item.created_at) }}</span>
-              <span class="history-length">{{ item.content.length }} 字符</span>
+              <span>{{ formatDate(item.created_at) }} · {{ item.content.length.toLocaleString() }} 字符</span>
+              <span class="history-actions">
+                <button class="btn-icon" title="恢复为当前文本并同步" aria-label="恢复" @click.stop="handleRestore(item)">
+                  <RotateCcw :size="14" />
+                </button>
+                <button class="btn-icon danger" title="删除这条历史" aria-label="删除" @click.stop="handleDeleteHistory(item)">
+                  <Trash2 :size="14" />
+                </button>
+              </span>
             </div>
-            <div class="history-actions">
-              <button class="btn-mini" title="恢复为当前文本并同步" @click.stop="handleRestore(item)">
-                恢复
-              </button>
-              <button class="btn-mini btn-mini-danger" title="删除这条历史" @click.stop="handleDeleteHistory(item)">
-                删除
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+          </li>
+        </ul>
+      </aside>
     </div>
   </div>
 </template>
 
 <style scoped>
-.clipboard-page {
-  padding: 2rem;
-  max-width: 1400px;
-  margin: 0 auto;
+.btn-secondary.pressed {
+  background: var(--color-bg-muted);
 }
 
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 2rem;
-}
-
-.page-header h2 {
-  font-size: 1.75rem;
-  font-weight: 700;
-  color: #F8FAFC;
-  margin-bottom: 0.5rem;
-}
-
-.page-header p {
-  font-size: 0.95rem;
-  color: #94A3B8;
-}
-
-.header-actions {
-  display: flex;
-  gap: 1rem;
-}
-
-.btn-primary,
-.btn-secondary {
-  padding: 0.75rem 1.5rem;
-  border: none;
-  border-radius: 8px;
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-primary {
-  background: #38BDF8;
-  color: #0F172A;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: #22D3EE;
-  transform: translateY(-1px);
-}
-
-.btn-primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-secondary {
-  background: rgba(148, 163, 184, 0.1);
-  color: #CBD5E1;
-  border: 1px solid #334155;
-}
-
-.btn-secondary:hover {
-  background: rgba(148, 163, 184, 0.15);
-  border-color: #475569;
-}
-
-/* 保存成功提示：固定在窗口底部居中。页头右上角是「查看历史」「保存」按钮，放在顶部会盖住它们；
-   pointer-events: none 让提示条即使盖住别的内容也不挡点击（2 秒后自动消失） */
-.save-toast {
-  position: fixed;
-  bottom: 2rem;
-  left: 0;
-  right: 0;
-  margin: 0 auto;
-  width: max-content;
-  max-width: calc(100vw - 2rem);
-  padding: 1rem 1.5rem;
-  background: #0F172A;
-  border: 1px solid #22D3EE;
-  border-radius: 8px;
-  color: #22D3EE;
-  font-size: 0.95rem;
-  animation: slideUp 0.3s ease-out;
-  z-index: 1000;
-  pointer-events: none;
-}
-
-@keyframes slideUp {
-  from {
-    transform: translateY(1rem);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.clipboard-container {
+.workspace {
   display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 1.5rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
 }
 
-.clipboard-container:not(:has(.history-panel)) {
-  grid-template-columns: 1fr;
+.workspace.with-history {
+  grid-template-columns: minmax(0, 1fr) 320px;
 }
 
-.editor-panel {
-  background: #1E293B;
-  border: 1px solid #334155;
-  border-radius: 12px;
-  overflow: hidden;
+.editor {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
-.text-editor {
-  flex: 1;
-  min-height: 500px;
-  padding: 1.5rem;
-  background: #0F172A;
+.editor:focus-within {
+  border-color: var(--color-border-hover);
+  box-shadow: var(--shadow-sm);
+}
+
+.editor-input {
+  display: block;
+  width: 100%;
+  min-height: 460px;
+  padding: var(--space-5) var(--space-6);
   border: none;
-  color: #F8FAFC;
-  font-size: 0.95rem;
-  font-family: 'IBM Plex Sans', monospace;
-  line-height: 1.6;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  line-height: 1.7;
+  color: var(--color-text);
   resize: vertical;
 }
 
-.text-editor:focus {
+.editor-input:focus {
   outline: none;
 }
 
-.text-editor::placeholder {
-  color: #64748B;
+.editor-input::placeholder {
+  color: var(--color-text-tertiary);
 }
 
 .editor-footer {
-  padding: 0.75rem 1.5rem;
-  background: #1E293B;
-  border-top: 1px solid #334155;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: 40px;
+  padding: 0 var(--space-4);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-subtle);
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
 }
 
-.char-count {
-  font-size: 0.85rem;
-  color: #64748B;
+.sync-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
 }
 
-.history-panel {
-  background: #1E293B;
-  border: 1px solid #334155;
-  border-radius: 12px;
-  padding: 1.5rem;
-  max-height: 600px;
-  overflow-y: auto;
+.sync-state .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-success);
 }
 
-.history-panel h3 {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: #F8FAFC;
-  margin-bottom: 1rem;
+.sync-state.dirty .dot {
+  background: var(--color-warning);
 }
 
-.empty-state {
-  text-align: center;
-  padding: 2rem;
-  color: #64748B;
-  font-size: 0.9rem;
+.editor-meta {
+  font-variant-numeric: tabular-nums;
+}
+
+.history {
+  display: flex;
+  flex-direction: column;
+  max-height: 560px;
+  overflow: hidden;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.history-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-12) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--color-text-tertiary);
 }
 
 .history-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+  list-style: none;
+  overflow-y: auto;
 }
 
 .history-item {
-  padding: 1rem;
-  background: #0F172A;
-  border: 1px solid #334155;
-  border-radius: 8px;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color var(--duration) var(--ease);
+}
+
+.history-item:last-child {
+  border-bottom: none;
 }
 
 .history-item:hover {
-  border-color: #38BDF8;
-  background: rgba(56, 189, 248, 0.05);
+  background: var(--color-bg-subtle);
+}
+
+.history-item:focus-visible {
+  outline-offset: -2px;
 }
 
 .history-content {
-  color: #CBD5E1;
-  font-size: 0.9rem;
-  line-height: 1.5;
-  margin-bottom: 0.5rem;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .history-meta {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  font-size: 0.8rem;
-  color: #64748B;
+  margin-top: 6px;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
 }
 
+/* 操作按钮悬停时才明显，平时保持安静；触屏设备没有悬停，始终显示 */
 .history-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0.6;
+  transition: opacity var(--duration) var(--ease);
 }
 
-.btn-mini {
-  padding: 0.25rem 0.75rem;
-  background: rgba(56, 189, 248, 0.1);
-  border: 1px solid #334155;
-  border-radius: 6px;
-  color: #38BDF8;
-  font-size: 0.8rem;
-  cursor: pointer;
+.history-item:hover .history-actions,
+.history-item:focus-within .history-actions {
+  opacity: 1;
 }
 
-.btn-mini:hover {
-  border-color: #38BDF8;
+.history-actions .btn-icon {
+  width: 26px;
+  height: 26px;
 }
 
-.btn-mini-danger {
-  background: rgba(248, 113, 113, 0.1);
-  color: #F87171;
+@media (hover: none) {
+  .history-actions {
+    opacity: 1;
+  }
 }
 
-.btn-mini-danger:hover {
-  border-color: #F87171;
+@media (max-width: 1024px) {
+  .workspace.with-history {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .history {
+    max-height: 420px;
+  }
+}
+
+@media (max-width: 768px) {
+  .editor-input {
+    min-height: 320px;
+    padding: var(--space-4);
+  }
+
+  .kbd-hint {
+    display: none;
+  }
 }
 </style>

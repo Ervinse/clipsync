@@ -49,6 +49,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | 路由 | vue-router | 登录与角色守卫 |
 | 状态管理 | Pinia | user / clipboard / files / access / admin 五个 store |
 | HTTP 客户端 | axios | 统一封装、自动带 token |
+| 图标 / 字体 | @lucide/vue + @fontsource-variable/inter | 细线图标；Inter 字体随前端打包，不依赖外网字体服务 |
 | 实时通道 | 原生 WebSocket | 按 user_id 广播 |
 | 文件存储 | 服务器本地磁盘 | 按 user_id 分目录 |
 | 部署 | Docker Compose | MySQL、后端、前端（Nginx）三个容器；部署文件在 `deployment/docker/` |
@@ -547,14 +548,17 @@ CodeProject/
     │   ├── src/
     │   │   ├── main.js
     │   │   ├── App.vue
-    │   │   ├── style.css         # 全局样式
+    │   │   ├── style.css         # 设计变量与全局组件样式
     │   │   ├── router/index.js   # 路由 + 登录/角色守卫
     │   │   ├── api/              # request.js(axios 封装) + auth/clipboard/files/access/admin
     │   │   ├── stores/           # user / clipboard / files / access / admin
     │   │   ├── utils/
     │   │   │   ├── websocket.js    # WS 客户端（协议自适应、重连、心跳）
     │   │   │   ├── clipboard.js    # 复制到剪贴板（HTTP 下降级为 execCommand）
-    │   │   │   └── format.js       # 文件大小、UTC 时间格式化
+    │   │   │   ├── format.js       # 文件大小、UTC 时间格式化
+    │   │   │   ├── toast.js        # 轻提示
+    │   │   │   └── dialog.js       # 确认 / 输入 / 手动复制对话框
+    │   │   ├── components/       # AuthLayout / BrandMark / ToastHost / DialogHost
     │   │   └── views/
     │   │       ├── Login.vue / Register.vue
     │   │       ├── Home.vue          # 登录后布局（侧边栏）
