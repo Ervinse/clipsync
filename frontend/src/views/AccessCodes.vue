@@ -354,7 +354,7 @@ const statusOf = (code) => {
                 type="number"
                 min="0"
                 :max="MAX_EXPIRES_HOURS"
-                placeholder="24"
+                placeholder="0 为永久"
               />
               <span class="input-suffix">小时</span>
             </span>

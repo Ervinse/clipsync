@@ -130,7 +130,8 @@ export const useUserStore = defineStore('user', {
       const path = window.location.pathname
       // 登录页、注册页、公开访问页本来就不需要登录：留在原地（带着过期 token 打开邀请链接时不被踢去登录页）
       if (!path.startsWith('/access/') && path !== '/login' && path !== '/register') {
-        window.location.href = '/login'
+        // 带上当前页面，重新登录后回到这里
+        window.location.href = '/login?redirect=' + encodeURIComponent(path + window.location.search)
       }
     },
 

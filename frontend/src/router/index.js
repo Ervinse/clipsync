@@ -90,7 +90,8 @@ router.beforeEach((to, from, next) => {
 
   // 需要登录的路由
   if (to.meta.requiresAuth && !userStore.isLoggedIn) {
-    next('/login')
+    // 记下原来要去的页面，登录后回到那里
+    next({ path: '/login', query: { redirect: to.fullPath } })
     return
   }
 

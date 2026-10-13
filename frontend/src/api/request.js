@@ -46,7 +46,8 @@ async function extractMessage(status, data) {
   let message = data?.detail ?? data?.error
   // 422 校验错误的 detail 是数组 [{ loc, msg, type }]
   if (Array.isArray(message)) {
-    message = message.map((e) => e?.msg).filter(Boolean).join('；')
+    // pydantic 的自定义校验会给 msg 加上英文前缀 "Value error, "，对用户没有意义，去掉
+    message = message.map((e) => e?.msg?.replace(/^Value error,\s*/i, '')).filter(Boolean).join('；')
   }
   if (status === 429 && !data?.detail) {
     message = '操作过于频繁，请稍后再试'
