@@ -84,8 +84,10 @@ const handleSaveSettings = async () => {
     toast.error('当前设置未能加载，请刷新页面后再保存')
     return
   }
-  const quotaMB = Number(settingsForm.value.default_quota_mb)
-  if (!Number.isInteger(quotaMB) || quotaMB < 0) {
+  // 输入框清空后得到的是空字符串，Number('') 等于 0，必须先拦下，否则会静默保存成 0 MB
+  const rawQuota = settingsForm.value.default_quota_mb
+  const quotaMB = Number(rawQuota)
+  if (rawQuota === '' || rawQuota === null || !Number.isInteger(quotaMB) || quotaMB < 0) {
     toast.error('默认配额必须是非负整数（MB）')
     return
   }

@@ -2,14 +2,16 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Clipboard, Folder, Link, Settings, LogOut, Menu, X } from '@lucide/vue'
-import { useUserStore } from '../stores'
+import { useUserStore, useClipboardStore } from '../stores'
 import ws from '../utils/websocket'
 import { formatSize } from '../utils/format'
+import { confirmDialog } from '../utils/dialog'
 import BrandMark from '../components/BrandMark.vue'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+const clipboardStore = useClipboardStore()
 
 // 侧栏配额在布局级刷新：不管当前在哪个页面，文件增删或管理员改配额后都同步
 // open：连接（重新）建立时补拉，断线期间错过的配额变更不会一直显示旧值
@@ -61,7 +63,18 @@ watch(() => route.path, () => {
   drawerOpen.value = false
 })
 
-const handleLogout = () => {
+const handleLogout = async () => {
+  // 剪贴板页有没保存的文字时，先确认：登出会清掉本页状态，文字无法找回
+  if (clipboardStore.hasUnsavedEdit) {
+    const ok = await confirmDialog({
+      title: '退出登录并放弃未保存的修改？',
+      message: '剪贴板编辑框里的内容还没有保存，退出后会丢失。',
+      confirmText: '退出登录',
+      cancelText: '继续编辑',
+      danger: true,
+    })
+    if (!ok) return
+  }
   userStore.logout()
   router.push('/login')
 }

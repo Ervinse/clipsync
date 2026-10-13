@@ -12,6 +12,8 @@ export const useClipboardStore = defineStore('clipboard', {
     isLoading: false,
     // 历史面板是否打开（由 Clipboard.vue 设置）：打开时收到推送要一并重拉历史
     historyVisible: false,
+    // 编辑框里是否有没保存的修改（由 Clipboard.vue 设置）：布局里的「退出登录」据此先确认
+    hasUnsavedEdit: false,
   }),
 
   actions: {

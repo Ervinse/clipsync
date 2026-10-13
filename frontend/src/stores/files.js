@@ -107,7 +107,8 @@ export const useFilesStore = defineStore('files', {
           )
         }
 
-        // 3. 完成上传
+        // 3. 完成上传（服务端正在合并：此后页面被关闭也不再发取消，见文件末尾的 pagehide 处理）
+        this.uploadProgress[uploadId].completing = true
         const result = await api.files.completeUpload(uploadId)
 
         // 文件已入库：刷新列表失败不能算上传失败（否则会取消会话并提示失败，用户重试得到重复文件）。
@@ -189,3 +190,30 @@ export const useFilesStore = defineStore('files', {
     },
   },
 })
+
+// 上传中刷新或关闭页面：服务器上的上传会话会一直占着配额，直到过期（默认 24 小时）。
+// beforeunload 先让用户确认；确认离开后 pagehide 里用 keepalive 请求（页面销毁后浏览器仍会发出）尽力取消会话。
+// 已进入「完成上传」阶段的不取消：服务端可能正在合并，取消会让这个文件丢失。
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', (event) => {
+    if (!useFilesStore().isUploading) return
+    event.preventDefault()
+    event.returnValue = ''
+  })
+
+  window.addEventListener('pagehide', (event) => {
+    // persisted 为 true 表示页面进了往返缓存、之后可能原样恢复，上传还在继续
+    if (event.persisted) return
+    const filesStore = useFilesStore()
+    const token = useUserStore().token
+    if (!filesStore.isUploading || !token) return
+    for (const [uploadId, progress] of Object.entries(filesStore.uploadProgress)) {
+      if (progress.completing) continue
+      fetch(`/api/files/upload/${encodeURIComponent(uploadId)}`, {
+        method: 'DELETE',
+        keepalive: true,
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {})
+    }
+  })
+}
