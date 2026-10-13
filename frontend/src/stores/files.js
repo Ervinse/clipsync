@@ -13,6 +13,10 @@ export const useFilesStore = defineStore('files', {
     isLoading: false,
     // 放在 store 而不是页面里：上传期间离开文件页再回来，按钮仍是禁用状态，不会并发开第二个上传
     isUploading: false,
+    // 最近一次（非静默）拉取列表失败的原因；任何一次拉取成功都会清空。页面据此区分「没有文件」和「没加载出来」
+    loadError: '',
+    // 正在下载的文件：{ [fileId]: { loaded, total } }，用于禁用重复点击并显示进度
+    downloads: {},
   }),
 
   getters: {
@@ -45,6 +49,7 @@ export const useFilesStore = defineStore('files', {
         // 后端返回 { items, total, used_bytes, quota_bytes }
         const data = await api.files.list()
         this.files = data?.items || []
+        this.loadError = ''
         // 同步配额到用户状态：侧栏与文件页都读 userStore.quota，上传/删除后需要刷新
         const userStore = useUserStore()
         if (userStore.userInfo && data) {
@@ -54,6 +59,7 @@ export const useFilesStore = defineStore('files', {
         }
       } catch (error) {
         console.error('获取文件列表失败:', error)
+        if (!silent) this.loadError = error?.message || '加载失败'
         throw error
       } finally {
         if (!silent) this.isLoading = false
@@ -177,16 +183,28 @@ export const useFilesStore = defineStore('files', {
      * 下载文件
      */
     async downloadFile(file) {
-      const blob = await api.files.download(file.id)
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = file.original_name || 'file'
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      // 延迟释放，确保浏览器已开始下载
-      setTimeout(() => URL.revokeObjectURL(url), 10000)
+      // 同一个文件下载中不重复发起：大文件要等整个下完才会弹出保存，期间用户容易反复点
+      if (this.downloads[file.id]) return
+      this.downloads[file.id] = { loaded: 0, total: file.size || 0 }
+      try {
+        const blob = await api.files.download(file.id, (event) => {
+          const current = this.downloads[file.id]
+          if (!current) return
+          current.loaded = event.loaded
+          current.total = event.total || file.size || 0
+        })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = file.original_name || 'file'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        // 延迟释放，确保浏览器已开始下载
+        setTimeout(() => URL.revokeObjectURL(url), 10000)
+      } finally {
+        delete this.downloads[file.id]
+      }
     },
   },
 })

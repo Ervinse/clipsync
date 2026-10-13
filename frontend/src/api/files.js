@@ -38,10 +38,12 @@ export default {
   },
 
   // 下载文件：必须带 Authorization 头，不能用裸 <a href>，因此以 blob 方式获取
-  download(fileId) {
+  // onProgress：浏览器每收到一段数据回调一次，参数含 loaded / total
+  download(fileId, onProgress) {
     return request.get(`/files/${fileId}/download`, {
       responseType: 'blob',
       timeout: 0, // 大文件下载不设超时
+      onDownloadProgress: onProgress,
     })
   },
 

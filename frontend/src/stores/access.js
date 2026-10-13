@@ -8,6 +8,8 @@ export const useAccessStore = defineStore('access', {
   state: () => ({
     codes: [],
     isLoading: false,
+    // 最近一次（非静默）拉取失败的原因；任何一次拉取成功都会清空。页面据此区分「没有访问码」和「没加载出来」
+    loadError: '',
   }),
 
   getters: {
@@ -22,28 +24,22 @@ export const useAccessStore = defineStore('access', {
   actions: {
     /**
      * 获取访问码列表
+     * silent：WS 推送 / 重连触发的后台刷新不切 isLoading，避免列表闪成加载状态
+     * 是否已过期随时间变化，由页面按当前时间计算，这里只存后端返回的原始数据
      */
-    async fetchCodes() {
+    async fetchCodes({ silent = false } = {}) {
       try {
-        this.isLoading = true
-        // 后端返回 { items, total }；是否失效由前端按 is_revoked / expires_at 计算
+        if (!silent) this.isLoading = true
+        // 后端返回 { items, total }
         const data = await api.access.list()
-        const now = Date.now()
-        this.codes = (data?.items || []).map(c => {
-          // 后端时间为 UTC（不带时区后缀），补 Z 再解析
-          const expired = !!c.expires_at && new Date(c.expires_at + 'Z').getTime() <= now
-          return {
-            ...c,
-            expired,
-            // 已撤销或已过期都算失效（不能再复制链接 / 撤销）
-            is_invalid: c.is_revoked || expired,
-          }
-        })
+        this.codes = data?.items || []
+        this.loadError = ''
       } catch (error) {
         console.error('获取访问码列表失败:', error)
+        if (!silent) this.loadError = error?.message || '加载失败'
         throw error
       } finally {
-        this.isLoading = false
+        if (!silent) this.isLoading = false
       }
     },
 
@@ -53,7 +49,7 @@ export const useAccessStore = defineStore('access', {
     async createCode(data) {
       try {
         const result = await api.access.create(data)
-        await this.fetchCodes()
+        await this.fetchCodes({ silent: true }).catch(() => {})
         return result
       } catch (error) {
         console.error('创建访问码失败:', error)
@@ -67,11 +63,12 @@ export const useAccessStore = defineStore('access', {
     async revokeCode(id) {
       try {
         await api.access.revoke(id)
-        await this.fetchCodes()
       } catch (error) {
         console.error('撤销访问码失败:', error)
         throw error
       }
+      // 撤销已成功：刷新失败不影响结果
+      await this.fetchCodes({ silent: true }).catch(() => {})
     },
   },
 })

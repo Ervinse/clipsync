@@ -1,19 +1,19 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { Plus, Copy, Ban, Link, Clipboard, File, LoaderCircle, X } from '@lucide/vue'
+import { Plus, Copy, Ban, Link, Clipboard, File, LoaderCircle, X, TriangleAlert, RotateCw } from '@lucide/vue'
 import { useAccessStore, useFilesStore } from '../stores'
-import { formatDateTime } from '../utils/format'
+import { formatDateTime, parseUtc } from '../utils/format'
 import { copyToClipboard } from '../utils/clipboard'
 import toast from '../utils/toast'
-import { confirmDialog, copyDialog } from '../utils/dialog'
+import { confirmDialog, copyDialog, dialogState } from '../utils/dialog'
 import ws from '../utils/websocket'
 
 const accessStore = useAccessStore()
 const filesStore = useFilesStore()
 
-// 其他终端创建 / 撤销访问码，或删除文件（后端级联删码）后刷新列表；重连时补拉一次
+// 其他终端创建 / 撤销访问码，或删除文件（后端级联删码）后静默刷新列表（不闪成「加载中」）；重连时补拉一次
 const onCodesChanged = () => {
-  accessStore.fetchCodes().catch(() => {})
+  accessStore.fetchCodes({ silent: true }).catch(() => {})
 }
 const CODE_EVENTS = ['access_codes_changed', 'file_deleted', 'open']
 
@@ -24,9 +24,20 @@ const onFilesChanged = () => {
 }
 const FILE_EVENTS = ['file_added', 'file_deleted', 'open']
 
+// 「是否过期」随时间变化：页面开着时每 30 秒重算一次，到期的码自动变成「已过期」
+const now = ref(Date.now())
+let nowTimer = null
+
+// Esc 关闭「创建访问码」弹窗；全局对话框（确认 / 手动复制）打开时 Esc 只作用于它
+const onEscape = (event) => {
+  if (event.key === 'Escape' && showCreateModal.value && !dialogState.current) closeCreateModal()
+}
+
 onUnmounted(() => {
   CODE_EVENTS.forEach((event) => ws.off(event, onCodesChanged))
   FILE_EVENTS.forEach((event) => ws.off(event, onFilesChanged))
+  window.removeEventListener('keydown', onEscape)
+  clearInterval(nowTimer)
 })
 
 // 访问码最长有效期：1 年
@@ -48,14 +59,18 @@ const createForm = ref({
   expires_in_hours: 24,
 })
 
-onMounted(async () => {
+// 失败原因记在 store.loadError，页面显示「加载失败 + 重试」，不会把没加载出来误当成没有访问码
+const loadCodes = () => accessStore.fetchCodes().catch(() => {})
+
+onMounted(() => {
   // 先挂监听再拉数据，拉取期间的变更不会漏掉
   CODE_EVENTS.forEach((event) => ws.on(event, onCodesChanged))
   FILE_EVENTS.forEach((event) => ws.on(event, onFilesChanged))
-  await Promise.all([
-    accessStore.fetchCodes(),
-    filesStore.fetchFiles(),
-  ])
+  window.addEventListener('keydown', onEscape)
+  nowTimer = setInterval(() => { now.value = Date.now() }, 30000)
+  // 文件列表只用于创建弹窗的下拉和显示文件名，加载失败不影响访问码列表
+  filesStore.fetchFiles({ silent: true }).catch(() => {})
+  return loadCodes()
 })
 
 const openCreateModal = () => {
@@ -142,9 +157,18 @@ const getFileName = (fileId) => {
   return file?.original_name || '未知文件'
 }
 
+// 后端时间为 UTC（不带时区后缀），parseUtc 按 UTC 解析
+const isExpired = (code) => {
+  const expiresAt = parseUtc(code.expires_at)
+  return !!expiresAt && expiresAt.getTime() <= now.value
+}
+
+// 已撤销或已过期都算失效（不能再复制链接 / 撤销）
+const isInvalid = (code) => code.is_revoked || isExpired(code)
+
 const statusOf = (code) => {
   if (code.is_revoked) return { label: '已撤销', cls: '' }
-  if (code.expired) return { label: '已过期', cls: '' }
+  if (isExpired(code)) return { label: '已过期', cls: '' }
   return { label: '有效', cls: 'badge-success' }
 }
 </script>
@@ -167,6 +191,16 @@ const statusOf = (code) => {
     <div v-if="accessStore.isLoading" class="loading">
       <LoaderCircle class="spin" />
       加载中…
+    </div>
+
+    <div v-else-if="accessStore.loadError" class="empty" role="alert">
+      <span class="empty-icon"><TriangleAlert :size="20" /></span>
+      <p class="empty-title">访问码加载失败</p>
+      <p class="empty-text">{{ accessStore.loadError }}</p>
+      <button class="btn btn-secondary" @click="loadCodes">
+        <RotateCw />
+        重试
+      </button>
     </div>
 
     <div v-else-if="accessStore.codes.length === 0" class="empty">
@@ -195,7 +229,7 @@ const statusOf = (code) => {
           <tr
             v-for="code in accessStore.sortedCodes"
             :key="code.id"
-            :class="{ invalid: code.is_invalid }"
+            :class="{ invalid: isInvalid(code) }"
           >
             <td>
               <span class="target">
@@ -222,7 +256,7 @@ const statusOf = (code) => {
               <span class="row-actions">
                 <button
                   class="btn btn-secondary btn-sm"
-                  :disabled="code.is_invalid"
+                  :disabled="isInvalid(code)"
                   @click="copyLink(code)"
                 >
                   <Copy :size="14" />
@@ -232,7 +266,7 @@ const statusOf = (code) => {
                   class="btn-icon danger"
                   title="撤销"
                   aria-label="撤销"
-                  :disabled="code.is_invalid"
+                  :disabled="isInvalid(code)"
                   @click="handleRevoke(code)"
                 >
                   <Ban />

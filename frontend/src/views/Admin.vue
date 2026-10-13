@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import {
   ChartColumn, Users, UserCheck, Ticket, Folder, Settings, File, HardDrive,
   Plus, Copy, Trash2, Ban, CircleCheck, Pencil, ChevronLeft, ChevronRight,
@@ -10,11 +10,20 @@ import { PAGE_SIZE } from '../stores/admin'
 import { formatDateTime, formatSize } from '../utils/format'
 import { copyToClipboard } from '../utils/clipboard'
 import toast from '../utils/toast'
-import { confirmDialog, promptDialog, copyDialog } from '../utils/dialog'
+import { confirmDialog, promptDialog, copyDialog, dialogState } from '../utils/dialog'
 
 // 访问权限由路由守卫（meta.requiresAdmin）拦截，后端接口再做最终校验
 const adminStore = useAdminStore()
 const userStore = useUserStore()
+
+// Esc 关闭「创建邀请码」弹窗（不依赖焦点在弹窗内）；全局对话框打开时 Esc 只作用于它
+const onEscape = (event) => {
+  if (event.key === 'Escape' && showCreateInviteModal.value && !dialogState.current) {
+    showCreateInviteModal.value = false
+  }
+}
+onMounted(() => window.addEventListener('keydown', onEscape))
+onUnmounted(() => window.removeEventListener('keydown', onEscape))
 
 const TABS = [
   { key: 'stats', label: '概览', icon: ChartColumn },
