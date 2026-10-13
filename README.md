@@ -87,7 +87,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 - 浏览器访问 `/` → Nginx 返回 Vue 构建产物。
 - 登录用户调用 `/api/*` → 反代到 FastAPI（带 JWT）。
 - 实时通道 `/ws` → WebSocket upgrade → 连接管理器。
-- 快速访问 `/access/<code>`（前端页面，文件码带 `?t=file`）→ 调 `/api/access/<code>` 或 `/api/access/<code>/download`（**免登录**）。
+- 快速访问 `/access/<code>`（前端页面，文件码带 `?t=file`；缺少该参数时页面会在文本码查询 404 后再探测一次下载接口）→ 调 `/api/access/<code>` 或 `/api/access/<code>/download`（**免登录**）。
 
 ---
 

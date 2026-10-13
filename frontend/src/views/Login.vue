@@ -1,12 +1,22 @@
 <script setup>
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { CircleAlert, LoaderCircle } from '@lucide/vue'
 import { useUserStore } from '../stores'
 import AuthLayout from '../components/AuthLayout.vue'
 
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
+
+// 登录过期被带到这里时，query.redirect 是原来所在的页面：登录后回到那里。
+// 只接受站内路径（以单个 / 开头），防止被构造成跳到其他网站的链接
+const redirectTarget = () => {
+  const target = route.query.redirect
+  if (typeof target !== 'string' || !target.startsWith('/') || target.startsWith('//')) return '/clipboard'
+  if (target.startsWith('/login') || target.startsWith('/register')) return '/clipboard'
+  return target
+}
 
 const form = ref({
   username: '',
@@ -26,7 +36,7 @@ const handleLogin = async () => {
     loading.value = true
     error.value = ''
     await userStore.login(form.value)
-    router.push('/clipboard')
+    router.push(redirectTarget())
   } catch (err) {
     // 拦截器 reject 的是 { status, message }，后端 detail 已放进 message
     error.value = err.message || '登录失败，请检查用户名和密码'

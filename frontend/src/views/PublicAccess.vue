@@ -31,11 +31,30 @@ onMounted(async () => {
     targetType.value = 'text'
     data.value = result.content
   } catch (err) {
-    error.value = err.message || '访问码无效或已过期'
+    // 链接末尾的 ?t=file 被聊天软件或手动截掉时，文件码按文本码查会得到 404：
+    // 再探测一次下载接口，码确实是有效的文件码就按文件处理，而不是提示「无效」
+    if (err?.status === 404 && (await isDownloadable(code))) {
+      targetType.value = 'file'
+      data.value = { download_url: `/api/access/${encodeURIComponent(code)}/download` }
+    } else {
+      error.value = err.message || '访问码无效或已过期'
+    }
   } finally {
     loading.value = false
   }
 })
+
+// 探测文件码是否可下载：请求成功后立即中止（不读响应体），大文件不进内存
+async function isDownloadable(code) {
+  const controller = new AbortController()
+  try {
+    const resp = await fetch(`/api/access/${encodeURIComponent(code)}/download`, { signal: controller.signal })
+    controller.abort()
+    return resp.ok
+  } catch {
+    return false
+  }
+}
 
 // HTTP 部署下 navigator.clipboard 不可用，copyToClipboard 会降级
 const copyText = async () => {

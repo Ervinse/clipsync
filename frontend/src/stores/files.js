@@ -13,6 +13,10 @@ export const useFilesStore = defineStore('files', {
     isLoading: false,
     // 放在 store 而不是页面里：上传期间离开文件页再回来，按钮仍是禁用状态，不会并发开第二个上传
     isUploading: false,
+    // 最近一次（非静默）拉取列表失败的原因；任何一次拉取成功都会清空。页面据此区分「没有文件」和「没加载出来」
+    loadError: '',
+    // 正在下载的文件：{ [fileId]: { loaded, total } }，用于禁用重复点击并显示进度
+    downloads: {},
   }),
 
   getters: {
@@ -45,6 +49,7 @@ export const useFilesStore = defineStore('files', {
         // 后端返回 { items, total, used_bytes, quota_bytes }
         const data = await api.files.list()
         this.files = data?.items || []
+        this.loadError = ''
         // 同步配额到用户状态：侧栏与文件页都读 userStore.quota，上传/删除后需要刷新
         const userStore = useUserStore()
         if (userStore.userInfo && data) {
@@ -54,6 +59,7 @@ export const useFilesStore = defineStore('files', {
         }
       } catch (error) {
         console.error('获取文件列表失败:', error)
+        if (!silent) this.loadError = error?.message || '加载失败'
         throw error
       } finally {
         if (!silent) this.isLoading = false
@@ -107,7 +113,8 @@ export const useFilesStore = defineStore('files', {
           )
         }
 
-        // 3. 完成上传
+        // 3. 完成上传（服务端正在合并：此后页面被关闭也不再发取消，见文件末尾的 pagehide 处理）
+        this.uploadProgress[uploadId].completing = true
         const result = await api.files.completeUpload(uploadId)
 
         // 文件已入库：刷新列表失败不能算上传失败（否则会取消会话并提示失败，用户重试得到重复文件）。
@@ -176,16 +183,55 @@ export const useFilesStore = defineStore('files', {
      * 下载文件
      */
     async downloadFile(file) {
-      const blob = await api.files.download(file.id)
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = file.original_name || 'file'
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      // 延迟释放，确保浏览器已开始下载
-      setTimeout(() => URL.revokeObjectURL(url), 10000)
+      // 同一个文件下载中不重复发起：大文件要等整个下完才会弹出保存，期间用户容易反复点
+      if (this.downloads[file.id]) return
+      this.downloads[file.id] = { loaded: 0, total: file.size || 0 }
+      try {
+        const blob = await api.files.download(file.id, (event) => {
+          const current = this.downloads[file.id]
+          if (!current) return
+          current.loaded = event.loaded
+          current.total = event.total || file.size || 0
+        })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = file.original_name || 'file'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        // 延迟释放，确保浏览器已开始下载
+        setTimeout(() => URL.revokeObjectURL(url), 10000)
+      } finally {
+        delete this.downloads[file.id]
+      }
     },
   },
 })
+
+// 上传中刷新或关闭页面：服务器上的上传会话会一直占着配额，直到过期（默认 24 小时）。
+// beforeunload 先让用户确认；确认离开后 pagehide 里用 keepalive 请求（页面销毁后浏览器仍会发出）尽力取消会话。
+// 已进入「完成上传」阶段的不取消：服务端可能正在合并，取消会让这个文件丢失。
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', (event) => {
+    if (!useFilesStore().isUploading) return
+    event.preventDefault()
+    event.returnValue = ''
+  })
+
+  window.addEventListener('pagehide', (event) => {
+    // persisted 为 true 表示页面进了往返缓存、之后可能原样恢复，上传还在继续
+    if (event.persisted) return
+    const filesStore = useFilesStore()
+    const token = useUserStore().token
+    if (!filesStore.isUploading || !token) return
+    for (const [uploadId, progress] of Object.entries(filesStore.uploadProgress)) {
+      if (progress.completing) continue
+      fetch(`/api/files/upload/${encodeURIComponent(uploadId)}`, {
+        method: 'DELETE',
+        keepalive: true,
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {})
+    }
+  })
+}

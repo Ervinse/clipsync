@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import {
-  Upload, Download, Trash2, LoaderCircle, FolderOpen,
+  Upload, Download, Trash2, LoaderCircle, FolderOpen, TriangleAlert, RotateCw,
   File, FileText, FileImage, FileArchive, FileVideoCamera, FileMusic, FileCode, FileSpreadsheet,
 } from '@lucide/vue'
 import { useFilesStore, useUserStore } from '../stores'
@@ -16,10 +16,13 @@ const uploadInput = ref(null)
 // 上传状态在 store 中：离开页面再回来仍能看到正在上传，按钮保持禁用
 const isUploading = computed(() => filesStore.isUploading)
 
-onMounted(async () => {
+// 失败原因记在 store.loadError，页面显示「加载失败 + 重试」，不会把没加载出来误当成没有文件
+const loadFiles = () => filesStore.fetchFiles().catch(() => {})
+
+onMounted(() => {
   // 先挂监听再拉列表，避免拉取期间漏掉其他终端的变更
   filesStore.setupWebSocket()
-  await filesStore.fetchFiles()
+  return loadFiles()
 })
 
 onUnmounted(() => {
@@ -57,6 +60,15 @@ const handleDownload = async (file) => {
   } catch (error) {
     toast.error('下载失败：' + (error.message || '未知错误'))
   }
+}
+
+// 下载中的状态文字：浏览器要收完整个文件才弹出保存，期间显示进度，避免用户以为没反应而重复点击
+const downloadText = (file) => {
+  const state = filesStore.downloads[file.id]
+  if (!state) return ''
+  return state.total > 0
+    ? `下载中 ${Math.min(100, Math.round((state.loaded / state.total) * 100))}%`
+    : '下载中…'
 }
 
 const handleDelete = async (file) => {
@@ -156,6 +168,16 @@ const formatDate = (value) => formatDateTime(value)
       加载中…
     </div>
 
+    <div v-else-if="filesStore.loadError" class="empty" role="alert">
+      <span class="empty-icon"><TriangleAlert :size="20" /></span>
+      <p class="empty-title">文件列表加载失败</p>
+      <p class="empty-text">{{ filesStore.loadError }}</p>
+      <button class="btn btn-secondary" @click="loadFiles">
+        <RotateCw />
+        重试
+      </button>
+    </div>
+
     <div v-else-if="filesStore.files.length === 0" class="empty">
       <span class="empty-icon"><FolderOpen :size="20" /></span>
       <p class="empty-title">还没有文件</p>
@@ -172,12 +194,20 @@ const formatDate = (value) => formatDateTime(value)
         <span class="file-main">
           <span class="file-name" :title="file.original_name">{{ file.original_name }}</span>
           <span class="file-sub">{{ formatSize(file.size) }} · {{ formatDate(file.created_at) }}</span>
+          <span v-if="filesStore.downloads[file.id]" class="file-downloading" role="status">{{ downloadText(file) }}</span>
         </span>
         <span class="file-size">{{ formatSize(file.size) }}</span>
         <span class="file-date">{{ formatDate(file.created_at) }}</span>
         <span class="file-actions">
-          <button class="btn-icon" title="下载" aria-label="下载" @click="handleDownload(file)">
-            <Download />
+          <button
+            class="btn-icon"
+            :title="filesStore.downloads[file.id] ? downloadText(file) : '下载'"
+            :aria-label="filesStore.downloads[file.id] ? downloadText(file) : '下载'"
+            :disabled="!!filesStore.downloads[file.id]"
+            @click="handleDownload(file)"
+          >
+            <LoaderCircle v-if="filesStore.downloads[file.id]" class="spin" />
+            <Download v-else />
           </button>
           <button class="btn-icon danger" title="删除" aria-label="删除" @click="handleDelete(file)">
             <Trash2 />
@@ -327,6 +357,12 @@ const formatDate = (value) => formatDateTime(value)
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.file-downloading {
+  font-size: var(--text-xs);
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
 }
 
 /* 窄屏时大小和时间挪到文件名下方 */

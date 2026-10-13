@@ -1,12 +1,14 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { History, Save, LoaderCircle, RotateCcw, Trash2, X, Inbox } from '@lucide/vue'
-import { useClipboardStore } from '../stores'
+import { useClipboardStore, useUserStore } from '../stores'
 import { formatRelative } from '../utils/format'
 import toast from '../utils/toast'
 import { confirmDialog } from '../utils/dialog'
 
 const clipboardStore = useClipboardStore()
+const userStore = useUserStore()
 
 const textContent = ref('')
 // 编辑框最近一次与服务端一致时的内容；textContent 与它不同即表示有未保存的本地编辑
@@ -29,7 +31,32 @@ watch(showHistory, (visible) => {
   clipboardStore.historyVisible = visible
 })
 
+watch(isDirty, (dirty) => {
+  clipboardStore.hasUnsavedEdit = dirty
+})
+
+// 有未保存的修改时离开：编辑框内容只存在本页，切到别的页面或刷新就丢了，先让用户确认。
+// 已经登出（退出登录、登录过期）时不再拦：退出登录的确认在登出之前已经做过
+onBeforeRouteLeave(async () => {
+  if (!isDirty.value || !userStore.isLoggedIn) return true
+  return await confirmDialog({
+    title: '放弃未保存的修改？',
+    message: '编辑框里的内容还没有保存，离开后会丢失。',
+    confirmText: '放弃并离开',
+    cancelText: '继续编辑',
+    danger: true,
+  })
+})
+
+// 刷新、关闭标签页时由浏览器自带的确认框拦一下（文案由浏览器决定）
+const onBeforeUnload = (event) => {
+  if (!isDirty.value || !userStore.isLoggedIn) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
 onMounted(async () => {
+  window.addEventListener('beforeunload', onBeforeUnload)
   // 先注册监听再拉数据，拉取期间的推送也不会漏掉
   clipboardStore.setupWebSocket()
   try {
@@ -42,7 +69,9 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('beforeunload', onBeforeUnload)
   clipboardStore.historyVisible = false
+  clipboardStore.hasUnsavedEdit = false
   clipboardStore.cleanupWebSocket()
 })
 

@@ -19,6 +19,10 @@ const error = ref('')
 const success = ref(false)
 
 const handleRegister = async () => {
+  // 复制粘贴时容易带上首尾空格：用户名和邀请码先去掉（密码不处理，空格可能是密码的一部分）
+  form.value.username = form.value.username.trim()
+  form.value.invite_code = form.value.invite_code.trim()
+
   // 验证
   if (!form.value.username || !form.value.password || !form.value.invite_code) {
     error.value = '请填写所有必填项'

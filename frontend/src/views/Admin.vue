@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import {
   ChartColumn, Users, UserCheck, Ticket, Folder, Settings, File, HardDrive,
   Plus, Copy, Trash2, Ban, CircleCheck, Pencil, ChevronLeft, ChevronRight,
@@ -10,11 +10,20 @@ import { PAGE_SIZE } from '../stores/admin'
 import { formatDateTime, formatSize } from '../utils/format'
 import { copyToClipboard } from '../utils/clipboard'
 import toast from '../utils/toast'
-import { confirmDialog, promptDialog, copyDialog } from '../utils/dialog'
+import { confirmDialog, promptDialog, copyDialog, dialogState } from '../utils/dialog'
 
 // 访问权限由路由守卫（meta.requiresAdmin）拦截，后端接口再做最终校验
 const adminStore = useAdminStore()
 const userStore = useUserStore()
+
+// Esc 关闭「创建邀请码」弹窗（不依赖焦点在弹窗内）；全局对话框打开时 Esc 只作用于它
+const onEscape = (event) => {
+  if (event.key === 'Escape' && showCreateInviteModal.value && !dialogState.current) {
+    showCreateInviteModal.value = false
+  }
+}
+onMounted(() => window.addEventListener('keydown', onEscape))
+onUnmounted(() => window.removeEventListener('keydown', onEscape))
 
 const TABS = [
   { key: 'stats', label: '概览', icon: ChartColumn },
@@ -84,8 +93,10 @@ const handleSaveSettings = async () => {
     toast.error('当前设置未能加载，请刷新页面后再保存')
     return
   }
-  const quotaMB = Number(settingsForm.value.default_quota_mb)
-  if (!Number.isInteger(quotaMB) || quotaMB < 0) {
+  // 输入框清空后得到的是空字符串，Number('') 等于 0，必须先拦下，否则会静默保存成 0 MB
+  const rawQuota = settingsForm.value.default_quota_mb
+  const quotaMB = Number(rawQuota)
+  if (rawQuota === '' || rawQuota === null || !Number.isInteger(quotaMB) || quotaMB < 0) {
     toast.error('默认配额必须是非负整数（MB）')
     return
   }
