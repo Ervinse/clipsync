@@ -1,26 +1,16 @@
 /**
- * 访问码 API
+ * 访问码 API（需登录）：给内容设置访问码、按访问码查看总览
  */
 import request from './request'
 
 export default {
-  // 创建访问码
-  create(data) {
-    return request.post('/access-codes', data)
+  // 设置 / 修改 / 清除访问码：{ target_type: 'clipboard' | 'text' | 'file', target_id, code（null 为清除）, expires_at }
+  setCode(data) {
+    return request.put('/access-codes', data)
   },
 
-  // 获取访问码列表
-  list() {
+  // 按访问码分组的总览：{ username, groups: [{ code, items }], total }
+  overview() {
     return request.get('/access-codes')
-  },
-
-  // 撤销访问码
-  revoke(id) {
-    return request.delete(`/access-codes/${id}`)
-  },
-
-  // 免登录访问文本（公开接口）
-  accessText(code) {
-    return request.get(`/access/${code}`)
   },
 }

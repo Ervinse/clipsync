@@ -6,6 +6,7 @@ import api from '../api'
 import ws from '../utils/websocket'
 // 以下 store 也 import 了本模块（循环引用）：只在函数体内调用 useXxxStore()，模块顶层不调用，ESM 下安全
 import { useClipboardStore } from './clipboard'
+import { useTextsStore } from './texts'
 import { useFilesStore } from './files'
 import { useAccessStore } from './access'
 import { useAdminStore } from './admin'
@@ -116,20 +117,20 @@ export const useUserStore = defineStore('user', {
       localStorage.removeItem('access_token')
       ws.disconnect()
 
-      for (const store of [useClipboardStore(), useFilesStore(), useAccessStore(), useAdminStore()]) {
+      for (const store of [useClipboardStore(), useTextsStore(), useFilesStore(), useAccessStore(), useAdminStore()]) {
         store.cleanupWebSocket?.()
         store.$reset()
       }
     },
 
     /**
-     * 凭证失效 / 账号被禁用：登出并回到登录页（登录页、注册页、公开访问页不跳转，访客不受影响）
+     * 凭证失效 / 账号被禁用：登出并回到登录页（登录页、注册页、快速访问页不跳转，访客不受影响）
      */
     handleAuthLost() {
       this.logout()
       const path = window.location.pathname
-      // 登录页、注册页、公开访问页本来就不需要登录：留在原地（带着过期 token 打开邀请链接时不被踢去登录页）
-      if (!path.startsWith('/access/') && path !== '/login' && path !== '/register') {
+      // 登录页、注册页、快速访问页本来就不需要登录：留在原地
+      if (path !== '/quick' && path !== '/login' && path !== '/register') {
         // 带上当前页面，重新登录后回到这里
         window.location.href = '/login?redirect=' + encodeURIComponent(path + window.location.search)
       }

@@ -31,6 +31,12 @@ const routes = [
         meta: { requiresAuth: true },
       },
       {
+        path: '/texts',
+        name: 'Texts',
+        component: () => import('../views/Texts.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
         path: '/files',
         name: 'Files',
         component: () => import('../views/Files.vue'),
@@ -51,9 +57,10 @@ const routes = [
     ],
   },
   {
-    path: '/access/:code',
-    name: 'PublicAccess',
-    component: () => import('../views/PublicAccess.vue'),
+    // 快速访问页：凭「用户名@访问码」进入，不需要登录（没有快速访问凭证时页面自己回到登录页）
+    path: '/quick',
+    name: 'QuickAccess',
+    component: () => import('../views/QuickAccess.vue'),
     meta: { requiresAuth: false },
   },
   {

@@ -9,9 +9,9 @@ export default {
     return request.get('/clipboard')
   },
 
-  // 更新文本
-  update(content) {
-    return request.put('/clipboard', { content })
+  // 更新文本：baseVersion 为读取时的版本号，与服务端不一致返回 409；传 null 表示直接覆盖
+  update(content, baseVersion = null) {
+    return request.put('/clipboard', { content, base_version: baseVersion })
   },
 
   // 获取历史记录（后端返回全部，最多 HISTORY_KEEP 条，不分页）

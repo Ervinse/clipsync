@@ -1,6 +1,6 @@
 <script setup>
 // 登录 / 注册页共用的布局：左侧品牌介绍（窄屏隐藏），右侧表单（默认插槽）
-import { Clipboard, FolderUp, Link } from '@lucide/vue'
+import { Clipboard, FolderUp, KeyRound } from '@lucide/vue'
 import BrandMark from './BrandMark.vue'
 
 defineProps({
@@ -11,7 +11,7 @@ defineProps({
 const FEATURES = [
   { icon: Clipboard, title: '文本实时同步', text: '在一台设备上保存，其他设备立刻看到' },
   { icon: FolderUp, title: '大文件分片上传', text: '上传进度实时可见，存储配额一目了然' },
-  { icon: Link, title: '免登录分享', text: '生成访问链接，可设有效期，随时撤销' },
+  { icon: KeyRound, title: '快速访问码', text: '自己设置访问码，在任意设备输入「用户名@访问码」免登录取用' },
 ]
 </script>
 

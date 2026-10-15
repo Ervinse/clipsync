@@ -16,7 +16,7 @@ const POLICY_VIOLATION = 1008
 // 发出 ping 后这么久没收到任何消息，就认为连接已半断（休眠、切网络后 TCP 没有报错）并重建
 const PONG_TIMEOUT = 10000
 
-class WebSocketManager {
+export class WebSocketManager {
   constructor() {
     this.ws = null
     this.url = ''
@@ -285,5 +285,5 @@ class WebSocketManager {
   }
 }
 
-// 单例导出
+// 登录用户共用的单例；快速访问页另建一个实例（stores/quick.js），两者互不影响
 export default new WebSocketManager()
