@@ -10,7 +10,7 @@ export default defineConfig({
       '/api': {
         // 用 127.0.0.1：后端只监听 IPv4，localhost 可能先解析成 ::1 导致代理失败
         target: 'http://127.0.0.1:8000',
-        // 保留浏览器的 Host（localhost:3000），后端据此拼出的访问码链接才指向前端页面
+        // 保留浏览器的 Host（localhost:3000），与经 Nginx 部署时后端看到的 Host 一致
         changeOrigin: false,
       },
       '/ws': {

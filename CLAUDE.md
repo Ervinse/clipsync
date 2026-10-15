@@ -27,7 +27,6 @@
 
 ## HTTP / HTTPS 双部署（编码要点，机制见第 11 节）
 - 前端 API 用**相对路径**（`/api/...`）；WebSocket 按 `window.location.protocol` 自动选 `ws://`/`wss://`，**禁止写死协议**。
-- 访问码链接由后端按请求的 `scheme` + `host` **动态拼接**，禁止硬编码协议或域名。
 - 安全行为读 `.env` 开关：`HSTS_ENABLED`（后端下发 HSTS 头）、`CORS_ORIGINS`（CORS 白名单）已生效；`DEPLOY_SCHEME`、`COOKIE_SECURE` 为预留项，目前代码未使用。Token 走 `Authorization` header + localStorage，不依赖 cookie。
 
 ## 目录结构（细节见第 13 节）
@@ -35,8 +34,9 @@
 - 新增文件前先对照第 13 节的落位；**确需新目录，先说明理由再建**。
 
 ## 数据模型（字段以第 5 节为准）
-- 字段**不要随意增减**；clipboard 一人一条「当前文本」用 upsert，旧内容入 clipboard_history。
-- 文本访问码**不存快照**，实时指向属主当前文本；文件访问码存 file_id 引用。
+- 字段**不要随意增减**；clipboard 一人一条「当前文本」用 upsert，旧内容入 clipboard_history；文本栏目（texts）每人多条，没有历史。
+- 快速访问码挂在内容上（clipboard / texts / files 的 `access_code` + `access_expires_at`），每样内容最多一个、可重复；云剪切板的访问码**不存快照**，实时指向当前文本。
+- 快速访问凭证（JWT `typ=qa`）与登录凭证**互不通用**；快速访问每个请求都回库校验访问码仍有效，查询限定「属主 + 访问码」。
 - 改动任何数据模型，必须**同步写 Alembic 迁移**。
 
 ## 测试

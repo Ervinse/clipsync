@@ -13,9 +13,10 @@
 
 ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器中登录后：
 
-- **文本同步**：粘贴的文本实时推送到该用户的其他在线终端，无需手动刷新。每个用户只有一段「当前文本」（相当于一个云剪切板），同时保留历史版本可回看。
+- **云剪切板**：粘贴的文本实时推送到该用户的其他在线终端，无需手动刷新。每个用户只有一段「当前文本」，同时保留历史版本可回看。
+- **文本栏目**：与云剪切板分开的多段独立文本（每人最多 200 段，可选标题），每段可以单独设置访问码。
 - **文件同步**：上传的文件保存到服务器，其他终端可下载。后端广播 `file_added` / `file_deleted`，其他终端打开的文件页收到后自动刷新列表。
-- **快速访问码**：为「自己的最新文本」或「某个文件」生成一个访问码，在**任意终端免登录**输入该码即可快速查看/下载。用途是方便自己跨设备取用，不是分发给他人。
+- **快速访问码**：用户自己给云剪切板、某段文本或某个文件设置访问码（每样内容最多一个，多样内容可以用同一个）。在任意设备的登录页输入「用户名@访问码」即可**免登录**进入，看到该访问码下的全部内容：文本可查看与修改，文件可下载；不能新建、删除、上传。用途是方便自己跨设备取用，不是分发给他人。
 - **文本历史**：每次保存时旧内容进入历史，保留最近 `HISTORY_KEEP` 条（默认 50）；可查看、载入编辑框、恢复为当前文本或删除。
 - **多用户隔离**：普通用户只能看到自己的文本和文件。
 - **邀请码注册**：一次性邀请码，可设过期时间；系统设置可关闭注册（关闭后持有邀请码也无法注册）。
@@ -24,7 +25,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 ### 核心使用场景
 
-在公司电脑复制一段文本/一个文件 → 打开网页粘贴/上传 → 回家用另一台电脑登录即可看到；或者不想登录，事先为文本/文件生成一个快速访问码，在任意浏览器输入码就能立刻看到自己的最新文本或下载文件。
+在公司电脑复制一段文本/一个文件 → 打开网页粘贴/上传 → 回家用另一台电脑登录即可看到；或者不想登录，事先给文本/文件设置一个访问码（如 `work`），在任意浏览器的登录页输入 `用户名@work` 就能查看、修改这些文本或下载文件。
 
 ### 范围边界（已确认不做）
 
@@ -47,10 +48,10 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | 测试 | pytest + pytest-asyncio | 后端用例经 FastAPI `TestClient` 同步调用（pytest-asyncio 在依赖中，目前没有异步用例）；`pytest 路径::用例名` 跑单个 |
 | 前端框架 | Vue 3 + Vite 8 | 组合式 API；Vite 8 要求 Node 20.19+ 或 22.12+ |
 | 路由 | vue-router | 登录与角色守卫 |
-| 状态管理 | Pinia | user / clipboard / files / access / admin 五个 store |
+| 状态管理 | Pinia | user / clipboard / texts / files / access / quick / admin 七个 store |
 | HTTP 客户端 | axios | 统一封装、自动带 token |
 | 图标 / 字体 | @lucide/vue + @fontsource-variable/inter | 细线图标；Inter 字体随前端打包，不依赖外网字体服务 |
-| 实时通道 | 原生 WebSocket | 按 user_id 广播 |
+| 实时通道 | 原生 WebSocket | 按 user_id 广播；快速访问页按「属主 + 访问码」推送 |
 | 文件存储 | 服务器本地磁盘 | 按 user_id 分目录 |
 | 部署 | Docker Compose | MySQL、后端、前端（Nginx）三个容器；部署文件在 `deployment/docker/` |
 
@@ -79,7 +80,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
                   ┌─────▼────┐   ┌─────▼──────┐
                   │  MySQL   │   │ 本地磁盘    │
                   │ 用户/元数据│   │ storage/   │
-                  │ 访问码/邀请│   └────────────┘
+                  │ 文本/邀请码│   └────────────┘
                   └──────────┘
 ```
 
@@ -87,7 +88,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 - 浏览器访问 `/` → Nginx 返回 Vue 构建产物。
 - 登录用户调用 `/api/*` → 反代到 FastAPI（带 JWT）。
 - 实时通道 `/ws` → WebSocket upgrade → 连接管理器。
-- 快速访问 `/access/<code>`（前端页面，文件码带 `?t=file`；缺少该参数时页面会在文本码查询 404 后再探测一次下载接口）→ 调 `/api/access/<code>` 或 `/api/access/<code>/download`（**免登录**）。
+- 快速访问：登录页输入「用户名@访问码」→ `POST /api/access/login` 换取快速访问凭证 → 前端页面 `/quick` 调 `/api/access/*` 与 `/ws`（**免登录**，凭证只对这些接口有效）。
 
 ---
 
@@ -97,7 +98,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 | 能力 | 普通用户 user | 管理员 admin | 超级管理员 superadmin |
 |------|:---:|:---:|:---:|
-| 管理自己的文本/文件/访问码 | ✓ | ✓ | ✓ |
+| 管理自己的云剪切板/文本/文件/访问码 | ✓ | ✓ | ✓ |
 | 进入管理后台面板 | ✗ | ✓ | ✓ |
 | 查看用户列表/详情、系统统计 | ✗ | ✓ | ✓ |
 | 生成、查看、删除（未使用的）邀请码 | ✗ | ✓ | ✓ |
@@ -151,8 +152,11 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | user_id | BIGINT PK / FK→users | 主键即 user_id，保证一人一条「当前文本」 |
 | content | MEDIUMTEXT | 当前文本内容 |
 | updated_at | DATETIME | 最后更新时间 |
+| version | INT | 每次写入内容加 1，用于保存冲突检测（没有记录时接口返回 0） |
+| access_code | VARCHAR(32) NULL | 快速访问码（小写），NULL 表示没有设置（见 5.8） |
+| access_expires_at | DATETIME NULL | 访问码过期时间，NULL 不过期 |
 
-> 该表为用户的「云剪切板」，每用户仅一条当前内容，写入采用 upsert。
+> 该表为用户的「云剪切板」，每用户仅一条当前内容，写入采用 upsert。还没保存过内容就先设置访问码时，会建一条内容为空、version 为 0 的记录。
 
 ### 5.4 clipboard_history — 文本历史版本
 
@@ -167,7 +171,21 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 > **保留策略**：每用户保留最近 `HISTORY_KEEP` 条（`.env`，默认 50；不能在后台修改），超出部分按时间自动清理最旧记录。
 > 文本内容按 UTF-8 编码后不超过 8MB（8388608 字节），`ClipboardUpdate` 按字节数校验。列类型 MEDIUMTEXT 容量 16MB（迁移 `3f1c2a9d7b4e`）；应用层上限必须小于 Nginx 的 `client_max_body_size`（10m），否则超限请求在 Nginx 就被 413 拒绝。
 
-### 5.5 files — 文件元数据
+### 5.5 texts — 文本栏目
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | BIGINT PK | |
+| user_id | BIGINT FK→users | 归属用户，查询按此过滤 |
+| title | VARCHAR(100) | 标题，可为空字符串（入库前去掉首尾空白） |
+| content | MEDIUMTEXT | 文本内容，上限与云剪切板相同（8MB） |
+| version | INT | 每次保存加 1，用于保存冲突检测 |
+| access_code / access_expires_at | VARCHAR(32) NULL / DATETIME NULL | 快速访问码与过期时间（见 5.8） |
+| created_at / updated_at | DATETIME | 创建 / 最后保存时间 |
+
+> 索引 `(user_id, access_code)`。每人最多 200 段（`api/texts.py` 的 `MAX_TEXTS_PER_USER`），没有历史版本。
+
+### 5.6 files — 文件元数据
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -178,8 +196,9 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | size | BIGINT | 字节数 |
 | mime_type | VARCHAR(128) | MIME 类型 |
 | created_at | DATETIME | 上传完成时间 |
+| access_code / access_expires_at | VARCHAR(32) NULL / DATETIME NULL | 快速访问码与过期时间（见 5.8），索引 `(user_id, access_code)` |
 
-### 5.6 upload_sessions — 分片上传临时状态
+### 5.7 upload_sessions — 分片上传临时状态
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -192,24 +211,18 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | chunk_size | INT | 每片大小 |
 | created_at | DATETIME | 用于清理超时未完成的会话 |
 
-### 5.7 access_codes — 快速访问码
+### 5.8 快速访问码（挂在内容上，没有单独的表）
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | BIGINT PK | |
-| code | VARCHAR(32) UNIQUE | 访问码字符串（12 位随机字母数字，`secrets` 生成，索引） |
-| owner_id | BIGINT FK→users | 归属用户 |
-| target_type | ENUM('TEXT','FILE') | 指向当前文本或某个文件（库中存大写枚举名，API 返回 `text`/`file`） |
-| file_id | BIGINT FK→files NULL | 文件码：引用的文件 id；文本码为 NULL |
-| expires_at | DATETIME NULL | 过期时间，NULL 不过期 |
-| is_revoked | BOOLEAN | 是否已撤销 |
-| created_at | DATETIME | |
+访问码是 `clipboard`、`texts`、`files` 三张表上的 `access_code` + `access_expires_at` 两列：
 
-> **文本访问码指向「当前最新文本」，不存快照**：每个用户只有一段文本（云剪切板），访问码用于属主在其他设备免登录读取该剪切板的**实时最新内容**；属主更新文本后，访问码解析到的内容随之更新。
-> **文件访问码存引用**：记录具体 file_id，源文件删除时指向它的访问码一并删除（应用层显式删除 + 外键 `ON DELETE CASCADE`）。
-> **不含访问计数、次数上限、访问日志**：访问码定位为属主跨设备免登录取用的入口，非对外分发功能。
+- **每样内容最多一个访问码**，再设置一次就是修改；`access_code` 置 NULL 即清除。
+- **访问码可以重复**：同一用户的多样内容可以用同一个码，凭这个码进入能看到它们全部；不同用户的同名码互不相干（完整访问码是「用户名@访问码」）。
+- 格式：4–32 位字母、数字与 `_ - .`，不区分大小写，统一按小写存储；不校验复杂度。
+- 内容删除时访问码随之消失；过期的访问码由定时任务 `cleanup_expired` 清空（内容保留）。
+- **云剪切板访问码实时指向当前文本，不存快照**：属主更新文本后，访问码看到的内容随之更新。
+- **不含访问计数、访问日志**：访问码定位为属主跨设备免登录取用的入口，非对外分发功能。
 
-### 5.8 settings — 系统设置（key-value）
+### 5.9 settings — 系统设置（key-value）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -219,7 +232,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 目前只使用两个 key：`registration_enabled`（`true`/`false`，缺省视为开放）与 `default_quota_bytes`（缺省回落 `.env` 的 `DEFAULT_QUOTA_BYTES`）。
 
-> **外键无级联**：除 `access_codes.file_id` 外，所有外键都没有 `ON DELETE CASCADE`。删除用户时由 `DELETE /api/admin/users/{id}` 按依赖顺序显式删除访问码、上传会话、文件、历史、当前文本，处理其创建/使用过的邀请码，再删用户与磁盘目录。邀请码规则：该用户**使用过**的码保留记录、`used_by` 置空（`used_at` 保留，码仍不可复用）；该用户**创建的未使用**码直接删除；该用户创建的**已使用**码保留作审计，`created_by` 转记到执行删除的超管名下（`created_by` 为 NOT NULL，不改模型）。删除前锁住被删用户行，与 `upload/init` 串行化，避免新建会话的 tmp 目录成为孤儿；磁盘清理失败只记日志，由定时清理的孤儿扫描兜底。
+> **外键无级联**：所有外键都没有 `ON DELETE CASCADE`。删除用户时由 `DELETE /api/admin/users/{id}` 按依赖顺序显式删除上传会话、文件、文本栏目、历史、当前文本（访问码挂在这些内容上，随之删除），处理其创建/使用过的邀请码，再删用户与磁盘目录。邀请码规则：该用户**使用过**的码保留记录、`used_by` 置空（`used_at` 保留，码仍不可复用）；该用户**创建的未使用**码直接删除；该用户创建的**已使用**码保留作审计，`created_by` 转记到执行删除的超管名下（`created_by` 为 NOT NULL，不改模型）。删除前锁住被删用户行，与 `upload/init` 串行化，避免新建会话的 tmp 目录成为孤儿；磁盘清理失败只记日志，由定时清理的孤儿扫描兜底。
 
 > **时间约定**：所有 DATETIME 列存 naive UTC；数据库会话时区固定 `+00:00`，代码统一用 `utcnow()`。
 
@@ -227,9 +240,9 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 ## 6. API 设计
 
-除注册、登录、快速访问外，`/api/*` 都需 `Authorization: Bearer <token>`。缺少或无效 token 返回 401，用户被禁用返回 403 并带响应头 `X-Auth-Error: disabled`（前端据此与普通「权限不足」的 403 区分并登出）。健康检查为 `GET /`。
+除注册、登录、快速访问外，`/api/*` 都需 `Authorization: Bearer <token>`（登录凭证）。快速访问接口 `/api/access/*` 用快速访问凭证（见 6.5），两种凭证互不通用。缺少或无效 token 返回 401，用户被禁用返回 403 并带响应头 `X-Auth-Error: disabled`（前端据此与普通「权限不足」的 403 区分并登出）。健康检查为 `GET /`。
 
-限流（slowapi，按客户端 IP，进程内存计数）：注册 5 次/分钟、登录 10 次/分钟、`/api/access/*` 每个接口 30 次/分钟。
+限流（slowapi，按客户端 IP，进程内存计数）：注册 5 次/分钟、登录 10 次/分钟、快速访问换取凭证 `POST /api/access/login` 30 次/分钟、其余 `/api/access/*` 每个接口 120 次/分钟。快速访问另有按用户名的输错锁定（第 8 节）。
 
 ### 6.1 认证 `api/auth.py`
 
@@ -239,47 +252,60 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | POST | /api/auth/login | 公开 | 返回 JWT；用户不存在与密码错误返回同样的 401，耗时一致 |
 | GET | /api/auth/me | 登录 | 当前用户信息（含 role、配额、已用空间 `used_bytes`、上传中占用 `reserved_bytes`）；账号被禁用时 403 并带响应头 `X-Auth-Error: disabled` |
 
-### 6.2 文本 `api/clipboard.py`
+### 6.2 云剪切板 `api/clipboard.py`
 
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
-| GET | /api/clipboard | 登录 | 获取自己的当前文本 |
-| PUT | /api/clipboard | 登录 | 更新当前文本（upsert），旧内容入历史，广播 |
+| GET | /api/clipboard | 登录 | 获取自己的当前文本（含 `version`、`access_code`、`access_expires_at`） |
+| PUT | /api/clipboard | 登录 | 更新当前文本 `{content, base_version?}`（upsert），旧内容入历史，广播；`base_version` 与当前版本不一致返回 409，省略则直接覆盖 |
 | GET | /api/clipboard/history | 登录 | 列出自己的全部文本历史版本（不分页，最多 `HISTORY_KEEP` 条） |
 | POST | /api/clipboard/history/{id}/restore | 归属 | 把某历史版本恢复为当前文本，广播 |
 | DELETE | /api/clipboard/history/{id} | 归属 | 删除某条历史版本，广播 |
 
 > 前端：点击历史条目只把内容填回编辑框（不保存）；「恢复」按钮调 restore，「删除」按钮调 delete。文本内容按 UTF-8 字节数校验，上限 8MB（8388608 字节）。
 
-### 6.3 文件 `api/files.py`
+### 6.3 文本栏目 `api/texts.py`
 
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
-| GET | /api/files | 登录 | 列出自己的文件，并返回 `used_bytes`、`reserved_bytes`、`quota_bytes`（前端配额按 已用 + 上传中 计算） |
+| GET | /api/texts | 登录 | 列出自己的全部文本 `{items, total, max_texts}`；不超过 64KB 的文本带全文 `content`，更长的 `content` 为 null，只给开头 200 字 `preview` 与字节数 `size` |
+| POST | /api/texts | 登录 | 新建 `{title?, content?}`；已有 200 段返回 400；广播 `texts_changed` |
+| GET | /api/texts/{id} | 归属 | 读取全文；他人文本与不存在统一 404 |
+| PUT | /api/texts/{id} | 归属 | 保存 `{title, content, base_version?}`；版本不一致返回 409；广播 `texts_changed` |
+| DELETE | /api/texts/{id} | 归属 | 删除（访问码随之消失），广播 `texts_changed` |
+
+### 6.4 文件 `api/files.py`
+
+| 方法 | 路径 | 权限 | 说明 |
+|------|------|------|------|
+| GET | /api/files | 登录 | 列出自己的文件（含 `access_code`、`access_expires_at`），并返回 `used_bytes`、`reserved_bytes`、`quota_bytes`（前端配额按 已用 + 上传中 计算） |
 | POST | /api/files/upload/init | 登录 | 初始化分片上传（先校验配额），返回 upload_id |
 | POST | /api/files/upload/chunk | 登录 | 上传单个分片 |
 | POST | /api/files/upload/complete | 登录 | 合并分片，写记录，广播 |
 | DELETE | /api/files/upload/{upload_id} | 归属 | 取消进行中的上传：删会话（立即释放配额）+ 清理 tmp；他人会话与不存在统一 404，正在合并返回 409 |
 | GET | /api/files/{id}/download | 归属或 superadmin | 流式下载；无权限与不存在统一返回 404 |
-| DELETE | /api/files/{id} | 归属 | 删文件记录+磁盘+指向它的访问码，广播（superadmin 也不能删他人文件） |
+| DELETE | /api/files/{id} | 归属 | 删文件记录（访问码随之消失）+ 磁盘，广播（superadmin 也不能删他人文件） |
 
-### 6.4 快速访问码 `api/access.py`
-
-| 方法 | 路径 | 权限 | 说明 |
-|------|------|------|------|
-| POST | /api/access-codes | 登录 | 为「当前文本」或「某个文件」生成访问码；`expires_at` 必须晚于当前时间，且不超过 8760 小时后（超出可表示范围的时间同样返回 400）；文件码创建时文件已被删除返回 404；广播 `access_codes_changed` |
-| GET | /api/access-codes | 登录 | 列出自己创建的访问码（含已撤销的；已过期的会被定时任务删除） |
-| DELETE | /api/access-codes/{id} | 归属 | 撤销访问码（标记 `is_revoked`，记录保留），广播 `access_codes_changed` |
-| GET | /api/access/{code} | **公开** | 免登录：**仅文本码**，返回属主当前最新文本 + 属主用户名 |
-| GET | /api/access/{code}/download | **公开** | 免登录：**仅文件码**，流式下载文件内容 |
-
-> 访问接口单独挂载在 `/api/access/*`，与需要登录的 `/api/access-codes`（管理自己的码）是两个独立路由，公开处理函数不会出现在 `/api/access-codes` 前缀下。
-
-### 6.5 管理后台 `api/admin.py`
+### 6.5 快速访问码 `api/access.py`
 
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
-| GET | /api/admin/stats | admin+ | 系统统计（用户总数、活跃用户、文件总数、总存储、访问码总数、有效访问码数；有效 = 未撤销、未过期、属主未被禁用，与免登录访问的判定一致） |
+| PUT | /api/access-codes | 登录 | 设置 / 修改 / 清除访问码 `{target_type: clipboard 或 text 或 file, target_id?, code（null 为清除）, expires_at?}`；文本与文件只能是自己的（否则 404）；`expires_at` 必须晚于当前时间且不超过 8760 小时后；广播 `access_codes_changed`，并通知凭旧码、新码进入的快速访问页 |
+| GET | /api/access-codes | 登录 | 按访问码分组的总览 `{username, groups: [{code, items}], total}`，每项含类型、id、名称（文本标题或开头 / 文件名）、过期时间 |
+| POST | /api/access/login | **公开** | `{full_code: "用户名@访问码"}` 换取快速访问凭证 `{access_token, owner_username, code, expires_in}`（2 小时）；格式不对 400；用户名不存在、码不对、已过期、属主被禁用统一 404；锁定中 429 |
+| GET | /api/access/items | 快速访问 | 该访问码下的全部内容 `{owner_username, code, clipboard, texts, files}`；长文本只给开头 |
+| GET / PUT | /api/access/clipboard | 快速访问 | 读取 / 修改云剪切板（剪切板须挂着这个码）；修改与登录编辑相同：旧内容进历史、`base_version` 冲突检测、广播 |
+| GET / PUT | /api/access/texts/{id} | 快速访问 | 读取全文 / 修改标题与内容（文本须属于属主且挂着这个码，否则 404） |
+| GET | /api/access/files/{id}/download | 快速访问 | 流式下载（文件须挂着这个码）；磁盘文件丢失与内容被删提示相同 |
+
+> 快速访问凭证是 `typ=qa` 的 JWT，`sub` 为属主、另带访问码；它只能用于 `/api/access/*` 与 `/ws`，登录接口拒绝带 `typ` 的 token，登录凭证也不能当快速访问凭证用。每次请求都回库确认属主未禁用、访问码下仍有未过期的内容，所以访问码被清除、修改、过期后凭证立即失效（返回 401）。快速访问没有新建、删除、上传、修改访问码的接口。
+> 公开接口单独挂载在 `/api/access/*`，与需要登录的 `/api/access-codes` 是两个独立路由。
+
+### 6.6 管理后台 `api/admin.py`
+
+| 方法 | 路径 | 权限 | 说明 |
+|------|------|------|------|
+| GET | /api/admin/stats | admin+ | 系统统计（用户总数、活跃用户、文件总数、总存储、访问码总数、有效访问码数；访问码按「属主 + 访问码」去重计数，同一个码挂在多样内容上算一个；有效 = 至少有一样内容未过期且属主未被禁用，与快速访问的判定一致） |
 | GET | /api/admin/users | admin+ | 用户列表，分页 `skip`/`limit`（≤100），含配额、已用空间、文件数 |
 | GET | /api/admin/users/{id} | admin+ | 用户详情（元数据，含剪贴板更新时间，不含内容） |
 | PATCH | /api/admin/users/{id}/quota | **superadmin** | 修改配额 `{quota_bytes}`（0 到 1TB），给目标用户广播 `quota_updated` |
@@ -302,11 +328,12 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 ### 连接管理器（core/ws_manager.py）
 
-维护 `dict[user_id, set[WebSocket]]`，同一用户多终端在线时集合里有多条连接。
+维护两张表：`dict[user_id, set[WebSocket]]` 存登录终端的连接（同一用户多终端在线时集合里有多条）；`dict[属主 user_id, dict[WebSocket, 访问码]]` 存快速访问页的连接。
 
 - **连接**：`/ws`，token 经子协议 `Sec-WebSocket-Protocol: clipsync.v1, bearer.<JWT>` 传递（不放 URL，避免进 access log）→ 校验签名、过期、用户存在且未禁用 → 服务端只回选 `clipsync.v1` → 加入集合。
 - **握手被拒**：token 无效、用户不存在或被禁用时，服务端在 accept 之前关闭连接，浏览器只能看到 **1006**（与服务器不可达无法区分）。
-- **踢下线**：已连接的用户被禁用或删除时，服务端以 **1008** 主动关闭其全部连接；每个连接最多等 5 秒，网络卡住的终端不会拖住禁用 / 删除请求。
+- **快速访问连接**：用快速访问凭证连接，握手时同样校验访问码有效；只接收 `access_items_changed`（该访问码下的内容有变化），不接收属主的其他推送。访问码被清除 / 修改或其下内容删光时服务端以 1008 断开；不经过接口的变化（定时清理清掉过期码、凭证到期）在下一次心跳时发现并断开。
+- **踢下线**：已连接的用户被禁用或删除时，服务端以 **1008** 主动关闭其全部连接（含凭其访问码进入的快速访问页）；每个连接最多等 5 秒，网络卡住的终端不会拖住禁用 / 删除请求。
 - **单进程**：连接表与限流计数都在进程内存中，后端必须单 worker 运行。
 - **断开**：从集合移除，空则删 key。
 - **广播**：`broadcast_to_user(user_id, message)`，发给该用户的**全部连接（含触发变更的终端）**，并发发送，单个连接超时 5 秒；发送失败或超时的连接会被移出集合并由服务端关闭（关闭后前端重连并补拉；只移出不关闭的话，接收循环仍会回心跳，客户端不会察觉连接已失效）。网络卡住的终端不会拖慢触发广播的 HTTP 请求。
@@ -317,23 +344,28 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 ```json
 { "type": "clipboard_updated", "data": { "updated_at": "..." } }
+{ "type": "texts_changed", "data": { "id": 1 } }
 { "type": "file_added",   "data": { "id": 1, "original_name": "...", "size": 123 } }
 { "type": "file_deleted", "data": { "id": 1 } }
 { "type": "access_codes_changed", "data": {} }
 { "type": "quota_updated", "data": { "quota_bytes": 104857600 } }
+{ "type": "access_items_changed", "data": {} }   // 只发给快速访问页
 ```
 
 | 事件 | 触发 | 前端处理 |
 |------|------|----------|
-| `clipboard_updated` | 保存 / 恢复历史 / 删除历史（删除历史时 `data` 为空） | 剪贴板页静默重拉当前文本；历史面板打开时一并重拉历史（按请求序号丢弃过期结果） |
-| `file_added` / `file_deleted` | 上传完成 / 删除文件 | 文件页静默重拉列表；访问码页在 `file_deleted` 时重拉访问码（文件码被级联删除），并重拉文件列表供创建弹窗的下拉使用；布局（`Home.vue`）刷新侧栏配额 |
-| `access_codes_changed` | 创建 / 撤销访问码 | 访问码页重拉列表 |
+| `clipboard_updated` | 保存（含快速访问修改）/ 恢复历史 / 删除历史（删除历史时 `data` 为空） | 云剪切板页静默重拉当前文本；历史面板打开时一并重拉历史（按请求序号丢弃过期结果） |
+| `texts_changed` | 新建 / 保存（含快速访问修改）/ 删除文本 | 文本页静默重拉列表；访问码页重拉总览 |
+| `file_added` / `file_deleted` | 上传完成 / 删除文件 | 文件页静默重拉列表；访问码页在 `file_deleted` 时重拉总览；布局（`Home.vue`）刷新侧栏配额 |
+| `access_codes_changed` | 设置 / 修改 / 清除访问码，删除带访问码的文本或文件 | 访问码页重拉总览；云剪切板、文本、文件页重拉以显示最新的访问码 |
+| `access_items_changed` | 快速访问页所用访问码下的内容被修改、增删，或访问码被改动 | 快速访问页静默重拉内容 |
 | `quota_updated` | 超管修改该用户配额 | 布局刷新侧栏配额 |
 
 - 页面级监听在挂载时注册、卸载时清理；各页面同时订阅 `open`，连接（重新）建立后补拉一次，断线期间的变更不会漏掉。
 - 心跳：客户端每 30 秒发 `{"type":"ping"}`，服务端回 `{"type":"pong"}`；单条消息超过 1KB 服务端直接断开。心跳只在连接打开时发送，离线时不排队。客户端发出 ping 后 10 秒内没收到任何消息，就认为连接已半断并重建。
 - 前端重连：指数退避（1s、2s、4s…，最长 30s），不限次数；网络恢复（`online`）或页面回到前台时立即重试（已断开的直接重连；看起来仍连着的先探测一次，没有回应就重建）。收到 1008 时停止重连并登出。连接从未打开就关闭（多为握手被拒的 1006）时，前端调一次 `/api/auth/me` 确认会话：401 / 禁用 403 则登出、不再重连，其他情况继续退避重连。登出时主动断开，不会自动重连。
 - 重连只使用本标签页内存中的 token，不读 localStorage；其他标签页换账号改写 localStorage 时，本页整页重载。
+- 快速访问页用单独的 WebSocket 实例（`stores/quick.js` 的 `quickWs`），重连规则相同；收到 1008 时提示访问码已失效。
 
 ### WebSocket 协议自适应（HTTP/HTTPS 通用）
 
@@ -350,35 +382,32 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 
 > 定位：**供属主本人跨设备免登录取用自己内容的入口**，非对外分发功能。因此不设访问次数、访问日志等分发控制。
 
-### 生成
+### 设置
 
-登录用户调用 `POST /api/access-codes`：
+登录用户在云剪切板、文本、文件页面的条目旁点「访问码」，调用 `PUT /api/access-codes` 设置、修改或清除（数据结构见 5.8）。可选有效期，最长 8760 小时（1 年），前后端都校验。访问码页按访问码分组显示总览，可逐项清除。
 
-- **文本码** → 只记录 `target_type='text'` 与 `owner_id`，**不存快照**。访问时实时读取属主的当前文本。
-- **文件码** → 记录 `target_type='file'` 与 `file_id`。
-- 可选 `expires_at`（过期时间，带时区的时间会转为 UTC 存储）。
-- 后端响应中的 `access_url` 是按请求 `scheme` + `host` 拼出的**前端访问页地址**：`http(s)://<host>/access/<code>`，文件码追加 `?t=file`。前端「复制链接」直接使用 `access_url`，不自行拼接。
-- 开发环境下 Vite 的 `/api` 代理需设 `changeOrigin: false`，保留浏览器的 Host（`localhost:3000`），否则拼出的链接会指向后端端口。
+### 进入（免登录）
 
-### 访问（免登录）
+1. 在登录页的「快速访问码」输入框输入 `用户名@访问码`（用户名不含 `@`，按 `@` 拆分没有歧义；访问码不区分大小写）。
+2. `POST /api/access/login` 校验通过后返回 2 小时的快速访问凭证，前端存在 sessionStorage（刷新页面仍在，关掉标签页即失效），跳到 `/quick`。
+3. 快速访问页列出该访问码下的云剪切板、文本、文件：文本可查看与修改（含标题），文件可下载；不能新建、删除、上传，也看不到、改不了访问码。
+4. 用访问码修改云剪切板时，旧内容同样进历史；保存都带版本号，内容已在别处改过时返回 409，页面让用户选择「载入最新内容」或「仍然覆盖」（登录编辑同样如此）。
+5. 页面经 WebSocket 实时刷新；访问码失效时提示并禁止保存与下载，未保存的内容留在页面上可以先复制。
 
-在任意终端打开 `/access/<code>`（前端访问页），或直接调 API：
+### 失效
 
-```
-GET /api/access/<code>            # 仅文本码：实时查属主 clipboard，返回当前最新文本
-GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
-  校验：存在 / 类型匹配 / 未撤销 / 未过期 / 属主未被禁用 / 文件仍属于属主
-```
-
-- 撤销、过期、（文件码）源文件删除或磁盘文件丢失、属主被禁用，都会使访问码失效。属主被禁用只是暂时失效：重新启用后，未撤销、未过期的码自动恢复可用。
-- 有效期最长 8760 小时（1 年），前后端都校验。过期的码由定时任务 `cleanup_expired` 删除；撤销的码保留记录，前端分别显示「已撤销」「已过期」。
-- 以上任何一种失效情况都统一返回 404「访问码无效或已失效」，不暴露码是否存在。
+- 访问码被清除或修改、过期、其下内容全部删除、属主被禁用、凭证满 2 小时，都会使快速访问失效，并且**立即生效**：每个请求都回库校验，WebSocket 连接被断开。
+- 属主被禁用只是暂时失效：重新启用后，访问码未过期的可以重新进入。
+- 进入时的各种失败（用户名不存在、码不对、已过期、属主被禁用）统一返回 404「访问码无效或已失效」，不暴露用户名或访问码是否存在。
 
 ### 安全考量
 
-- `code` 为 12 位随机串（62^12），并对 `/api/access/*` 限流（30 次/分钟/IP）。
-- 免登录接口同样防路径穿越（文件按 file_id 查库拿 stored_name）。
-- 访问码遵循「知道码即可查看」模型，界面须提示：访问码等同于对应内容的免登录凭证，应妥善保管；敏感内容可设置过期时间或及时撤销。
+- 访问码由用户自定，不校验复杂度（太复杂就不「快速」了），只校验长度与字符。防猜测靠两层：
+  - **按用户名锁定**：同一用户名连续输错 10 次，暂停该用户名的快速访问 15 分钟（锁定期间输对也不放行）；输对一次清零。不存在的用户名同样计数，响应一致。账号密码登录不受影响。代价是别人故意输错可以让某个用户名的快速访问暂时不可用。计数在进程内存中，后端重启后清零。
+  - **按 IP 限流**：换取凭证 30 次/分钟/IP。
+- 快速访问凭证与登录凭证互不通用，见 6.5。
+- 免登录接口同样防路径穿越（文件按 file_id 查库拿 stored_name），所有查询都限定「属主 + 访问码」。
+- 界面提示：知道完整访问码的人无需登录就能查看和修改其中的文本、下载其中的文件，应妥善保管；敏感内容可设置过期时间或及时清除。
 
 ---
 
@@ -447,7 +476,7 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
 - 取消：上传中途失败时前端调 `DELETE /api/files/upload/{upload_id}` 立即释放配额；关掉页面等无法取消的会话，靠 `/auth/me` 与 `GET /api/files` 返回的 `reserved_bytes`（侧栏显示「上传中」）让用户看见，并在 TTL 后清理。
 - 每用户进行中的上传会话不超过 `MAX_UPLOAD_SESSIONS_PER_USER`（默认 5），超出返回 429。
 - 会话过期：超过 `UPLOAD_SESSION_TTL_HOURS`（默认 24）的会话，在该用户下次 init 时清理；定时任务 `backend/scripts/cleanup_expired.py`（宿主机 cron 经 `docker compose exec` 每小时执行）清理全站过期会话与 tmp 目录，并做孤儿扫描（超过 TTL 且无会话记录的 tmp 目录、用户已不存在的 `storage/<uid>` 目录；删用户目录前会针对该 id 再查一次 users 表，扫描期间新注册的用户不会被误删）。
-- 下载：线程池中先打开文件再 `fstat` 取大小，下载途中文件被删也能读完；文件不存在返回 404（公开访问码路径统一提示「访问码无效或已失效」）。
+- 下载：线程池中先打开文件再 `fstat` 取大小，下载途中文件被删也能读完；文件不存在返回 404（快速访问路径与内容被删时提示相同）。
 - `upload_id` 必须是服务端生成的标准小写 UUID，其他写法（含大写）在入口一律按「会话不存在」返回 404。
 - 应用内磁盘删除失败只记日志（`rmtree` 用 `onexc` 回调），不影响接口结果。残留的目录（临时分片目录、已删用户的目录）由孤儿扫描兜底；删除单个文件失败时，磁盘上会留下没有记录的文件，孤儿扫描不处理（见 TODO.md）。
 - 写分片遇到磁盘写满等 IO 错误时，半截的 `.part` 文件会被删除。
@@ -464,7 +493,6 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
 1. **前端不写死协议**
    - API 走相对路径（`/api/...`），跟随页面协议。
    - WebSocket 按 `window.location.protocol` 自动选 `ws://`/`wss://`（见第 7 节）。
-   - 访问码链接由后端按请求的 `scheme` + `host` 动态拼接，不硬编码。
 
 2. **Nginx 配置可替换**：frontend 容器的 Nginx 读取挂载进去的 `deployment/docker/nginx-docker.conf`（HTTP，监听 80）。切换 HTTPS 时换成带 443 与证书的配置并映射 443 端口，步骤见 [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md)「使用 HTTPS」。
 
@@ -474,7 +502,7 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
    |------|:---:|:---:|------|
    | `HSTS_ENABLED` | false | true | 由**后端中间件**下发 `Strict-Transport-Security`（HTTP 阶段不能开） |
    | `CORS_ORIGINS` | `http://` 访问地址 | `https://` 访问地址 | 允许来源白名单，逗号分隔，忽略 `*` |
-   | `DEPLOY_SCHEME` | http | https | **预留，代码未读取**；访问码链接按请求的 scheme 拼接 |
+   | `DEPLOY_SCHEME` | http | https | **预留，代码未读取** |
    | `COOKIE_SECURE` | false | true | **预留，代码未读取**；当前不使用 cookie |
 
 ### 阶段说明与提示
@@ -495,12 +523,12 @@ GET /api/access/<code>/download   # 仅文件码：文件内容流式下载
 | 角色权限 | 三级角色后端强制校验；admin 看不到文件/文本内容，仅 superadmin 可绕过。 |
 | 登录爆破 | 注册、登录、快速访问接口限流；登录在用户不存在时也执行一次 bcrypt，防时序枚举。限流按真实客户端 IP，依赖 uvicorn `--proxy-headers` 信任反代传来的 `X-Forwarded-For`。 |
 | 数据隔离 | 隐私查询强制 `WHERE user_id = current_user`，仅 superadmin 例外。 |
-| 越权访问 | 下载/删除先校验归属；访问码按 code 查库，不信任客户端传入路径。 |
+| 越权访问 | 读写、下载、删除、设置访问码前先校验归属；快速访问的查询限定「属主 + 访问码」，不信任客户端传入路径。 |
 | 路径穿越 | 磁盘名用 UUID，绝不用用户文件名拼路径。 |
-| 访问码 | code 足够随机 + 限流 + 可设过期 + 可撤销；前端提示用户妥善保管。 |
+| 访问码 | 用户自定、不校验复杂度；按用户名输错锁定 + 按 IP 限流 + 可设过期 + 可随时清除且立即生效；快速访问凭证与登录凭证互不通用；前端提示用户妥善保管（第 8 节）。 |
 | 上传限制 | Nginx `client_max_body_size`；后端校验单文件上限、单分片字节数、并发会话数与配额。 |
 | 响应头 | 下载用 RFC 6266 编码的 `Content-Disposition`，防头注入；全局下发 `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`。 |
-| WebSocket | token 走子协议头不进 URL；禁用/删除用户时主动断开其连接。 |
+| WebSocket | token 走子协议头不进 URL；禁用/删除用户时主动断开其连接；快速访问连接只收相关信号，访问码失效即断开。 |
 | 错误信息 | 不把底层异常细节（路径等）返回客户端。 |
 | 邀请码 | 一次性、可过期、仅管理员生成。 |
 | CORS | 按 `.env` 的 `CORS_ORIGINS` 限定，不用通配。 |
@@ -522,18 +550,19 @@ CodeProject/
     │   │   ├── config.py         # 读取 .env，校验 JWT_SECRET 强度
     │   │   ├── database.py       # 异步 engine / session 工厂（会话时区 UTC）
     │   │   ├── rate_limit.py     # slowapi 限流器
-    │   │   ├── models/           # user / invite / clipboard / file / access_code / setting
+    │   │   ├── models/           # user / invite / clipboard / text / file / setting
     │   │   ├── schemas/          # Pydantic 请求/响应模型
     │   │   ├── core/
     │   │   │   ├── security.py     # 密码哈希 + JWT
     │   │   │   ├── deps.py         # 依赖注入：当前用户 / 角色校验
-    │   │   │   ├── ws_manager.py   # WebSocket 连接管理器
+    │   │   │   ├── ws_manager.py   # WebSocket 连接管理器（登录终端 + 快速访问页）
+    │   │   │   ├── quick_access.py # 访问码格式、输错锁定、快速访问凭证、通知快速访问页
     │   │   │   ├── storage.py      # 磁盘路径（UUID 校验 + 根目录约束）
     │   │   │   ├── http_utils.py   # 文件名清洗 + Content-Disposition
     │   │   │   ├── app_settings.py # 读 settings 表
     │   │   │   └── timeutil.py     # UTC 时间工具
-    │   │   └── api/              # auth / clipboard / files / access / admin / ws
-    │   ├── alembic/versions/     # 278c88a5f21f 初始表结构；3f1c2a9d7b4e 文本改 MEDIUMTEXT
+    │   │   └── api/              # auth / clipboard / texts / files / access / admin / ws
+    │   ├── alembic/versions/     # 278c88a5f21f 初始表结构；3f1c2a9d7b4e 文本改 MEDIUMTEXT；7c2d4e6f8a1b 访问码挂到内容上、新增 texts
     │   ├── alembic.ini
     │   ├── scripts/              # create_superadmin.py / cleanup_expired.py（定时清理，由宿主机 cron 经 docker compose exec 调用）
     │   ├── tests/                # pytest 用例：安全边界、并发、实时推送、上传下载等（使用独立库 clipsync_test）
@@ -550,23 +579,28 @@ CodeProject/
     │   │   ├── App.vue
     │   │   ├── style.css         # 设计变量与全局组件样式
     │   │   ├── router/index.js   # 路由 + 登录/角色守卫
-    │   │   ├── api/              # request.js(axios 封装) + auth/clipboard/files/access/admin
-    │   │   ├── stores/           # user / clipboard / files / access / admin
+    │   │   ├── api/              # request.js / quickRequest.js(axios 封装) + auth/clipboard/texts/files/access/quick/admin
+    │   │   ├── stores/           # user / clipboard / texts / files / access / quick / admin
     │   │   ├── utils/
     │   │   │   ├── websocket.js    # WS 客户端（协议自适应、重连、心跳）
     │   │   │   ├── clipboard.js    # 复制到剪贴板（HTTP 下降级为 execCommand）
     │   │   │   ├── format.js       # 文件大小、UTC 时间格式化
     │   │   │   ├── toast.js        # 轻提示
-    │   │   │   └── dialog.js       # 确认 / 输入 / 手动复制对话框
-    │   │   ├── components/       # AuthLayout / BrandMark / ToastHost / DialogHost
+    │   │   │   ├── dialog.js       # 确认 / 输入 / 手动复制 / 多选一对话框
+    │   │   │   ├── conflict.js     # 保存冲突时的选择对话框
+    │   │   │   ├── textDrafts.js   # 多段文本的编辑草稿（文本页与快速访问页共用）
+    │   │   │   ├── accessCode.js   # 访问码规则与过期判断
+    │   │   │   └── download.js     # Blob 交给浏览器保存
+    │   │   ├── components/       # AuthLayout / BrandMark / ToastHost / DialogHost / TextEditorCard / AccessCodeButton / AccessCodeDialog
     │   │   └── views/
     │   │       ├── Login.vue / Register.vue
     │   │       ├── Home.vue          # 登录后布局（侧边栏）
-    │   │       ├── Clipboard.vue     # 文本 + 历史
+    │   │       ├── Clipboard.vue     # 云剪切板 + 历史
+    │   │       ├── Texts.vue         # 文本栏目
     │   │       ├── Files.vue         # 文件
-    │   │       ├── AccessCodes.vue   # 访问码管理
+    │   │       ├── AccessCodes.vue   # 访问码总览
     │   │       ├── Admin.vue         # 管理后台（5 个 tab）
-    │   │       └── PublicAccess.vue  # 凭访问码免登录查看 /access/:code
+    │   │       └── QuickAccess.vue   # 凭「用户名@访问码」免登录进入 /quick
     │   ├── public/               # favicon.svg / icons.svg
     │   ├── index.html
     │   ├── README.md             # 前端说明
@@ -618,9 +652,9 @@ CodeProject/
 
 - `proxy_pass` 用变量 + `resolver 127.0.0.11`：backend 容器重建后 IP 会变，Nginx 运行时重新解析。
 - `location /ws` 需 `Upgrade`/`Connection` 头支持 WebSocket。
-- `client_max_body_size` 略大于单个分片大小（`CHUNK_SIZE` 默认 5MB，Nginx 限 10MB），同时大于剪贴板文本上限（8MB，请求体含 JSON 外壳与转义，需要留余量）。
-- `/api` 反代加超时设置适配上传；`Host` 用 `$http_host`（保留端口，访问码链接才正确）。
-- 前端页面 `/access/<code>` 是 SPA 路由，由 `try_files` 回落到 `index.html`，**不要**把 `/access` 反代到后端。
+- `client_max_body_size` 略大于单个分片大小（`CHUNK_SIZE` 默认 5MB，Nginx 限 10MB），同时大于剪贴板文本上限（8MB，云剪切板与文本栏目相同；请求体含 JSON 外壳与转义，需要留余量）。
+- `/api` 反代加超时设置适配上传；`Host` 用 `$http_host`（保留端口）。
+- 前端页面（含快速访问页 `/quick`）是 SPA 路由，由 `try_files` 回落到 `index.html`。
 - 静态页面由 Nginx 加 `X-Frame-Options`、`X-Content-Type-Options`、`Referrer-Policy`；`index.html` 不缓存，带哈希的 `/assets/` 长期缓存；`/api` 的安全头由后端下发。
 - `/.well-known/acme-challenge/` 指向挂载的 `acme/` 目录，供 certbot 以 webroot 方式申请与续期证书。
 - HTTPS 配置额外含证书路径、80→443 跳转。**HSTS 只由后端按 `HSTS_ENABLED` 下发**，Nginx 不配置。
@@ -633,11 +667,12 @@ CodeProject/
 |------|------|------|
 | 基础 | 配置（含 HTTP/HTTPS 开关）、异步数据库、数据模型、Alembic 迁移 | — |
 | 认证与角色 | 邀请码注册、登录、JWT、三级角色校验、存储配额 | 直接创建用户、重置密码、变更角色 |
-| 文本同步 | 当前文本读写、历史查看 / 恢复 / 删除、WebSocket 广播 | — |
+| 云剪切板 | 当前文本读写（冲突检测）、历史查看 / 恢复 / 删除、WebSocket 广播 | — |
+| 文本栏目 | 多段文本新建 / 编辑 / 删除（冲突检测，长文本按需载入）、WebSocket 广播 | 文本历史版本 |
 | 文件 | 分片上传（配额校验、取消）、流式下载、删除、越权与路径穿越防护 | 前端断点续传 |
-| 快速访问码 | 生成 / 撤销、免登录访问（文本实时 / 文件下载）、限流 | — |
+| 快速访问码 | 自定访问码设置 / 修改 / 清除、按访问码总览、「用户名@访问码」免登录进入（改文本 / 下载文件）、实时刷新、输错锁定与限流 | — |
 | 管理后台 | 统计、用户管理（配额 / 启用禁用 / 删除）、邀请码、全站文件元数据、系统设置 | 变更角色、全站访问码管理 |
-| 前端 | 登录 / 注册、剪贴板、文件、访问码、管理后台、公开访问页、路由守卫、WebSocket 接入 | 自动化测试 |
+| 前端 | 登录 / 注册（含快速访问入口）、云剪切板、文本、文件、访问码、管理后台、快速访问页、路由守卫、WebSocket 接入 | 自动化测试 |
 | 部署 | Docker Compose（开发机构建离线导入 / 服务器源码构建）、HTTP / HTTPS Nginx 配置、Let's Encrypt 证书申请与续期、备份 / 清理 / 健康检查脚本 | 不使用 Docker 的直接部署（不支持） |
 
 未实现与待验证的事项汇总在 [TODO.md](TODO.md)。
@@ -746,7 +781,7 @@ pytest tests/test_auth.py::test_name    # 单个
 
 ## 18. 已知限制
 
-- **单进程**：WebSocket 连接表与限流计数都在进程内存中，后端只能单 worker、单实例运行。多实例需要引入跨进程消息（如 Redis pub/sub）并改造广播层与限流存储。
+- **单进程**：WebSocket 连接表、限流计数与快速访问输错计数都在进程内存中（后端重启后计数清零），后端只能单 worker、单实例运行。多实例需要引入跨进程消息（如 Redis pub/sub）并改造广播层与限流存储。
 - **本地磁盘存储**：文件存在服务器本地 `STORAGE_DIR`（Docker 部署为数据卷 `clipsync_storage_data`），没有对象存储支持；`deployment/docker/backup.sh` 分别备份数据库与上传文件，备份默认与服务器在同一块硬盘上，需要定期复制到其他机器。
 - **监控**：只有 `deployment/docker/health_check.sh` 的基础检查，没有接入专门的监控系统。
 - **部署平台**：只支持 x86_64 Linux 上的 Docker Compose；`build-release.ps1`、`publish-release.ps1` 只能在 Windows 上运行，其他系统用服务器源码构建（方式 B）。
