@@ -1,5 +1,7 @@
 """定时清理：过期访问码、过期上传会话及其临时分片、孤儿目录
 
+访问码挂在云剪切板 / 文本 / 文件上，过期后把这一样内容上的访问码清空（内容本身保留）。
+
 用法（在 backend/ 目录）：python -m scripts.cleanup_expired
 部署环境由宿主机 cron 每小时执行 docker compose exec -T backend python -m scripts.cleanup_expired
 （模板见 deployment/docker/clipsync.cron）
@@ -9,11 +11,12 @@ import logging
 from datetime import timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update
 
 from app.config import settings
 from app.database import AsyncSessionLocal, engine
-from app.models import AccessCode, UploadSession, User
+from app.models import UploadSession, User
+from app.core.quick_access import CODED_MODELS
 from app.core.storage import cleanup_upload_temp, delete_user_storage, get_upload_temp_dir
 from app.core.timeutil import utcnow
 
@@ -23,14 +26,17 @@ async def cleanup():
     now = utcnow()
     cutoff = now - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS)
     async with AsyncSessionLocal() as db:
-        # 1. 过期访问码（已无法使用，直接删除）
-        result = await db.execute(
-            delete(AccessCode).where(
-                AccessCode.expires_at.is_not(None),
-                AccessCode.expires_at <= now,
+        # 1. 过期访问码（已无法使用）：清空访问码与过期时间，内容保留。
+        #    凭这些码进入的快速访问页在下一次心跳或请求时发现访问码已失效并退出
+        cleared = 0
+        for model in CODED_MODELS:
+            result = await db.execute(
+                update(model)
+                .where(model.access_expires_at.is_not(None), model.access_expires_at <= now)
+                .values(access_code=None, access_expires_at=None)
             )
-        )
-        print(f"删除 {result.rowcount} 个过期访问码")
+            cleared += result.rowcount
+        print(f"清除 {cleared} 处过期访问码")
 
         # 2. 超过 TTL 的上传会话：先取 ID 用于清理临时目录，再删记录
         result = await db.execute(

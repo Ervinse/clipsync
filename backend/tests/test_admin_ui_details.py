@@ -1,33 +1,6 @@
-"""访问码有效期上限、管理后台文件列表排序次键"""
-from datetime import datetime, timedelta, timezone
-
+"""管理后台文件列表排序次键"""
 from app.models import UserRole
 from tests.helpers import upload
-
-
-def _create_text_code(client, user, expires_at):
-    return client.post(
-        "/api/access-codes",
-        json={"target_type": "text", "expires_at": expires_at},
-        headers=user.headers,
-    )
-
-
-def test_access_code_expiry_within_one_year_accepted(client, make_user):
-    user = make_user()
-    expires = (datetime.now(timezone.utc) + timedelta(hours=8760)).isoformat()
-    assert _create_text_code(client, user, expires).status_code == 200
-
-
-def test_access_code_expiry_over_one_year_rejected(client, make_user):
-    user = make_user()
-    expires = (datetime.now(timezone.utc) + timedelta(hours=8761)).isoformat()
-    assert _create_text_code(client, user, expires).status_code == 400
-
-
-def test_access_code_without_expiry_still_allowed(client, make_user):
-    user = make_user()
-    assert _create_text_code(client, user, None).status_code == 200
 
 
 def test_admin_files_order_stable_within_same_second(client, make_user):

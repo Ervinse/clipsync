@@ -4,10 +4,10 @@ from sqlalchemy import select, func
 from starlette.websockets import WebSocketDisconnect
 
 from app.models import (
-    User, UserRole, File, Clipboard, ClipboardHistory, AccessCode, InviteCode,
+    User, UserRole, File, Clipboard, ClipboardHistory, Text, InviteCode,
 )
 from app.core.timeutil import utcnow
-from tests.helpers import upload, STORAGE_ROOT
+from tests.helpers import upload, STORAGE_ROOT, set_code, new_text
 
 
 def test_delete_user_removes_all_data(client, db, make_user):
@@ -22,7 +22,8 @@ def test_delete_user_removes_all_data(client, db, make_user):
     upload(client, victim, b"file-data")
     client.put("/api/clipboard", json={"content": "a"}, headers=victim.headers)
     client.put("/api/clipboard", json={"content": "b"}, headers=victim.headers)
-    client.post("/api/access-codes", json={"target_type": "text"}, headers=victim.headers)
+    set_code(client, victim, "clipboard")
+    set_code(client, victim, "text", new_text(client, victim)["id"])
 
     resp = client.delete(f"/api/admin/users/{victim.id}", headers=superadmin.headers)
     assert resp.status_code == 204
@@ -30,7 +31,7 @@ def test_delete_user_removes_all_data(client, db, make_user):
     async def _counts(s):
         out = {}
         for model, col in [(User, User.id), (File, File.user_id), (Clipboard, Clipboard.user_id),
-                           (ClipboardHistory, ClipboardHistory.user_id), (AccessCode, AccessCode.owner_id)]:
+                           (ClipboardHistory, ClipboardHistory.user_id), (Text, Text.user_id)]:
             out[model.__name__] = (await s.execute(select(func.count()).select_from(model).where(col == victim.id))).scalar()
         return out
     assert all(v == 0 for v in db(_counts).values())

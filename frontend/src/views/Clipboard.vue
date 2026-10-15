@@ -6,6 +6,9 @@ import { useClipboardStore, useUserStore } from '../stores'
 import { formatRelative } from '../utils/format'
 import toast from '../utils/toast'
 import { confirmDialog } from '../utils/dialog'
+import { askConflict } from '../utils/conflict'
+import AccessCodeButton from '../components/AccessCodeButton.vue'
+import AccessCodeDialog from '../components/AccessCodeDialog.vue'
 
 const clipboardStore = useClipboardStore()
 const userStore = useUserStore()
@@ -13,15 +16,23 @@ const userStore = useUserStore()
 const textContent = ref('')
 // 编辑框最近一次与服务端一致时的内容；textContent 与它不同即表示有未保存的本地编辑
 const syncedText = ref('')
+// 编辑框内容所基于的服务端版本：保存时带上，别处改过会返回 409（冲突）
+const baseVersion = ref(0)
 const isSaving = ref(false)
+const showCodeDialog = ref(false)
 const showHistory = ref(false)
 
 const isDirty = computed(() => textContent.value !== syncedText.value)
 
 // 其他终端更新后 store.currentText 变化：本地没有未保存编辑时才同步到编辑框，避免覆盖正在输入的内容
+// 有未保存编辑时只提示「已在别处更新」，保存时由冲突检测让用户选择。
+// 自己保存时 store 也会更新（此时 isSaving 仍为 true），不算别处的更新
 watch(() => clipboardStore.currentText, (value) => {
   if (textContent.value === syncedText.value) {
     textContent.value = value
+    baseVersion.value = clipboardStore.version
+  } else if (!isSaving.value && value !== syncedText.value && value !== textContent.value) {
+    toast.info('这段内容已在别处更新，保存时会提示你选择')
   }
   syncedText.value = value
 })
@@ -63,6 +74,7 @@ onMounted(async () => {
     await clipboardStore.fetchCurrent()
     textContent.value = clipboardStore.currentText
     syncedText.value = clipboardStore.currentText
+    baseVersion.value = clipboardStore.version
   } catch (error) {
     toast.error('获取剪贴板失败：' + error.message)
   }
@@ -75,20 +87,57 @@ onUnmounted(() => {
   clipboardStore.cleanupWebSocket()
 })
 
-const handleSave = async () => {
+// overwrite：冲突后用户选了「仍然覆盖」，不带版本号直接保存
+const handleSave = async ({ overwrite = false } = {}) => {
   try {
     isSaving.value = true
     // 保存的是点击时的内容：请求期间继续输入的字不在其中，不能被标成「已同步」，
     // 否则之后其他终端的更新会把这几个字无提示地覆盖掉
     const saved = textContent.value
-    await clipboardStore.updateText(saved)
+    const data = await clipboardStore.updateText(saved, overwrite ? null : baseVersion.value)
     syncedText.value = saved
+    baseVersion.value = data.version
     toast.success('已保存，并同步到所有设备')
   } catch (error) {
+    if (error?.status === 409) {
+      isSaving.value = false
+      await resolveConflict()
+      return
+    }
     toast.error('保存失败：' + error.message)
   } finally {
     isSaving.value = false
   }
+}
+
+const resolveConflict = async () => {
+  const choice = await askConflict()
+  if (choice === 'overwrite') {
+    await handleSave({ overwrite: true })
+  } else if (choice === 'load') {
+    try {
+      await clipboardStore.fetchCurrent()
+      textContent.value = clipboardStore.currentText
+      syncedText.value = clipboardStore.currentText
+      baseVersion.value = clipboardStore.version
+      toast.info('已载入最新内容')
+    } catch (error) {
+      toast.error('载入失败：' + error.message)
+    }
+  }
+}
+
+const codeTarget = computed(() => ({
+  targetType: 'clipboard',
+  targetId: null,
+  label: '',
+  code: clipboardStore.accessCode,
+  expiresAt: clipboardStore.accessExpiresAt,
+}))
+
+const onCodeSaved = (result) => {
+  clipboardStore.accessCode = result.access_code
+  clipboardStore.accessExpiresAt = result.access_expires_at
 }
 
 // Ctrl/⌘ + S 保存
@@ -130,6 +179,7 @@ const handleRestore = async (item) => {
     const restored = await clipboardStore.restoreHistory(item.id)
     textContent.value = restored
     syncedText.value = restored
+    baseVersion.value = clipboardStore.version
     toast.success('已恢复为当前文本')
   } catch (error) {
     toast.error('恢复失败：' + error.message)
@@ -159,15 +209,20 @@ const formatDate = formatRelative
   <div class="page">
     <div class="page-header">
       <div>
-        <h1 class="page-title">剪贴板</h1>
+        <h1 class="page-title">云剪切板</h1>
         <p class="page-subtitle">在这里保存的文本会实时同步到你登录的所有设备</p>
       </div>
       <div class="page-actions">
+        <AccessCodeButton
+          :code="clipboardStore.accessCode"
+          :expires-at="clipboardStore.accessExpiresAt"
+          @click="showCodeDialog = true"
+        />
         <button class="btn btn-secondary" :class="{ pressed: showHistory }" @click="toggleHistory">
           <History />
           {{ showHistory ? '收起历史' : '历史记录' }}
         </button>
-        <button class="btn btn-primary" :disabled="isSaving" @click="handleSave">
+        <button class="btn btn-primary" :disabled="isSaving" @click="handleSave()">
           <LoaderCircle v-if="isSaving" class="spin" />
           <Save v-else />
           {{ isSaving ? '保存中…' : '保存' }}
@@ -181,7 +236,7 @@ const formatDate = formatRelative
           v-model="textContent"
           class="editor-input"
           placeholder="在此输入或粘贴文本…"
-          aria-label="剪贴板文本"
+          aria-label="云剪切板文本"
           :disabled="clipboardStore.isLoading"
           @keydown="onEditorKeydown"
         ></textarea>
@@ -236,6 +291,13 @@ const formatDate = formatRelative
         </ul>
       </aside>
     </div>
+
+    <AccessCodeDialog
+      v-if="showCodeDialog"
+      :target="codeTarget"
+      @close="showCodeDialog = false"
+      @saved="onCodeSaved"
+    />
   </div>
 </template>
 

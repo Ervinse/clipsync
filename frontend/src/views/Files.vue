@@ -8,6 +8,8 @@ import { useFilesStore, useUserStore } from '../stores'
 import { formatSize, formatDateTime } from '../utils/format'
 import toast from '../utils/toast'
 import { confirmDialog } from '../utils/dialog'
+import AccessCodeButton from '../components/AccessCodeButton.vue'
+import AccessCodeDialog from '../components/AccessCodeDialog.vue'
 
 const filesStore = useFilesStore()
 const userStore = useUserStore()
@@ -74,7 +76,7 @@ const downloadText = (file) => {
 const handleDelete = async (file) => {
   const ok = await confirmDialog({
     title: '删除这个文件？',
-    message: `「${file.original_name}」将被永久删除，指向它的访问码也会一并删除。`,
+    message: `「${file.original_name}」将被永久删除${file.access_code ? `，它的访问码 ${file.access_code} 也会一并清除` : ''}。`,
     confirmText: '删除',
     danger: true,
   })
@@ -85,6 +87,23 @@ const handleDelete = async (file) => {
   } catch (error) {
     toast.error('删除失败：' + error.message)
   }
+}
+
+const codeTarget = ref(null)
+const openCode = (file) => {
+  codeTarget.value = {
+    targetType: 'file',
+    targetId: file.id,
+    label: file.original_name,
+    code: file.access_code,
+    expiresAt: file.access_expires_at,
+  }
+}
+const onCodeSaved = (result) => {
+  filesStore.patchFile(result.target_id, {
+    access_code: result.access_code,
+    access_expires_at: result.access_expires_at,
+  })
 }
 
 // 按 MIME 类型与扩展名选图标，只影响显示
@@ -199,6 +218,11 @@ const formatDate = (value) => formatDateTime(value)
         <span class="file-size">{{ formatSize(file.size) }}</span>
         <span class="file-date">{{ formatDate(file.created_at) }}</span>
         <span class="file-actions">
+          <AccessCodeButton
+            :code="file.access_code"
+            :expires-at="file.access_expires_at"
+            @click="openCode(file)"
+          />
           <button
             class="btn-icon"
             :title="filesStore.downloads[file.id] ? downloadText(file) : '下载'"
@@ -215,6 +239,13 @@ const formatDate = (value) => formatDateTime(value)
         </span>
       </li>
     </ul>
+
+    <AccessCodeDialog
+      v-if="codeTarget"
+      :target="codeTarget"
+      @close="codeTarget = null"
+      @saved="onCodeSaved"
+    />
   </div>
 </template>
 
@@ -316,7 +347,7 @@ const formatDate = (value) => formatDateTime(value)
 
 .file-row {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 100px 150px 72px;
+  grid-template-columns: 36px minmax(0, 1fr) 100px 150px auto;
   align-items: center;
   gap: var(--space-3);
   min-height: 56px;
@@ -386,6 +417,7 @@ const formatDate = (value) => formatDateTime(value)
 
 .file-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 2px;
 }
@@ -408,7 +440,7 @@ const formatDate = (value) => formatDateTime(value)
   }
 
   .file-row {
-    grid-template-columns: 36px minmax(0, 1fr) 64px;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
     padding-left: var(--space-3);
   }
 

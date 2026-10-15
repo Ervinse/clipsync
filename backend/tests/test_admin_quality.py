@@ -1,9 +1,5 @@
-"""管理后台：查询合并（N+1 改写）后的结果正确性、邀请码删除约束、有效访问码统计"""
-from datetime import timedelta
-
-from sqlalchemy import update
-
-from app.models import AccessCode, InviteCode, UserRole
+"""管理后台：查询合并（N+1 改写）后的结果正确性、邀请码删除约束"""
+from app.models import InviteCode, UserRole
 from app.core.timeutil import utcnow
 from tests.helpers import upload
 
@@ -57,22 +53,3 @@ def test_user_list_file_stats(client, make_user):
 
     detail = client.get(f"/api/admin/users/{owner.id}", headers=admin.headers).json()
     assert (detail["used_bytes"], detail["file_count"]) == (15, 2)
-
-
-def test_stats_active_access_codes_excludes_expired(client, db, make_user):
-    admin = make_user(UserRole.ADMIN)
-    user = make_user()
-    codes = [
-        client.post("/api/access-codes", json={"target_type": "text"}, headers=user.headers).json()["id"]
-        for _ in range(3)
-    ]
-
-    async def _expire_one_revoke_one(s):
-        await s.execute(update(AccessCode).where(AccessCode.id == codes[0])
-                        .values(expires_at=utcnow() - timedelta(minutes=1)))
-        await s.execute(update(AccessCode).where(AccessCode.id == codes[1]).values(is_revoked=True))
-    db(_expire_one_revoke_one)
-
-    stats = client.get("/api/admin/stats", headers=admin.headers).json()
-    assert stats["total_access_codes"] == 3
-    assert stats["active_access_codes"] == 1

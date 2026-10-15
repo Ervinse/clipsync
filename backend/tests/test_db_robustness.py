@@ -1,4 +1,4 @@
-"""数据库层容错：上传出错时磁盘与会话行保持一致、访问码创建与文件删除并发、极端时区、统计口径、清理脚本的用户快照、排序规则与部署一致"""
+"""数据库层容错：上传出错时磁盘与会话行保持一致、极端时区、清理脚本的用户快照、排序规则与部署一致"""
 import os
 import uuid
 from datetime import datetime, timedelta
@@ -8,10 +8,9 @@ import pytest
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api import access as access_module
 from app.config import settings
 from app.core.timeutil import to_naive_utc, utcnow
-from app.models import AccessCode, UploadSession, User, UserRole
+from app.models import UploadSession, User, UserRole
 from scripts import cleanup_expired
 from tests.helpers import STORAGE_ROOT, upload
 
@@ -35,10 +34,6 @@ def _put_chunk(client, user, upload_id, data=b"x" * 100):
 
 async def _count_sessions(session):
     return (await session.execute(select(func.count()).select_from(UploadSession))).scalar()
-
-
-async def _count_access_codes(session):
-    return (await session.execute(select(func.count()).select_from(AccessCode))).scalar()
 
 
 def _sync_connection():
@@ -117,37 +112,13 @@ def test_init_commit_failure_removes_temp_dir(client, make_user, db, monkeypatch
     assert list(tmp_root.iterdir()) == []
 
 
-# ---------- 访问码：与文件删除并发、极端时区 ----------
-
-def test_create_file_code_returns_404_when_file_deleted_midway(client, make_user, db, monkeypatch):
-    user = make_user()
-    file_id = upload(client, user, b"x" * 100).json()["id"]
-    real_generate = access_module.generate_access_code
-    deleted = {"done": False}
-
-    def delete_file_then_generate():
-        # 归属检查已通过、INSERT 尚未执行：另一个终端此刻删除了这个文件
-        if not deleted["done"]:
-            deleted["done"] = True
-            conn = _sync_connection()
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("DELETE FROM files WHERE id = %s", (file_id,))
-            finally:
-                conn.close()
-        return real_generate()
-
-    monkeypatch.setattr(access_module, "generate_access_code", delete_file_then_generate)
-    resp = client.post("/api/access-codes", json={"target_type": "file", "file_id": file_id}, headers=user.headers)
-    assert resp.status_code == 404
-    assert db(_count_access_codes) == 0
-
+# ---------- 极端时区 ----------
 
 @pytest.mark.parametrize("value", ["9999-12-31T23:59:59-05:00", "0001-01-01T00:00:00+05:00"])
 def test_out_of_range_expiry_is_400_not_500(client, make_user, value):
     user, admin = make_user(), make_user(UserRole.ADMIN)
-    body = {"target_type": "text", "expires_at": value}
-    assert client.post("/api/access-codes", json=body, headers=user.headers).status_code == 400
+    body = {"target_type": "clipboard", "code": "mycode", "expires_at": value}
+    assert client.put("/api/access-codes", json=body, headers=user.headers).status_code == 400
     resp = client.post("/api/admin/invite-codes", json={"expires_at": value}, headers=admin.headers)
     assert resp.status_code == 400
 
@@ -159,23 +130,6 @@ def test_to_naive_utc_converts_and_rejects_overflow():
     assert to_naive_utc(naive) == naive
     with pytest.raises(ValueError):
         to_naive_utc(datetime.fromisoformat("9999-12-31T23:59:59-05:00"))
-
-
-# ---------- 统计口径 ----------
-
-def test_stats_active_access_codes_excludes_disabled_owner(client, db, make_user):
-    # 免登录访问时属主被禁用的码已失效，统计里的「有效访问码」要用同一口径
-    admin, active_user, disabled_user = make_user(UserRole.ADMIN), make_user(), make_user()
-    for owner in (active_user, disabled_user):
-        assert client.post("/api/access-codes", json={"target_type": "text"}, headers=owner.headers).status_code == 200
-
-    async def _disable(session):
-        await session.execute(update(User).where(User.id == disabled_user.id).values(is_active=False))
-
-    db(_disable)
-    stats = client.get("/api/admin/stats", headers=admin.headers).json()
-    assert stats["total_access_codes"] == 2
-    assert stats["active_access_codes"] == 1
 
 
 # ---------- 清理脚本：孤儿用户目录 ----------

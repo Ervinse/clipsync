@@ -31,8 +31,8 @@ request.interceptors.request.use(
   (error) => Promise.reject(error)
 )
 
-/** 从后端错误响应里取出可读的错误信息 */
-async function extractMessage(status, data) {
+/** 从后端错误响应里取出可读的错误信息（快速访问的请求实例 quickRequest.js 也用它） */
+export async function extractMessage(status, data) {
   // responseType 为 blob 时，错误响应体也是 Blob，需要先解析成 JSON
   if (typeof Blob !== 'undefined' && data instanceof Blob) {
     try {

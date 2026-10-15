@@ -1,0 +1,169 @@
+"""快速访问：访问码格式、输错锁定、访问凭证、访问码有效性、通知快速访问页
+
+访问码挂在内容上（clipboard / texts / files 的 access_code 列），同一用户的多样内容可以用同一个码；
+完整访问码为「用户名@访问码」。凭完整访问码换取 2 小时的快速访问凭证（JWT，typ=qa），
+该凭证只能用于 /api/access/* 与 /ws，不能当登录凭证用（get_user_id_from_payload 拒绝带 typ 的 token）。
+"""
+import re
+import time
+from datetime import timedelta
+from typing import Iterable
+
+from sqlalchemy import select, or_, literal
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..database import AsyncSessionLocal
+from ..models import User, Clipboard, Text, File
+from .security import create_access_token
+from .timeutil import utcnow
+from .ws_manager import manager
+
+# 访问码：4–32 位字母、数字与 _ - .，不区分大小写（统一按小写存储与比较）
+ACCESS_CODE_PATTERN = re.compile(r"^[a-z0-9_.\-]{4,32}$")
+ACCESS_CODE_RULE = "访问码为 4–32 位，只能包含字母、数字和 _ - ."
+MAX_EXPIRES_HOURS = 8760  # 访问码最长有效期：1 年
+
+QUICK_TOKEN_TYPE = "qa"
+QUICK_TOKEN_MINUTES = 120  # 快速访问凭证有效期：2 小时
+
+# 同一用户名连续输错 MAX_FAILURES 次，暂停该用户名的快速访问 LOCK_SECONDS 秒
+MAX_FAILURES = 10
+LOCK_SECONDS = 15 * 60
+_TRACK_LIMIT = 10_000  # 记录条数超过这个数时清理过时记录，防止大量随机用户名撑大内存
+
+# 内容带访问码的三张表：都有 user_id / access_code / access_expires_at 三列
+CODED_MODELS = (Clipboard, Text, File)
+
+
+def normalize_access_code(value: str) -> str:
+    """去掉首尾空白并转小写；不符合规则抛 ValueError"""
+    code = (value or "").strip().lower()
+    if not ACCESS_CODE_PATTERN.fullmatch(code):
+        raise ValueError(ACCESS_CODE_RULE)
+    return code
+
+
+def parse_full_code(value: str) -> tuple[str, str] | None:
+    """拆分「用户名@访问码」；格式不对返回 None（用户名本身不含 @，按 @ 拆分没有歧义）"""
+    parts = (value or "").strip().split("@")
+    if len(parts) != 2:
+        return None
+    username, raw_code = parts[0].strip(), parts[1]
+    if not 1 <= len(username) <= 64:
+        return None
+    try:
+        return username, normalize_access_code(raw_code)
+    except ValueError:
+        return None
+
+
+class FailureTracker:
+    """
+    按用户名记录连续输错次数（进程内存，后端单 worker；重启后清零）。
+    不存在的用户名同样计数和锁定，响应与存在的用户名一致，不暴露用户名是否存在。
+    """
+
+    def __init__(self):
+        # key → [连续失败次数, 锁定截止（monotonic 秒，0 表示未锁定）, 最近一次记录时间]
+        self._entries: dict[str, list[float]] = {}
+
+    @staticmethod
+    def _key(username: str) -> str:
+        # 用户名在数据库里按不区分大小写的排序规则比较，计数也不区分大小写
+        return username.lower()
+
+    def is_locked(self, username: str) -> bool:
+        entry = self._entries.get(self._key(username))
+        if entry is None or entry[1] == 0:
+            return False
+        if entry[1] > time.monotonic():
+            return True
+        # 锁定期已过：重新计数
+        del self._entries[self._key(username)]
+        return False
+
+    def record_failure(self, username: str) -> None:
+        now = time.monotonic()
+        if len(self._entries) >= _TRACK_LIMIT:
+            self._prune(now)
+        entry = self._entries.setdefault(self._key(username), [0, 0, now])
+        entry[0] += 1
+        entry[2] = now
+        if entry[0] >= MAX_FAILURES:
+            entry[1] = now + LOCK_SECONDS
+
+    def reset(self, username: str) -> None:
+        self._entries.pop(self._key(username), None)
+
+    def clear(self) -> None:
+        self._entries.clear()
+
+    def _prune(self, now: float) -> None:
+        """删掉锁定已结束、且最近 LOCK_SECONDS 内没有新失败的记录"""
+        stale = [k for k, (_, locked_until, last) in self._entries.items()
+                 if locked_until <= now and now - last > LOCK_SECONDS]
+        for key in stale:
+            del self._entries[key]
+
+
+failures = FailureTracker()
+
+
+def create_quick_token(owner_id: int, code: str) -> str:
+    return create_access_token(
+        {"sub": str(owner_id), "typ": QUICK_TOKEN_TYPE, "code": code},
+        expires_delta=timedelta(minutes=QUICK_TOKEN_MINUTES),
+    )
+
+
+def parse_quick_payload(payload: dict | None) -> tuple[int, str] | None:
+    """从快速访问凭证的 payload 取出（属主 id, 访问码）；不是快速访问凭证返回 None"""
+    if not payload or payload.get("typ") != QUICK_TOKEN_TYPE:
+        return None
+    try:
+        owner_id = int(payload.get("sub"))
+        code = normalize_access_code(payload.get("code") or "")
+    except (TypeError, ValueError):
+        return None
+    return owner_id, code
+
+
+def valid_code_filter(model, owner_id: int, code: str):
+    """「属于该属主、访问码相同、未过期」的查询条件（过期的码在定时清理前同样视为无效）"""
+    return (
+        model.user_id == owner_id,
+        model.access_code == code,
+        or_(model.access_expires_at.is_(None), model.access_expires_at > utcnow()),
+    )
+
+
+async def code_is_active(db: AsyncSession, owner_id: int, code: str) -> bool:
+    """该属主名下是否还有至少一样内容挂着这个访问码且未过期"""
+    for model in CODED_MODELS:
+        result = await db.execute(
+            select(literal(1)).select_from(model).where(*valid_code_filter(model, owner_id, code)).limit(1)
+        )
+        if result.first() is not None:
+            return True
+    return False
+
+
+async def quick_access_is_valid(db: AsyncSession, owner_id: int, code: str) -> bool:
+    """快速访问仍然有效：属主存在且未禁用，且访问码下还有内容"""
+    result = await db.execute(select(User.is_active).where(User.id == owner_id))
+    is_active = result.scalar_one_or_none()
+    return bool(is_active) and await code_is_active(db, owner_id, code)
+
+
+async def notify_quick_viewers(owner_id: int, codes: Iterable[str | None]) -> None:
+    """
+    属主的内容有变化时通知相关的快速访问页（只发信号，不带内容）。
+    codes 是受影响的访问码（变化前后的码都要传）；访问码下已经没有有效内容时，
+    直接断开这些连接（1008），页面据此提示访问码已失效。没有在线的快速访问页时不查库。
+    """
+    affected = {c for c in codes if c} & manager.quick_codes(owner_id)
+    if not affected:
+        return
+    async with AsyncSessionLocal() as db:
+        alive = {c for c in affected if await quick_access_is_valid(db, owner_id, c)}
+    await manager.notify_quick(owner_id, alive=alive, dead=affected - alive)

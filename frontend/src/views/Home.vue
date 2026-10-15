@@ -1,8 +1,8 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Clipboard, Folder, Link, Settings, LogOut, Menu, X } from '@lucide/vue'
-import { useUserStore, useClipboardStore } from '../stores'
+import { Clipboard, StickyNote, Folder, KeyRound, Settings, LogOut, Menu, X } from '@lucide/vue'
+import { useUserStore, useClipboardStore, useTextsStore } from '../stores'
 import ws from '../utils/websocket'
 import { formatSize } from '../utils/format'
 import { confirmDialog } from '../utils/dialog'
@@ -12,6 +12,7 @@ const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 const clipboardStore = useClipboardStore()
+const textsStore = useTextsStore()
 
 // 侧栏配额在布局级刷新：不管当前在哪个页面，文件增删或管理员改配额后都同步
 // open：连接（重新）建立时补拉，断线期间错过的配额变更不会一直显示旧值
@@ -24,9 +25,10 @@ onUnmounted(() => QUOTA_EVENTS.forEach((event) => ws.off(event, onQuotaChanged))
 
 const navItems = computed(() => {
   const items = [
-    { name: 'Clipboard', label: '剪贴板', icon: Clipboard, path: '/clipboard' },
+    { name: 'Clipboard', label: '云剪切板', icon: Clipboard, path: '/clipboard' },
+    { name: 'Texts', label: '文本', icon: StickyNote, path: '/texts' },
     { name: 'Files', label: '文件', icon: Folder, path: '/files' },
-    { name: 'AccessCodes', label: '访问码', icon: Link, path: '/access-codes' },
+    { name: 'AccessCodes', label: '访问码', icon: KeyRound, path: '/access-codes' },
   ]
 
   // 管理员添加后台入口（只是入口隐藏，后端接口另做角色校验）
@@ -64,11 +66,11 @@ watch(() => route.path, () => {
 })
 
 const handleLogout = async () => {
-  // 剪贴板页有没保存的文字时，先确认：登出会清掉本页状态，文字无法找回
-  if (clipboardStore.hasUnsavedEdit) {
+  // 云剪切板或文本页有没保存的文字时，先确认：登出会清掉本页状态，文字无法找回
+  if (clipboardStore.hasUnsavedEdit || textsStore.hasUnsavedEdit) {
     const ok = await confirmDialog({
       title: '退出登录并放弃未保存的修改？',
-      message: '剪贴板编辑框里的内容还没有保存，退出后会丢失。',
+      message: '有文本还没有保存，退出后会丢失。',
       confirmText: '退出登录',
       cancelText: '继续编辑',
       danger: true,

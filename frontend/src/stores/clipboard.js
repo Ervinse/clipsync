@@ -1,5 +1,5 @@
 /**
- * 剪贴板状态管理
+ * 云剪切板状态管理
  */
 import { defineStore } from 'pinia'
 import api from '../api'
@@ -8,6 +8,10 @@ import ws from '../utils/websocket'
 export const useClipboardStore = defineStore('clipboard', {
   state: () => ({
     currentText: '',
+    // 服务端版本号：保存时带上，内容已在别处改过会返回 409；0 表示还没有保存过
+    version: 0,
+    accessCode: null,
+    accessExpiresAt: null,
     history: [],
     isLoading: false,
     // 历史面板是否打开（由 Clipboard.vue 设置）：打开时收到推送要一并重拉历史
@@ -25,6 +29,13 @@ export const useClipboardStore = defineStore('clipboard', {
       return this._refreshSeq
     },
 
+    _apply(data) {
+      this.currentText = data?.content || ''
+      this.version = data?.version ?? 0
+      this.accessCode = data?.access_code ?? null
+      this.accessExpiresAt = data?.access_expires_at ?? null
+    },
+
     /**
      * 获取当前剪贴板内容
      */
@@ -32,8 +43,7 @@ export const useClipboardStore = defineStore('clipboard', {
       try {
         this.isLoading = true
         this._bumpSeq()
-        const data = await api.clipboard.get()
-        this.currentText = data.content || ''
+        this._apply(await api.clipboard.get())
       } catch (error) {
         console.error('获取剪贴板内容失败:', error)
         throw error
@@ -43,13 +53,15 @@ export const useClipboardStore = defineStore('clipboard', {
     },
 
     /**
-     * 更新剪贴板内容
+     * 更新剪贴板内容；baseVersion 为编辑开始时的版本号，传 null 表示直接覆盖。
+     * 版本不一致时后端返回 409，错误对象的 status 为 409，由页面让用户选择
      */
-    async updateText(content) {
+    async updateText(content, baseVersion = null) {
       try {
-        await api.clipboard.update(content)
+        const data = await api.clipboard.update(content, baseVersion)
         this._bumpSeq()
-        this.currentText = content
+        this._apply(data)
+        return data
       } catch (error) {
         console.error('更新剪贴板失败:', error)
         throw error
@@ -75,7 +87,7 @@ export const useClipboardStore = defineStore('clipboard', {
     async restoreHistory(historyId) {
       const data = await api.clipboard.restoreHistory(historyId)
       this._bumpSeq()
-      this.currentText = data.content || ''
+      this._apply(data)
       await this.fetchHistory()
       return this.currentText
     },
@@ -89,7 +101,8 @@ export const useClipboardStore = defineStore('clipboard', {
     },
 
     /**
-     * 监听 WebSocket 实时更新；连接（重新）建立时也补拉一次，断线期间的变更不会漏掉
+     * 监听 WebSocket 实时更新；连接（重新）建立时也补拉一次，断线期间的变更不会漏掉。
+     * 访问码改动（含其他终端设置 / 清除剪切板访问码）也重拉一次，页面上显示的访问码保持最新
      */
     setupWebSocket() {
       if (this._onClipboardUpdated) return
@@ -100,7 +113,7 @@ export const useClipboardStore = defineStore('clipboard', {
           const data = await api.clipboard.get()
           // 期间又发出了更新的请求或本地已保存：丢弃这次过期结果
           if (seq !== this._refreshSeq) return
-          this.currentText = data.content || ''
+          this._apply(data)
           // 其他终端保存 / 删除历史后，历史面板打开时一并刷新
           if (this.historyVisible) await this.fetchHistory()
         } catch {
@@ -108,6 +121,7 @@ export const useClipboardStore = defineStore('clipboard', {
         }
       }
       ws.on('clipboard_updated', this._onClipboardUpdated)
+      ws.on('access_codes_changed', this._onClipboardUpdated)
       ws.on('open', this._onClipboardUpdated)
     },
 
@@ -117,6 +131,7 @@ export const useClipboardStore = defineStore('clipboard', {
     cleanupWebSocket() {
       if (this._onClipboardUpdated) {
         ws.off('clipboard_updated', this._onClipboardUpdated)
+        ws.off('access_codes_changed', this._onClipboardUpdated)
         ws.off('open', this._onClipboardUpdated)
         this._onClipboardUpdated = null
       }

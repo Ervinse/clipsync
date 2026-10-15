@@ -5,6 +5,7 @@ import { defineStore } from 'pinia'
 import api from '../api'
 import ws from '../utils/websocket'
 import { useUserStore } from './user'
+import { saveBlob } from '../utils/download'
 
 export const useFilesStore = defineStore('files', {
   state: () => ({
@@ -137,6 +138,12 @@ export const useFilesStore = defineStore('files', {
       }
     },
 
+    /** 设置访问码后就地更新列表项，不必等推送 */
+    patchFile(id, fields) {
+      const item = this.files.find((f) => f.id === id)
+      if (item) Object.assign(item, fields)
+    },
+
     /**
      * 删除文件
      */
@@ -153,7 +160,7 @@ export const useFilesStore = defineStore('files', {
     },
 
     /**
-     * 监听 WebSocket：其他终端上传或删除文件后刷新列表
+     * 监听 WebSocket：其他终端上传、删除文件或改了访问码后刷新列表
      * 后端推送只带 id 等轻量信号，收到后重新拉取列表，保证与服务端一致；
      * 连接（重新）建立时也补拉一次，断线期间的变更不会漏掉
      */
@@ -164,6 +171,7 @@ export const useFilesStore = defineStore('files', {
       }
       ws.on('file_added', this._onFilesChanged)
       ws.on('file_deleted', this._onFilesChanged)
+      ws.on('access_codes_changed', this._onFilesChanged)
       ws.on('open', this._onFilesChanged)
     },
 
@@ -174,6 +182,7 @@ export const useFilesStore = defineStore('files', {
       if (this._onFilesChanged) {
         ws.off('file_added', this._onFilesChanged)
         ws.off('file_deleted', this._onFilesChanged)
+        ws.off('access_codes_changed', this._onFilesChanged)
         ws.off('open', this._onFilesChanged)
         this._onFilesChanged = null
       }
@@ -193,15 +202,7 @@ export const useFilesStore = defineStore('files', {
           current.loaded = event.loaded
           current.total = event.total || file.size || 0
         })
-        const url = URL.createObjectURL(blob)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = file.original_name || 'file'
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        // 延迟释放，确保浏览器已开始下载
-        setTimeout(() => URL.revokeObjectURL(url), 10000)
+        saveBlob(blob, file.original_name)
       } finally {
         delete this.downloads[file.id]
       }

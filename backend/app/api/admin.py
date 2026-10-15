@@ -14,7 +14,7 @@ from ..models import (
     User,
     UserRole,
     File,
-    AccessCode,
+    Text,
     InviteCode,
     Setting,
     Clipboard,
@@ -41,6 +41,7 @@ from ..core.storage import delete_user_storage, cleanup_upload_temp
 from ..core.ws_manager import manager
 from ..core.timeutil import utcnow, to_naive_utc
 from ..core.app_settings import get_default_quota_bytes, get_registration_enabled
+from ..core.quick_access import CODED_MODELS
 
 logger = logging.getLogger(__name__)
 
@@ -76,21 +77,24 @@ async def get_system_stats(
     result = await db.execute(select(func.coalesce(func.sum(File.size), 0)))
     total_storage_bytes = result.scalar()
 
-    # 3. 访问码统计
-    result = await db.execute(select(func.count(AccessCode.id)))
-    total_access_codes = result.scalar()
-
-    # 有效 = 未撤销、未过期、属主未被禁用（与免登录访问时的校验口径一致：属主被禁用后其访问码一并失效）
-    result = await db.execute(
-        select(func.count(AccessCode.id))
-        .join(User, AccessCode.owner_id == User.id)
-        .where(
-            AccessCode.is_revoked == False,  # noqa: E712
-            User.is_active == True,  # noqa: E712
-            AccessCode.expires_at.is_(None) | (AccessCode.expires_at > utcnow()),
+    # 3. 访问码统计：按「属主 + 访问码」去重计数（同一个码挂在多样内容上算一个）
+    #    有效 = 未过期、属主未被禁用（与快速访问时的校验口径一致：属主被禁用后其访问码一并失效）
+    total_codes: set[tuple[int, str]] = set()
+    active_codes: set[tuple[int, str]] = set()
+    now = utcnow()
+    for model in CODED_MODELS:
+        result = await db.execute(
+            select(model.user_id, model.access_code, model.access_expires_at, User.is_active)
+            .join(User, model.user_id == User.id)
+            .where(model.access_code.is_not(None))
+            .distinct()
         )
-    )
-    active_access_codes = result.scalar()
+        for owner_id, code, expires_at, owner_active in result.all():
+            total_codes.add((owner_id, code))
+            if owner_active and (expires_at is None or expires_at > now):
+                active_codes.add((owner_id, code))
+    total_access_codes = len(total_codes)
+    active_access_codes = len(active_codes)
 
     return SystemStats(
         total_users=total_users,
@@ -289,7 +293,7 @@ async def delete_user(
     权限：仅 superadmin
     安全红线：
     - 禁止删除自己
-    - 级联删除：文件（磁盘+记录）、剪贴板、访问码等
+    - 级联删除：文件（磁盘+记录）、剪贴板、文本栏目等（访问码挂在这些内容上，随之删除）
     """
     # 1. 查询用户
     result = await db.execute(select(User).where(User.id == user_id))
@@ -325,9 +329,9 @@ async def delete_user(
     upload_ids = [row[0] for row in result.all()]
 
     # 4. 显式按依赖顺序删除关联数据（迁移中外键没有 ON DELETE CASCADE，不能依赖数据库级联）
-    await db.execute(sql_delete(AccessCode).where(AccessCode.owner_id == user_id))
     await db.execute(sql_delete(UploadSession).where(UploadSession.user_id == user_id))
     await db.execute(sql_delete(File).where(File.user_id == user_id))
+    await db.execute(sql_delete(Text).where(Text.user_id == user_id))
     await db.execute(sql_delete(ClipboardHistory).where(ClipboardHistory.user_id == user_id))
     await db.execute(sql_delete(Clipboard).where(Clipboard.user_id == user_id))
     # 邀请码：该用户用过的保留记录但解除关联；该用户创建的未使用码作废，已使用的转记到操作者名下

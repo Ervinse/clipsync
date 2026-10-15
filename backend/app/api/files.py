@@ -13,7 +13,7 @@ from sqlalchemy import select, func, delete as sql_delete, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..models import User, UserRole, File, UploadSession, AccessCode
+from ..models import User, UserRole, File, UploadSession
 from ..schemas import (
     UploadInitRequest,
     UploadInitResponse,
@@ -35,6 +35,7 @@ from ..core.storage import (
 from ..core.http_utils import content_disposition
 from ..core.timeutil import utcnow
 from ..core.ws_manager import manager
+from ..core.quick_access import notify_quick_viewers
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -149,9 +150,9 @@ def _iter_handle(f):
 
 async def stream_file_response(file_record: File, missing_detail: str = "文件已丢失") -> StreamingResponse:
     """
-    统一的流式下载响应（登录下载与访问码下载共用）
+    统一的流式下载响应（登录下载与快速访问下载共用）
 
-    missing_detail：磁盘文件不存在时的提示；公开访问码路径传「访问码无效或已失效」，不暴露码本身有效。
+    missing_detail：磁盘文件不存在时的提示；快速访问路径传「内容不存在或访问码已失效」，与内容被删时一致。
     """
     file_path = get_file_path(file_record.user_id, file_record.stored_name)
     try:
@@ -565,6 +566,8 @@ async def list_files(
                 size=f.size,
                 mime_type=f.mime_type,
                 created_at=f.created_at,
+                access_code=f.access_code,
+                access_expires_at=f.access_expires_at,
             )
             for f in files
         ],
@@ -608,11 +611,11 @@ async def delete_file_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    删除文件：记录 + 磁盘 + 级联删除访问码 + 广播
+    删除文件：记录 + 磁盘 + 广播
 
     安全红线：
     - 仅归属者可删除（superadmin 也不越权删除他人文件）
-    - 同时删除指向该文件的访问码，源文件删除后文件码立即失效
+    - 访问码挂在文件记录上，随记录一起删除；凭该码进入的快速访问页随即刷新（码下没有内容了则断开）
     """
     result = await db.execute(
         select(File).where(
@@ -624,7 +627,6 @@ async def delete_file_endpoint(
     if not file_record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在或无权访问")
 
-    await db.execute(sql_delete(AccessCode).where(AccessCode.file_id == file_id))
     await db.execute(sql_delete(File).where(File.id == file_id))
     await db.commit()
 
@@ -638,5 +640,10 @@ async def delete_file_endpoint(
         user_id=current_user.id,
         message={"type": "file_deleted", "data": {"id": file_id}},
     )
+    if file_record.access_code:
+        await manager.broadcast_to_user(
+            user_id=current_user.id, message={"type": "access_codes_changed", "data": {}}
+        )
+    await notify_quick_viewers(current_user.id, [file_record.access_code])
 
     return None

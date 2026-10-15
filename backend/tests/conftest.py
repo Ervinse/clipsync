@@ -64,9 +64,10 @@ from app.models import User, UserRole  # noqa: E402
 from app.core.security import hash_password, create_access_token  # noqa: E402
 from app.core.timeutil import utcnow  # noqa: E402
 from app.rate_limit import limiter  # noqa: E402
+from app.core.quick_access import failures  # noqa: E402
 
 _TABLES = [
-    "access_codes", "upload_sessions", "files", "clipboard_history",
+    "texts", "upload_sessions", "files", "clipboard_history",
     "clipboard", "invite_codes", "settings", "users",
 ]
 
@@ -103,6 +104,7 @@ def clean_state(client):
 
     run_db(client, _truncate)
     limiter.reset()
+    failures.clear()
     for child in STORAGE_ROOT.iterdir():
         shutil.rmtree(child, ignore_errors=True)
     yield

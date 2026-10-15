@@ -1,5 +1,5 @@
 <script setup>
-// 全局对话框：确认、输入、手动复制三种，由 utils/dialog.js 打开。
+// 全局对话框：确认、输入、手动复制、多选一四种，由 utils/dialog.js 打开。
 // Esc 或点遮罩为取消；输入框打开时自动聚焦，回车提交
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { dialogState, closeDialog } from '../utils/dialog'
@@ -18,8 +18,8 @@ watch(
     if (current.kind === 'prompt' || current.kind === 'copy') {
       inputRef.value?.focus()
       inputRef.value?.select()
-    } else if (current.danger) {
-      // 危险操作默认聚焦「取消」：误按回车不会直接删除
+    } else if (current.danger || current.kind === 'choice') {
+      // 危险操作与多选一默认聚焦「取消」：误按回车不会直接删除或覆盖
       cancelRef.value?.focus()
     } else {
       confirmRef.value?.focus()
@@ -32,6 +32,8 @@ const cancel = () => closeDialog()
 const submit = () => {
   const current = dialogState.current
   if (!current) return
+  // 多选一只能点按钮选择，回车不代替用户做决定
+  if (current.kind === 'choice') return
   if (current.kind === 'confirm') closeDialog(true)
   // type="number" 的输入框经 v-model 得到的是数字，调用方按字符串处理，这里统一转成字符串
   else if (current.kind === 'prompt') closeDialog(String(inputValue.value ?? ''))
@@ -84,9 +86,24 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         ></textarea>
       </div>
 
-      <div class="modal-footer" :class="{ 'no-body': dialogState.current.kind === 'confirm' }">
+      <div class="modal-footer" :class="{ 'no-body': dialogState.current.kind === 'confirm' || dialogState.current.kind === 'choice' }">
         <template v-if="dialogState.current.kind === 'copy'">
           <button type="submit" class="btn btn-primary">关闭</button>
+        </template>
+        <template v-else-if="dialogState.current.kind === 'choice'">
+          <button ref="cancelRef" type="button" class="btn btn-secondary" @click="cancel">
+            {{ dialogState.current.cancelText }}
+          </button>
+          <button
+            v-for="choice in dialogState.current.choices"
+            :key="choice.value"
+            type="button"
+            class="btn"
+            :class="choice.danger ? 'btn-danger' : 'btn-primary'"
+            @click="closeDialog(choice.value)"
+          >
+            {{ choice.label }}
+          </button>
         </template>
         <template v-else>
           <button ref="cancelRef" type="button" class="btn btn-secondary" @click="cancel">

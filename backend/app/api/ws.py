@@ -3,8 +3,16 @@
 认证方式：浏览器 WebSocket 不能自定义 Authorization 头，token 通过子协议传递：
     new WebSocket(url, ['clipsync.v1', 'bearer.<JWT>'])
 服务端校验后只回选 'clipsync.v1'，token 不出现在 URL 中，不会被 access log 记录。
+
+两种连接：
+- 登录凭证：接收属主自己的全部推送
+- 快速访问凭证（typ=qa）：只接收该访问码下内容有变化的信号（access_items_changed）；
+  访问码失效、凭证到期或属主被禁用时以 1008 断开。每次心跳都重新确认一次，
+  定时清理删掉过期访问码这类没有经过接口的变化，最迟一个心跳周期内也会断开
 """
 import json
+import time
+from dataclasses import dataclass
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
@@ -12,6 +20,7 @@ from sqlalchemy import select
 from ..database import AsyncSessionLocal
 from ..models import User
 from ..core.security import decode_access_token, get_user_id_from_payload
+from ..core.quick_access import parse_quick_payload, quick_access_is_valid
 from ..core.ws_manager import manager
 
 router = APIRouter()
@@ -19,6 +28,13 @@ router = APIRouter()
 WS_PROTOCOL = "clipsync.v1"
 _TOKEN_PREFIX = "bearer."
 _MAX_MESSAGE_BYTES = 1024  # 客户端只会发心跳，超长消息直接断开
+
+
+@dataclass
+class _Peer:
+    user_id: int  # 登录连接为用户本人，快速访问连接为访问码的属主
+    quick_code: str | None = None
+    expires_at: float = 0  # 快速访问凭证的到期时间（Unix 秒）
 
 
 def _extract_token(websocket: WebSocket) -> str | None:
@@ -33,17 +49,33 @@ def _extract_token(websocket: WebSocket) -> str | None:
     return None
 
 
-async def _authenticate(websocket: WebSocket) -> User | None:
-    """安全红线：校验签名 + 过期 + 用户存在且未禁用"""
-    user_id = get_user_id_from_payload(decode_access_token(_extract_token(websocket) or ""))
-    if user_id is None:
+async def _authenticate(websocket: WebSocket) -> _Peer | None:
+    """安全红线：校验签名 + 过期 + 用户存在且未禁用；快速访问凭证还要求访问码下仍有内容"""
+    payload = decode_access_token(_extract_token(websocket) or "")
+    user_id = get_user_id_from_payload(payload)
+    if user_id is not None:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+        if user is None or not user.is_active:
+            return None
+        return _Peer(user_id=user.id)
+
+    quick = parse_quick_payload(payload)
+    if quick is None:
         return None
+    owner_id, code = quick
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
-    if user is None or not user.is_active:
-        return None
-    return user
+        if not await quick_access_is_valid(db, owner_id, code):
+            return None
+    return _Peer(user_id=owner_id, quick_code=code, expires_at=float(payload["exp"]))
+
+
+async def _quick_still_valid(peer: _Peer) -> bool:
+    if time.time() >= peer.expires_at:
+        return False
+    async with AsyncSessionLocal() as db:
+        return await quick_access_is_valid(db, peer.user_id, peer.quick_code)
 
 
 @router.websocket("/ws")
@@ -51,17 +83,21 @@ async def websocket_endpoint(websocket: WebSocket):
     """
     消息格式：
         客户端: {"type": "ping"}  → 服务端: {"type": "pong"}
-    推送：
-        {"type": "clipboard_updated" | "file_added" | "file_deleted", "data": {...}}
+    推送（只带信号，不带正文）：
+        登录连接：clipboard_updated / texts_changed / file_added / file_deleted / access_codes_changed / quota_updated
+        快速访问连接：access_items_changed
     """
-    user = await _authenticate(websocket)
-    if user is None:
+    peer = await _authenticate(websocket)
+    if peer is None:
         # 握手前关闭：客户端收到 403，不会进入已连接状态
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
     await websocket.accept(subprotocol=WS_PROTOCOL)
-    manager.register(user.id, websocket)
+    if peer.quick_code is None:
+        manager.register(peer.user_id, websocket)
+    else:
+        manager.register_quick(peer.user_id, peer.quick_code, websocket)
 
     try:
         while True:
@@ -74,6 +110,9 @@ async def websocket_endpoint(websocket: WebSocket):
             except ValueError:
                 continue
             if isinstance(message, dict) and message.get("type") == "ping":
+                if peer.quick_code is not None and not await _quick_still_valid(peer):
+                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                    break
                 await websocket.send_text('{"type":"pong"}')
     except WebSocketDisconnect:
         pass
@@ -81,4 +120,7 @@ async def websocket_endpoint(websocket: WebSocket):
         pass
     finally:
         # 无论何种方式断开都清理，避免连接表残留
-        manager.disconnect(user.id, websocket)
+        if peer.quick_code is None:
+            manager.disconnect(peer.user_id, websocket)
+        else:
+            manager.disconnect_quick(peer.user_id, websocket)
