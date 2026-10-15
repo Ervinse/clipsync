@@ -40,7 +40,9 @@ const { drafts, isDirty, hasDirty, sync, loadFull, save } = createTextDrafts({
 const lost = computed(() => quickStore.lost)
 const isEmpty = computed(() => !items.value.clipboard && items.value.texts.length === 0 && items.value.files.length === 0)
 
-// 递增序号：之前发出、尚未返回的刷新结果作废
+// 递增序号：之前发出、尚未返回的刷新结果作废。
+// 「加载中」由最新的一次刷新收尾：首次加载还没返回时，实时连接建立会触发一次静默刷新，
+// 首次加载的结果随之作废，这时要靠静默刷新结束来关掉「加载中」
 let seq = 0
 const refresh = async ({ silent = false } = {}) => {
   if (!quickStore.token) return
@@ -55,10 +57,12 @@ const refresh = async ({ silent = false } = {}) => {
     if (data.clipboard) list.unshift({ key: CLIP, title: '', ...data.clipboard })
     sync(list)
   } catch (error) {
+    if (mine !== seq) return
+    // 还没加载出内容时失败才显示错误；已有内容时静默刷新失败不打扰。
     // 401 由请求拦截器处理（访问码失效），页面显示失效提示
-    if (mine === seq && !silent && error?.status !== 401) loadError.value = error.message || '加载失败'
+    if (loading.value && error?.status !== 401) loadError.value = error.message || '加载失败'
   } finally {
-    if (mine === seq && !silent) loading.value = false
+    if (mine === seq) loading.value = false
   }
 }
 
