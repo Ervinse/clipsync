@@ -58,8 +58,11 @@ def decode_access_token(token: str) -> Optional[dict]:
 
 
 def get_user_id_from_payload(payload: Optional[dict]) -> Optional[int]:
-    """从 payload 的 sub 中取出用户 ID；格式不对返回 None（而不是抛 500）"""
-    if not payload:
+    """
+    从登录凭证的 sub 中取出用户 ID；格式不对返回 None（而不是抛 500）。
+    安全红线：只接受登录凭证。带 typ 的 token（如快速访问凭证 typ=qa）一律返回 None，不能当登录凭证用。
+    """
+    if not payload or "typ" in payload:
         return None
     try:
         return int(payload.get("sub"))

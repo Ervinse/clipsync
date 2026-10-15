@@ -71,15 +71,15 @@ def test_owner_download_missing_file_returns_404(client, make_user):
     assert resp.json()["detail"] == "文件已丢失"
 
 
-def test_public_download_missing_file_does_not_reveal_code_validity(client, make_user):
+def test_quick_download_missing_file_looks_like_deleted(client, make_user):
+    from tests.helpers import set_code, quick_headers
     user = make_user()
     file_id = _upload_and_lose_disk_file(client, user)
-    code = client.post(
-        "/api/access-codes", json={"target_type": "file", "file_id": file_id}, headers=user.headers
-    ).json()["code"]
-    resp = client.get(f"/api/access/{code}/download")
+    set_code(client, user, "file", file_id)
+    headers = quick_headers(client, f"{user.username}@mycode")
+    resp = client.get(f"/api/access/files/{file_id}/download", headers=headers)
     assert resp.status_code == 404
-    assert resp.json()["detail"] == "访问码无效或已失效"
+    assert resp.json()["detail"] == "内容不存在或访问码已失效"
 
 
 def test_download_still_works(client, make_user):

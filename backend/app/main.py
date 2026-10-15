@@ -6,7 +6,7 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import settings
 from .rate_limit import limiter
-from .api import auth, clipboard, files, ws, access, admin
+from .api import auth, clipboard, texts, files, ws, access, admin
 
 app = FastAPI(
     title="ClipSync API",
@@ -50,6 +50,7 @@ async def root():
 # 挂载路由
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(clipboard.router, prefix="/api/clipboard", tags=["文本"])
+app.include_router(texts.router, prefix="/api/texts", tags=["文本栏目"])
 app.include_router(files.router, prefix="/api/files", tags=["文件"])
 app.include_router(access.router, prefix="/api/access-codes", tags=["访问码管理"])
 # 免登录访问接口单独挂载在 /api/access，不会出现在 /api/access-codes 前缀下

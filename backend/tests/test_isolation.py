@@ -2,7 +2,7 @@
 import pytest
 
 from app.models import UserRole
-from tests.helpers import upload
+from tests.helpers import upload, set_code, new_text
 
 
 def _set_clipboard(client, user, text):
@@ -62,22 +62,11 @@ def test_file_delete_only_owner(client, make_user):
     assert client.get("/api/files", headers=owner.headers).json()["total"] == 1
 
 
-def test_access_code_file_id_must_belong_to_creator(client, make_user):
-    owner, attacker = make_user(), make_user()
-    file_id = upload(client, owner, b"data").json()["id"]
-    resp = client.post(
-        "/api/access-codes",
-        json={"target_type": "file", "file_id": file_id},
-        headers=attacker.headers,
-    )
-    assert resp.status_code == 404
-
-
-def test_access_code_revoke_and_list_only_owner(client, make_user):
+def test_access_code_overview_only_owner(client, make_user):
     owner, other = make_user(), make_user()
-    code_id = client.post("/api/access-codes", json={"target_type": "text"}, headers=owner.headers).json()["id"]
+    set_code(client, owner, "text", new_text(client, owner)["id"])
     assert client.get("/api/access-codes", headers=other.headers).json()["total"] == 0
-    assert client.delete(f"/api/access-codes/{code_id}", headers=other.headers).status_code == 404
+    assert client.get("/api/access-codes", headers=owner.headers).json()["total"] == 1
 
 
 def test_admin_file_listing_is_metadata_only(client, make_user):

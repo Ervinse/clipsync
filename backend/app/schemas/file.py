@@ -1,5 +1,7 @@
 """文件相关 Pydantic 模型"""
 from datetime import datetime
+from typing import Optional
+
 from pydantic import BaseModel, Field, field_validator
 
 from ..core.http_utils import sanitize_filename
@@ -44,6 +46,8 @@ class FileResponse(BaseModel):
     size: int
     mime_type: str
     created_at: datetime
+    access_code: Optional[str] = None
+    access_expires_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
