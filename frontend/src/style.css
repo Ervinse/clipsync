@@ -865,6 +865,23 @@ a:hover {
   }
 }
 
+/* 切换主题时整页颜色渐变，避免黑白瞬间对调刺眼。theme-switching 由 utils/theme.js 在切换时临时加到 <html> 上；
+   系统开了「减少动态效果」时不加渐变，直接切换 */
+@media (prefers-reduced-motion: no-preference) {
+  :root {
+    --theme-duration: 350ms;
+  }
+
+  html.theme-switching,
+  html.theme-switching *,
+  html.theme-switching *::before,
+  html.theme-switching *::after {
+    transition: background-color var(--theme-duration) ease, border-color var(--theme-duration) ease,
+      color var(--theme-duration) ease, fill var(--theme-duration) ease, stroke var(--theme-duration) ease,
+      box-shadow var(--theme-duration) ease, outline-color var(--theme-duration) ease !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -19,9 +19,23 @@ const readMode = () => {
 
 export const themeMode = ref(readMode())
 
-const apply = () => {
+// 切换时给 <html> 临时加上 theme-switching，style.css 据此让颜色渐变（时长与 --theme-duration 一致，略留余量）；
+// 渐变结束就去掉，平时的悬停、展开等动效不受影响
+const SWITCH_CLASS = 'theme-switching'
+const SWITCH_MS = 450
+let switchTimer = null
+
+const apply = ({ animate = false } = {}) => {
+  const root = document.documentElement
   const dark = themeMode.value === 'dark' || (themeMode.value === 'system' && media.matches)
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+  const theme = dark ? 'dark' : 'light'
+  if (root.dataset.theme === theme) return
+  if (animate) {
+    root.classList.add(SWITCH_CLASS)
+    clearTimeout(switchTimer)
+    switchTimer = setTimeout(() => root.classList.remove(SWITCH_CLASS), SWITCH_MS)
+  }
+  root.dataset.theme = theme
 }
 
 export const setThemeMode = (mode) => {
@@ -33,18 +47,19 @@ export const setThemeMode = (mode) => {
   } catch {
     // 存不下只影响下次打开，本次切换照样生效
   }
-  apply()
+  apply({ animate: true })
 }
 
 // 跟随系统时，系统深浅色变化立即生效
-media.addEventListener('change', apply)
+media.addEventListener('change', () => apply({ animate: true }))
 
 // 其他标签页切换了主题，本页同步
 window.addEventListener('storage', (event) => {
   if (event.key === STORAGE_KEY || event.key === null) {
     themeMode.value = readMode()
-    apply()
+    apply({ animate: true })
   }
 })
 
+// 首次进入页面不做渐变
 apply()
