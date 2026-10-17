@@ -26,7 +26,7 @@ MAX_EXPIRES_HOURS = 8760  # 访问码最长有效期：1 年
 QUICK_TOKEN_TYPE = "qa"
 QUICK_TOKEN_MINUTES = 120  # 快速访问凭证有效期：2 小时
 
-# 同一用户名连续输错 MAX_FAILURES 次，暂停该用户名的快速访问 LOCK_SECONDS 秒
+# 同一用户（按用户名查到同一个人）连续输错 MAX_FAILURES 次，暂停其快速访问 LOCK_SECONDS 秒
 MAX_FAILURES = 10
 LOCK_SECONDS = 15 * 60
 _TRACK_LIMIT = 10_000  # 记录条数超过这个数时清理过时记录，防止大量随机用户名撑大内存
@@ -57,9 +57,19 @@ def parse_full_code(value: str) -> tuple[str, str] | None:
         return None
 
 
+def lock_key(owner_id: int | None, username: str) -> str:
+    """
+    输错锁定的计数键。用户名存在时以用户 id 为键：数据库比较用户名时忽略大小写、重音、
+    零宽字符，同一个人的各种写法（alice / ALICE / alicé）必须落在同一个计数上，
+    否则换个写法就能重新计数，绕过锁定。用户名不存在时没有 id 可用，以小写用户名为键
+    （这类写法永远进不去，各自计数不会让攻击者得到好处）。
+    """
+    return f"u{owner_id}" if owner_id is not None else f"n:{username.lower()}"
+
+
 class FailureTracker:
     """
-    按用户名记录连续输错次数（进程内存，后端单 worker；重启后清零）。
+    按锁定键（见 lock_key）记录连续输错次数（进程内存，后端单 worker；重启后清零）。
     不存在的用户名同样计数和锁定，响应与存在的用户名一致，不暴露用户名是否存在。
     """
 
@@ -67,33 +77,28 @@ class FailureTracker:
         # key → [连续失败次数, 锁定截止（monotonic 秒，0 表示未锁定）, 最近一次记录时间]
         self._entries: dict[str, list[float]] = {}
 
-    @staticmethod
-    def _key(username: str) -> str:
-        # 用户名在数据库里按不区分大小写的排序规则比较，计数也不区分大小写
-        return username.lower()
-
-    def is_locked(self, username: str) -> bool:
-        entry = self._entries.get(self._key(username))
+    def is_locked(self, key: str) -> bool:
+        entry = self._entries.get(key)
         if entry is None or entry[1] == 0:
             return False
         if entry[1] > time.monotonic():
             return True
         # 锁定期已过：重新计数
-        del self._entries[self._key(username)]
+        del self._entries[key]
         return False
 
-    def record_failure(self, username: str) -> None:
+    def record_failure(self, key: str) -> None:
         now = time.monotonic()
         if len(self._entries) >= _TRACK_LIMIT:
             self._prune(now)
-        entry = self._entries.setdefault(self._key(username), [0, 0, now])
+        entry = self._entries.setdefault(key, [0, 0, now])
         entry[0] += 1
         entry[2] = now
         if entry[0] >= MAX_FAILURES:
             entry[1] = now + LOCK_SECONDS
 
-    def reset(self, username: str) -> None:
-        self._entries.pop(self._key(username), None)
+    def reset(self, key: str) -> None:
+        self._entries.pop(key, None)
 
     def clear(self) -> None:
         self._entries.clear()
