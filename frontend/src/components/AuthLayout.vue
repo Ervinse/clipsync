@@ -2,6 +2,7 @@
 // 登录 / 注册页共用的布局：左侧品牌介绍（窄屏隐藏），右侧表单（默认插槽）
 import { Clipboard, FolderUp, KeyRound } from '@lucide/vue'
 import BrandMark from './BrandMark.vue'
+import ThemeToggle from './ThemeToggle.vue'
 
 defineProps({
   title: { type: String, required: true },
@@ -36,6 +37,7 @@ const FEATURES = [
     </aside>
 
     <main class="auth-main">
+      <ThemeToggle class="auth-theme" />
       <div class="auth-panel">
         <BrandMark class="mobile-brand" :size="28" />
         <h2 class="auth-title">{{ title }}</h2>
@@ -148,10 +150,17 @@ const FEATURES = [
 }
 
 .auth-main {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: var(--space-10) var(--space-6);
+}
+
+.auth-theme {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
 }
 
 .auth-panel {
