@@ -314,6 +314,25 @@ def test_unknown_username_is_locked_the_same_way(client):
     assert quick_login(client, "ghost-user@whatever").status_code == 429
 
 
+def test_lockout_covers_username_spellings_the_database_treats_as_equal(client, make_user):
+    """数据库把大小写、重音、零宽字符不同的写法当作同一个用户名：换写法不能重新计数"""
+    user = make_user(username="alice")
+    set_code(client, user, "clipboard", code="right")
+    for _ in range(MAX_FAILURES):
+        assert quick_login(client, "alice@wrong1").status_code == 404
+    for spelling in ("alice", "ALICE", "alicé", "ali​ce"):
+        assert quick_login(client, f"{spelling}@right").status_code == 429, spelling
+
+
+def test_failures_across_spellings_share_one_count(client, make_user):
+    user = make_user(username="alice")
+    set_code(client, user, "clipboard", code="right")
+    spellings = ["alice", "ALICE", "alicé", "ali​ce", "Alice"]
+    for i in range(MAX_FAILURES):
+        assert quick_login(client, f"{spellings[i % len(spellings)]}@wrong1").status_code == 404
+    assert quick_login(client, "alice@right").status_code == 429
+
+
 def test_success_resets_failure_count(client, make_user):
     user = make_user()
     set_code(client, user, "clipboard", code="right")

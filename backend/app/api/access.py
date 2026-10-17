@@ -44,6 +44,7 @@ from ..core.quick_access import (
     code_is_active,
     valid_code_filter,
     failures,
+    lock_key,
     notify_quick_viewers,
 )
 from ..core.timeutil import utcnow, to_naive_utc
@@ -256,26 +257,29 @@ async def quick_login(
 
     安全红线：
     - 用户名不存在 / 访问码不对 / 已过期 / 属主被禁用，一律返回同样的 404，不暴露是哪一种
-    - 同一用户名连续输错 10 次锁定 15 分钟（不存在的用户名同样计数），锁定期间输对也不放行
+    - 同一用户连续输错 10 次锁定 15 分钟（不存在的用户名同样计数），锁定期间输对也不放行；
+      计数按查到的用户 id 归并，用户名的大小写、重音等不同写法共用同一个计数
     """
     parsed = parse_full_code(data.full_code)
     if parsed is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请按「用户名@访问码」的格式输入")
     username, code = parsed
 
-    if failures.is_locked(username):
+    result = await db.execute(select(User).where(User.username == username))
+    owner = result.scalar_one_or_none()
+    lock_id = lock_key(owner.id if owner else None, username)
+
+    if failures.is_locked(lock_id):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"尝试次数过多，请 {LOCK_SECONDS // 60} 分钟后再试",
         )
 
-    result = await db.execute(select(User).where(User.username == username))
-    owner = result.scalar_one_or_none()
     if owner is None or not owner.is_active or not await code_is_active(db, owner.id, code):
-        failures.record_failure(username)
+        failures.record_failure(lock_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=INVALID_DETAIL)
 
-    failures.reset(username)
+    failures.reset(lock_id)
     return QuickLoginResponse(
         access_token=create_quick_token(owner.id, code),
         owner_username=owner.username,
