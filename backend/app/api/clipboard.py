@@ -1,6 +1,6 @@
 """剪贴板路由：当前文本 + 历史版本管理"""
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, delete, desc, func
+from sqlalchemy import select, delete, desc, func, case, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
@@ -17,6 +17,7 @@ from ..core.ws_manager import manager
 from ..core.quick_access import notify_quick_viewers
 from ..core.timeutil import utcnow
 from ..config import settings
+from .texts import INLINE_CONTENT_BYTES, PREVIEW_CHARS
 
 router = APIRouter()
 
@@ -199,23 +200,53 @@ async def get_clipboard_history(
 
     安全红线：查询强制按 user_id 过滤。
     """
+    # 在数据库里算字节数与开头：长文本不把全文读进内存（OCTET_LENGTH 按字节计，LEFT 按字符截取）
+    size = func.octet_length(ClipboardHistory.content)
     result = await db.execute(
-        select(ClipboardHistory)
+        select(
+            ClipboardHistory.id,
+            case((size <= INLINE_CONTENT_BYTES, ClipboardHistory.content), else_=literal_column("NULL")).label("content"),
+            func.left(ClipboardHistory.content, PREVIEW_CHARS).label("preview"),
+            size.label("size"),
+            ClipboardHistory.created_at,
+        )
         .where(ClipboardHistory.user_id == current_user.id)
         .order_by(desc(ClipboardHistory.created_at), desc(ClipboardHistory.id))
     )
-    history_items = result.scalars().all()
+    items = [ClipboardHistoryItem(**row._mapping) for row in result.all()]
 
-    return ClipboardHistoryList(
-        items=[
-            ClipboardHistoryItem(
-                id=item.id,
-                content=item.content,
-                created_at=item.created_at,
-            )
-            for item in history_items
-        ],
-        total=len(history_items),
+    return ClipboardHistoryList(items=items, total=len(items))
+
+
+@router.get("/history/{history_id}", response_model=ClipboardHistoryItem)
+async def get_clipboard_history_item(
+    history_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    读取某条历史的全文（列表里的长内容只有开头，点开时用这个接口取全文）。
+
+    安全红线：校验 history_id 归属于当前用户，他人的与不存在的统一 404。
+    """
+    result = await db.execute(
+        select(ClipboardHistory).where(
+            ClipboardHistory.id == history_id,
+            ClipboardHistory.user_id == current_user.id,  # 安全红线：归属校验
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="历史记录不存在或无权访问",
+        )
+    return ClipboardHistoryItem(
+        id=item.id,
+        content=item.content,
+        preview=item.content[:PREVIEW_CHARS],
+        size=len(item.content.encode("utf-8")),
+        created_at=item.created_at,
     )
 
 

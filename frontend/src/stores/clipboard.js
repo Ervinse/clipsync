@@ -82,6 +82,15 @@ export const useClipboardStore = defineStore('clipboard', {
     },
 
     /**
+     * 取某条历史的全文：列表里较短的条目已带全文，较长的（content 为 null）才请求后端
+     */
+    async fetchHistoryContent(item) {
+      if (item.content !== null && item.content !== undefined) return item.content
+      const data = await api.clipboard.historyItem(item.id)
+      return data.content
+    },
+
+    /**
      * 恢复某条历史为当前文本：后端会把原当前文本归档，所以恢复后要重新拉历史
      */
     async restoreHistory(historyId) {

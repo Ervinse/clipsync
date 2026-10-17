@@ -14,9 +14,14 @@ export default {
     return request.put('/clipboard', { content, base_version: baseVersion })
   },
 
-  // 获取历史记录（后端返回全部，最多 HISTORY_KEEP 条，不分页）
+  // 获取历史记录（后端返回全部，最多 HISTORY_KEEP 条，不分页；超过 64KB 的条目 content 为 null，只给开头 preview）
   history() {
     return request.get('/clipboard/history')
+  },
+
+  // 读取某条历史的全文
+  historyItem(historyId) {
+    return request.get(`/clipboard/history/${historyId}`)
   },
 
   // 把某条历史恢复为当前文本（后端会把旧的当前文本归档并广播）

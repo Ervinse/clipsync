@@ -3,7 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { History, Save, LoaderCircle, RotateCcw, Trash2, X, Inbox } from '@lucide/vue'
 import { useClipboardStore, useUserStore } from '../stores'
-import { formatRelative } from '../utils/format'
+import { formatRelative, formatSize } from '../utils/format'
 import toast from '../utils/toast'
 import { confirmDialog } from '../utils/dialog'
 import { askConflict } from '../utils/conflict'
@@ -160,12 +160,25 @@ const toggleHistory = async () => {
   }
 }
 
-// 仅把历史内容填入编辑框，不保存
-const loadHistoryItem = (content) => {
+// 仅把历史内容填入编辑框，不保存；长内容列表里只有开头，先取全文
+const loadHistoryItem = async (item) => {
+  let content
+  try {
+    content = await clipboardStore.fetchHistoryContent(item)
+  } catch (error) {
+    toast.error('载入历史失败：' + error.message)
+    return
+  }
   textContent.value = content
   showHistory.value = false
   toast.info('已填入编辑框，点击「保存」后才会同步')
 }
+
+// 历史条目的摘要：带全文的取前 140 个字符，只有开头的用 preview
+const historyText = (item) => item.content ?? item.preview
+const historyTruncated = (item) => item.content === null || item.content.length > 140
+const historySize = (item) =>
+  item.content === null ? formatSize(item.size) : item.content.length.toLocaleString() + ' 字符'
 
 // 恢复为当前文本：直接保存并同步到其他终端
 const handleRestore = async (item) => {
@@ -272,12 +285,12 @@ const formatDate = formatRelative
             class="history-item"
             tabindex="0"
             title="点击填入编辑框（不保存）"
-            @click="loadHistoryItem(item.content)"
-            @keydown.enter="loadHistoryItem(item.content)"
+            @click="loadHistoryItem(item)"
+            @keydown.enter="loadHistoryItem(item)"
           >
-            <p class="history-content">{{ item.content.substring(0, 140) }}<span v-if="item.content.length > 140">…</span></p>
+            <p class="history-content">{{ historyText(item).substring(0, 140) }}<span v-if="historyTruncated(item)">…</span></p>
             <div class="history-meta">
-              <span>{{ formatDate(item.created_at) }} · {{ item.content.length.toLocaleString() }} 字符</span>
+              <span>{{ formatDate(item.created_at) }} · {{ historySize(item) }}</span>
               <span class="history-actions">
                 <button class="btn-icon" title="恢复为当前文本并同步" aria-label="恢复" @click.stop="handleRestore(item)">
                   <RotateCcw :size="14" />
