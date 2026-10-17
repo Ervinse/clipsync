@@ -218,7 +218,7 @@ docker compose ps             # db 为 healthy，backend、frontend 为 Up
 docker compose exec backend python -m scripts.create_superadmin
 ```
 
-按提示输入用户名和密码（密码不回显）。之后用浏览器访问 `CORS_ORIGINS` 里的地址登录，在管理后台生成邀请码给其他用户注册。
+按提示输入用户名和密码（密码不回显）。用户名 3–64 位，只能含字母、数字和 `_ . -`（不能含 `@`）。之后用浏览器访问 `CORS_ORIGINS` 里的地址登录，在管理后台生成邀请码给其他用户注册。
 
 ### 6.5 安装定时任务
 

@@ -4,10 +4,14 @@ from pydantic import BaseModel, Field, field_validator
 
 from ..models import UserRole
 
+# 用户名只能含字母、数字与 _ . -：快速访问码「用户名@访问码」按 @ 拆分，用户名里不能出现 @。
+# 注册接口与 scripts/create_superadmin.py 共用这条规则
+USERNAME_PATTERN = r"^[A-Za-z0-9_.\-]+$"
+
 
 class UserCreate(BaseModel):
     """注册请求"""
-    username: str = Field(..., min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.\-]+$", description="用户名")
+    username: str = Field(..., min_length=3, max_length=64, pattern=USERNAME_PATTERN, description="用户名")
     password: str = Field(..., min_length=8, max_length=72, description="密码")
     invite_code: str = Field(..., min_length=1, max_length=32, description="邀请码")
 
