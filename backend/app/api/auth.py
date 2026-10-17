@@ -36,6 +36,7 @@ async def register(
     安全红线：
     - 注册开关关闭时一律拒绝（即便持有有效邀请码）
     - 邀请码必须有效（未使用、未过期），加行锁防止并发重复使用
+    - 先验邀请码再查用户名：没有有效邀请码的人无法借注册接口探测用户名是否存在
     - 密码仅存哈希
     """
     # 1. 注册开关（安全红线：后台关闭注册后必须真正生效）
@@ -45,15 +46,7 @@ async def register(
             detail="系统已关闭注册",
         )
 
-    # 2. 校验用户名是否已存在
-    result = await db.execute(select(User).where(User.username == user_in.username))
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="用户名已被注册",
-        )
-
-    # 3. 校验邀请码（FOR UPDATE：同一邀请码并发注册时只有一个能成功）
+    # 2. 校验邀请码（FOR UPDATE：同一邀请码并发注册时只有一个能成功）
     result = await db.execute(
         select(InviteCode)
         .where(
@@ -76,6 +69,14 @@ async def register(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="邀请码已过期",
+        )
+
+    # 3. 校验用户名是否已存在（到这一步说明邀请码有效；用户名被占用时直接返回，邀请码不会被消耗）
+    result = await db.execute(select(User).where(User.username == user_in.username))
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="用户名已被注册",
         )
 
     # 4. 创建用户（bcrypt 为 CPU 密集操作，放入线程池避免阻塞事件循环）
