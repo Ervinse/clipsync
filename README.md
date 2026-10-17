@@ -590,8 +590,9 @@ CodeProject/
     │   │   │   ├── conflict.js     # 保存冲突时的选择对话框
     │   │   │   ├── textDrafts.js   # 多段文本的编辑草稿（文本页与快速访问页共用）
     │   │   │   ├── accessCode.js   # 访问码规则与过期判断
+    │   │   │   ├── theme.js        # 主题（跟随系统 / 浅色 / 深色，记在本浏览器）
     │   │   │   └── download.js     # Blob 交给浏览器保存
-    │   │   ├── components/       # AuthLayout / BrandMark / ToastHost / DialogHost / TextEditorCard / AccessCodeButton / AccessCodeDialog
+    │   │   ├── components/       # AuthLayout / BrandMark / ThemeToggle / ToastHost / DialogHost / TextEditorCard / AccessCodeButton / AccessCodeDialog
     │   │   └── views/
     │   │       ├── Login.vue / Register.vue
     │   │       ├── Home.vue          # 登录后布局（侧边栏）
@@ -672,7 +673,7 @@ CodeProject/
 | 文件 | 分片上传（配额校验、取消）、流式下载、删除、越权与路径穿越防护 | 前端断点续传 |
 | 快速访问码 | 自定访问码设置 / 修改 / 清除、按访问码总览、「用户名@访问码」免登录进入（改文本 / 下载文件）、实时刷新、输错锁定与限流 | — |
 | 管理后台 | 统计、用户管理（配额 / 启用禁用 / 删除）、邀请码、全站文件元数据、系统设置 | 变更角色、全站访问码管理 |
-| 前端 | 登录 / 注册（含快速访问入口）、云剪切板、文本、文件、访问码、管理后台、快速访问页、路由守卫、WebSocket 接入 | 自动化测试 |
+| 前端 | 登录 / 注册（含快速访问入口）、云剪切板、文本、文件、访问码、管理后台、快速访问页、路由守卫、WebSocket 接入、浅色 / 深色主题 | 自动化测试 |
 | 部署 | Docker Compose（开发机构建离线导入 / 服务器源码构建）、HTTP / HTTPS Nginx 配置、Let's Encrypt 证书申请与续期、备份 / 清理 / 健康检查脚本 | 不使用 Docker 的直接部署（不支持） |
 
 未实现与待验证的事项汇总在 [TODO.md](TODO.md)。

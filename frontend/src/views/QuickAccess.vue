@@ -17,6 +17,7 @@ import { saveBlob } from '../utils/download'
 import { confirmDialog } from '../utils/dialog'
 import toast from '../utils/toast'
 import BrandMark from '../components/BrandMark.vue'
+import ThemeToggle from '../components/ThemeToggle.vue'
 import TextEditorCard from '../components/TextEditorCard.vue'
 
 const router = useRouter()
@@ -162,6 +163,7 @@ const handleDownload = async (file) => {
     <header class="quick-header">
       <BrandMark :size="24" />
       <span class="header-right">
+        <ThemeToggle />
         <span class="mono header-code" :title="fullCode">{{ fullCode }}</span>
         <button class="btn btn-secondary btn-sm" @click="handleExit">
           <LogOut :size="14" />

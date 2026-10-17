@@ -3,6 +3,8 @@
  * （按钮、输入框、卡片、徽标、提示条、表格、标签页、开关、进度条、弹窗、页头、空状态）。
  *
  * 页面只引用这里的变量和类，不在页面里写死颜色值；页面自己的 <style scoped> 只放该页特有的布局。
+ * 颜色变量分浅色（:root）与深色（:root[data-theme='dark']）两套，data-theme 由 utils/theme.js 设置；
+ * 新增颜色变量时两套都要写。
  * 不要在这里给 #app 定宽、居中，也不要改全局 h1/h2 字号，会覆盖各页面自己的布局。
  */
 
@@ -43,14 +45,19 @@
   --color-warning-border: #f6d9b0;
   --color-danger: #c4223a;
   --color-danger-hover: #a81d33;
+  --color-on-danger: #ffffff;
   --color-danger-subtle: #fdedef;
   --color-danger-border: #f5c2c9;
 
   /* 弹窗背后的遮罩 */
   --color-overlay: rgba(16, 16, 20, 0.4);
 
+  /* 窄屏顶栏的半透明底 */
+  --color-topbar-bg: rgba(255, 255, 255, 0.9);
+
   /* 深色提示条（toast）上的图标颜色 */
   --color-toast-bg: #17171a;
+  --color-toast-text: #ffffff;
   --color-toast-success: #4ade80;
   --color-toast-error: #ff8a8a;
   --color-toast-info: #a5b4fc;
@@ -99,6 +106,54 @@
   --control-height: 36px;
   --control-height-lg: 40px;
   --sidebar-width: 240px;
+}
+
+/* 深色主题：只覆盖颜色与阴影，尺寸、字体等沿用上面。文字色与状态色在深色底上满足 4.5:1 对比度 */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-bg: #111113;
+  --color-bg-subtle: #18181b;
+  --color-bg-muted: #222226;
+  --color-bg-emphasis: #2e2e33;
+
+  --color-border: #2a2a2f;
+  --color-border-strong: #3a3a40;
+  --color-border-hover: #4a4a52;
+
+  --color-text: #ededef;
+  --color-text-secondary: #a8a8b2;
+  --color-text-tertiary: #8b8b95;
+  --color-text-inverse: #17171a;
+
+  /* 主按钮在深色下反过来用近白色 */
+  --color-primary: #ededef;
+  --color-primary-hover: #d4d4d8;
+  --color-accent: #7b93f0;
+  --color-accent-hover: #93a7f5;
+  --color-accent-subtle: #1c2340;
+  --color-focus-ring: rgba(123, 147, 240, 0.35);
+
+  --color-success: #4cc38a;
+  --color-success-subtle: #12261c;
+  --color-warning: #f0a04b;
+  --color-warning-subtle: #2b1f10;
+  --color-warning-border: #5a3d17;
+  --color-danger: #ff6b7a;
+  --color-danger-hover: #ff8592;
+  --color-on-danger: #17171a;
+  --color-danger-subtle: #2d1418;
+  --color-danger-border: #5c2630;
+
+  --color-overlay: rgba(0, 0, 0, 0.6);
+  --color-topbar-bg: rgba(17, 17, 19, 0.85);
+
+  --color-toast-bg: #2a2a30;
+  --color-toast-text: #ededef;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 16px 40px -12px rgba(0, 0, 0, 0.7), 0 4px 12px -4px rgba(0, 0, 0, 0.4);
 }
 
 /* ---------- 基础重置 ---------- */
@@ -240,7 +295,7 @@ a:hover {
 
 .btn-danger {
   background: var(--color-danger);
-  color: var(--color-text-inverse);
+  color: var(--color-on-danger);
   box-shadow: var(--shadow-xs);
 }
 
@@ -248,7 +303,7 @@ a:hover {
   background: var(--color-danger-hover);
 }
 
-/* 次要的危险操作：白底红字，悬停时浅红底 */
+/* 次要的危险操作：底色同页面、红字，悬停时浅红底 */
 .btn-danger-outline {
   background: var(--color-bg);
   color: var(--color-danger);

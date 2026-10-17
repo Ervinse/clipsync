@@ -5,6 +5,8 @@ import App from './App.vue'
 // Inter 字体随前端打包（不依赖外网字体服务，内网部署也能用），先于全局样式引入
 import '@fontsource-variable/inter/index.css'
 import './style.css'
+// 主题：导入即按本浏览器的选择设好 data-theme，并监听系统深浅色与其他标签页的切换
+import './utils/theme'
 import { useUserStore } from './stores'
 
 const app = createApp(App)

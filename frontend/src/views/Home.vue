@@ -7,6 +7,7 @@ import ws from '../utils/websocket'
 import { formatSize } from '../utils/format'
 import { confirmDialog } from '../utils/dialog'
 import BrandMark from '../components/BrandMark.vue'
+import ThemeToggle from '../components/ThemeToggle.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -135,6 +136,11 @@ const handleLogout = async () => {
           <div v-if="userStore.quota.reserved > 0" class="quota-text">
             上传中 {{ formatSize(userStore.quota.reserved) }}
           </div>
+        </div>
+
+        <div class="theme-row">
+          <span class="theme-label">主题</span>
+          <ThemeToggle />
         </div>
 
         <div class="account">
@@ -270,6 +276,19 @@ const handleLogout = async () => {
   font-variant-numeric: tabular-nums;
 }
 
+.theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px var(--space-2);
+}
+
+.theme-label {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
 .account {
   display: flex;
   align-items: center;
@@ -337,7 +356,7 @@ const handleLogout = async () => {
     gap: var(--space-2);
     height: 52px;
     padding: 0 var(--space-3);
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--color-topbar-bg);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--color-border);

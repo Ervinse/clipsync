@@ -17,8 +17,8 @@ defineProps({
       aria-hidden="true"
     >
       <rect width="32" height="32" rx="8" fill="currentColor" />
-      <rect x="8" y="7" width="12" height="14" rx="2.5" stroke="#fff" stroke-width="2" />
-      <rect x="12" y="11" width="12" height="14" rx="2.5" fill="currentColor" stroke="#fff" stroke-width="2" />
+      <rect class="brand-card" x="8" y="7" width="12" height="14" rx="2.5" stroke-width="2" />
+      <rect class="brand-card" x="12" y="11" width="12" height="14" rx="2.5" fill="currentColor" stroke-width="2" />
     </svg>
     <span v-if="withText" class="brand-text">ClipSync</span>
   </span>
@@ -35,6 +35,11 @@ defineProps({
 .brand-mark {
   flex-shrink: 0;
   display: block;
+}
+
+/* 卡片描边用页面底色：浅色主题下是白线，深色主题下是深色线 */
+.brand-card {
+  stroke: var(--color-bg);
 }
 
 .brand-text {

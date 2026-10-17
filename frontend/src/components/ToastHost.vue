@@ -47,7 +47,7 @@ const ICONS = { success: CircleCheck, error: CircleAlert, info: Info }
   padding: 10px 14px;
   border-radius: var(--radius-md);
   background: var(--color-toast-bg);
-  color: var(--color-text-inverse);
+  color: var(--color-toast-text);
   font-size: var(--text-sm);
   line-height: 1.5;
   box-shadow: var(--shadow-lg);
