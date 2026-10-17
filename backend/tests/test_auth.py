@@ -48,6 +48,25 @@ def test_register_rejects_expired_invite(client, db, make_user):
     assert _register(client, "alice", code).status_code == 400
 
 
+def test_register_does_not_reveal_whether_username_exists(client, make_user):
+    """没有有效邀请码时，已存在与不存在的用户名得到完全相同的回应，不能借注册接口探测用户名"""
+    make_user(username="taken")
+    taken = _register(client, "taken", "no-such-invite")
+    fresh = _register(client, "freshname", "no-such-invite")
+    assert taken.status_code == fresh.status_code == 400
+    assert taken.json() == fresh.json()
+
+
+def test_register_with_taken_username_keeps_invite_usable(client, db, make_user):
+    """邀请码有效但用户名被占用：明确提示用户名已被注册，且邀请码不被消耗，换个用户名还能用"""
+    admin = make_user(UserRole.ADMIN)
+    make_user(username="taken")
+    code = _make_invite(db, admin.id)
+    clash = _register(client, "taken", code)
+    assert clash.status_code == 400 and "用户名" in clash.json()["detail"]
+    assert _register(client, "another", code).status_code == 201
+
+
 def test_register_always_creates_plain_user(client, db, make_user):
     admin = make_user(UserRole.ADMIN)
     code = _make_invite(db, admin.id)
