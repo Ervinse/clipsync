@@ -89,6 +89,23 @@ def test_history_order_is_stable_within_same_second(client, make_user):
     assert [h["content"] for h in _history(client, user)] == ["v3", "v2", "v1"]
 
 
+def test_history_list_inlines_short_content_and_previews_long_content(client, make_user):
+    """列表里不超过 64KB 的内容带全文，更长的只给开头与字节数；全文按 id 取，与列表顺序无关"""
+    user = make_user()
+    short, long_text = "短文本", "长" * 30000  # 90000 字节，超过 64KB
+    for text in (short, long_text, "current"):
+        _put(client, user, text)
+    long_item, short_item = _history(client, user)  # 最新在前
+    assert short_item["content"] == short and short_item["size"] == len(short.encode("utf-8"))
+    assert long_item["content"] is None
+    assert long_item["size"] == 90000 and long_item["preview"] == "长" * 200
+
+    full = client.get(f"/api/clipboard/history/{long_item['id']}", headers=user.headers)
+    assert full.status_code == 200
+    assert full.json()["content"] == long_text and full.json()["size"] == 90000
+    assert client.get("/api/clipboard/history/999999", headers=user.headers).status_code == 404
+
+
 def test_history_keep_removes_oldest(client, make_user, monkeypatch):
     monkeypatch.setattr(settings, "HISTORY_KEEP", 2)
     user = make_user()

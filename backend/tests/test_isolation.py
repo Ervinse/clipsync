@@ -22,7 +22,10 @@ def test_clipboard_accepts_text_larger_than_64kb(client, make_user):
     _set_clipboard(client, user, big)
     assert client.get("/api/clipboard", headers=user.headers).json()["content"] == big
     _set_clipboard(client, user, "next")
-    assert client.get("/api/clipboard/history", headers=user.headers).json()["items"][0]["content"] == big
+    # 归档后完整保存：列表里超过 64KB 的内容只给开头，全文按 id 取
+    [item] = client.get("/api/clipboard/history", headers=user.headers).json()["items"]
+    assert item["content"] is None and item["size"] == len(big) and item["preview"] == "x" * 200
+    assert client.get(f"/api/clipboard/history/{item['id']}", headers=user.headers).json()["content"] == big
 
 
 def test_history_ids_of_other_user_are_not_accessible(client, make_user):
@@ -34,6 +37,8 @@ def test_history_ids_of_other_user_are_not_accessible(client, make_user):
     assert client.get("/api/clipboard/history", headers=bob.headers).json()["total"] == 0
     assert client.post(f"/api/clipboard/history/{history_id}/restore", headers=bob.headers).status_code == 404
     assert client.delete(f"/api/clipboard/history/{history_id}", headers=bob.headers).status_code == 404
+    assert client.get(f"/api/clipboard/history/{history_id}", headers=bob.headers).status_code == 404
+    assert client.get(f"/api/clipboard/history/{history_id}").status_code == 401
     # Alice 的历史仍在
     assert client.get("/api/clipboard/history", headers=alice.headers).json()["total"] == 1
 

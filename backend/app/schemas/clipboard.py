@@ -42,13 +42,16 @@ class ClipboardResponse(BaseModel):
 
 
 class ClipboardHistoryItem(BaseModel):
-    """文本历史版本"""
+    """
+    文本历史版本。列表里较短的内容直接带全文（content），较长的 content 为 null，只给开头（preview），
+    需要时再按 id 取全文（GET /api/clipboard/history/{id}），避免一次传输最多 HISTORY_KEEP × 8MB 的内容。
+    size 为 UTF-8 字节数。
+    """
     id: int
-    content: str
+    content: Optional[str]
+    preview: str
+    size: int
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class ClipboardHistoryList(BaseModel):

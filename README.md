@@ -258,11 +258,12 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 |------|------|------|------|
 | GET | /api/clipboard | 登录 | 获取自己的当前文本（含 `version`、`access_code`、`access_expires_at`） |
 | PUT | /api/clipboard | 登录 | 更新当前文本 `{content, base_version?}`（upsert），旧内容入历史，广播；`base_version` 与当前版本不一致返回 409，省略则直接覆盖 |
-| GET | /api/clipboard/history | 登录 | 列出自己的全部文本历史版本（不分页，最多 `HISTORY_KEEP` 条） |
+| GET | /api/clipboard/history | 登录 | 列出自己的全部文本历史版本（不分页，最多 `HISTORY_KEEP` 条）；不超过 64KB 的条目带全文 `content`，更长的 `content` 为 null、只给开头 `preview`，`size` 为 UTF-8 字节数 |
+| GET | /api/clipboard/history/{id} | 归属 | 读取某条历史的全文（他人的与不存在的统一 404） |
 | POST | /api/clipboard/history/{id}/restore | 归属 | 把某历史版本恢复为当前文本，广播 |
 | DELETE | /api/clipboard/history/{id} | 归属 | 删除某条历史版本，广播 |
 
-> 前端：点击历史条目只把内容填回编辑框（不保存）；「恢复」按钮调 restore，「删除」按钮调 delete。文本内容按 UTF-8 字节数校验，上限 8MB（8388608 字节）。
+> 前端：点击历史条目只把内容填回编辑框（不保存，长条目先按 id 取全文）；「恢复」按钮调 restore，「删除」按钮调 delete。文本内容按 UTF-8 字节数校验，上限 8MB（8388608 字节）。
 
 ### 6.3 文本栏目 `api/texts.py`
 
