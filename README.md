@@ -546,6 +546,8 @@ CodeProject/
     ├── TODO.md                   # 尚未完成的事项
     ├── CLAUDE.md                 # 编码硬约束
     ├── test_integration.sh       # 简易连通性检查（curl 后端健康检查、注册、登录与前端首页）
+    ├── dev-start.bat             # 双击启动开发环境（调用 dev-start.ps1）
+    ├── dev-start.ps1             # 启动开发库容器 → 升级表结构 → 后端、前端各开一个窗口 → 打开浏览器
     ├── backend/
     │   ├── app/
     │   │   ├── main.py           # FastAPI 入口，挂载路由、CORS、安全响应头
@@ -729,6 +731,18 @@ npm run dev
 
 Vite 开发服务器运行在 http://localhost:3000，并把 `/api` 与 `/ws` 代理到 `127.0.0.1:8000`。
 
+### 日常启动（Windows）
+
+完成以上一次性准备后，日常双击项目根目录的 `dev-start.bat` 即可（实际步骤在 `dev-start.ps1`）：
+
+1. Docker 未运行时打开 Docker Desktop 并等待就绪
+2. 启动 `clipsync-dev-mysql` 容器，等到可连接
+3. `alembic upgrade head`（已是最新时不做任何改动）
+4. 新窗口启动后端（`uvicorn --reload`，端口 8000）
+5. 新窗口启动前端（`npm run dev`，端口 3000），两个端口都就绪后打开浏览器
+
+8000 或 3000 端口已被占用时视为对应程序已在运行，跳过该步，重复双击不会多开。关闭「ClipSync backend」「ClipSync frontend」窗口即停止对应程序；数据库容器留在后台，数据保存在数据卷 `clipsync_dev_mysql` 中，重启电脑不会丢失。
+
 ### 4. 运行测试
 
 ```bash
@@ -748,6 +762,7 @@ pytest tests/test_auth.py::test_name    # 单个
 | `frontend/` 的代码、依赖、`vite.config.js` | `npm run build`，界面行为在浏览器里手动验证（前端没有自动化测试） |
 | `deployment/docker/*.sh` | `bash -n` 语法检查；装有 Docker 时在本机 compose 环境实际运行 |
 | `deployment/docker/build-release.ps1`、`publish-release.ps1` | PowerShell 语法解析；装有 Docker Desktop 时实际运行一次 |
+| `dev-start.ps1`、`dev-start.bat` | PowerShell 语法解析；在开发机实际运行一次 |
 | compose、Dockerfile、Nginx 配置 | `docker compose config` 校验；装有 Docker 时构建并启动一次 |
 
 完整规则见 CLAUDE.md「按改动范围验证」；尚待手动验证的行为见 [TODO.md](TODO.md)。生产镜像不包含测试代码与测试依赖，生产环境不运行测试。
