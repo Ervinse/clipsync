@@ -219,7 +219,7 @@ const formatDate = formatRelative
 </script>
 
 <template>
-  <div class="page">
+  <div class="page clipboard-page">
     <div class="page-header">
       <div>
         <h1 class="page-title">云剪切板</h1>
@@ -319,11 +319,24 @@ const formatDate = formatRelative
   background: var(--color-bg-muted);
 }
 
+/* 整页正好占满窗口高度：编辑框填满页头以下的空间，底部状态栏（已同步 / 字符数）始终在窗口内。
+   窗口矮于 min-height 时不再压缩，改为整页滚动；dvh 不含手机浏览器地址栏，旧浏览器回落到 vh */
+.clipboard-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 480px;
+  padding-bottom: var(--space-8);
+}
+
 .workspace {
+  flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: var(--space-4);
-  align-items: start;
 }
 
 .workspace.with-history {
@@ -333,6 +346,7 @@ const formatDate = formatRelative
 .editor {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -343,8 +357,9 @@ const formatDate = formatRelative
 
 .editor-input {
   display: block;
+  flex: 1;
   width: 100%;
-  min-height: 460px;
+  min-height: 0;
   padding: var(--space-5) var(--space-6);
   border: none;
   background: transparent;
@@ -352,7 +367,7 @@ const formatDate = formatRelative
   font-size: var(--text-base);
   line-height: 1.7;
   color: var(--color-text);
-  resize: vertical;
+  resize: none;
 }
 
 .editor-input:focus {
@@ -364,6 +379,7 @@ const formatDate = formatRelative
 }
 
 .editor-footer {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -398,10 +414,11 @@ const formatDate = formatRelative
   font-variant-numeric: tabular-nums;
 }
 
+/* 历史面板与编辑框等高，条目多时在面板内滚动 */
 .history {
   display: flex;
   flex-direction: column;
-  max-height: 560px;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -492,19 +509,24 @@ const formatDate = formatRelative
   }
 }
 
+/* 窄窗口历史面板排到编辑框下方：上下按 3 : 2 分高度 */
 @media (max-width: 1024px) {
   .workspace.with-history {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .history {
-    max-height: 420px;
+    grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
   }
 }
 
+/* 手机宽度：顶栏（52px）在页面上方，页面高度扣掉它 */
 @media (max-width: 768px) {
+  .clipboard-page {
+    height: calc(100vh - 52px);
+    height: calc(100dvh - 52px);
+    min-height: 420px;
+    padding-bottom: var(--space-4);
+  }
+
   .editor-input {
-    min-height: 320px;
     padding: var(--space-4);
   }
 
