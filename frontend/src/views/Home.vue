@@ -200,6 +200,9 @@ const handleLogout = async () => {
   flex-shrink: 0;
   width: var(--sidebar-width);
   height: 100vh;
+  height: 100dvh;
+  /* 窗口矮到放不下导航和底部区域时整个侧栏滚动，底部账号、退出按钮不会被裁掉 */
+  overflow-y: auto;
   background: var(--color-bg-subtle);
   border-right: 1px solid var(--color-border);
 }
@@ -216,13 +219,13 @@ const handleLogout = async () => {
   display: none;
 }
 
+/* 占满中间的空余高度，但不压缩到比菜单项还矮 */
 .nav {
-  flex: 1;
+  flex: 1 0 auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: var(--space-2) var(--space-3);
-  overflow-y: auto;
 }
 
 .nav-item {
