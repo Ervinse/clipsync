@@ -98,6 +98,7 @@ class SystemSettingsResponse(BaseModel):
     """系统设置响应"""
     default_quota_bytes: int
     registration_enabled: bool
+    show_github_link: bool
 
     class Config:
         from_attributes = True
@@ -107,6 +108,7 @@ class UpdateSystemSettings(BaseModel):
     """更新系统设置"""
     default_quota_bytes: Optional[int] = Field(None, ge=0, le=MAX_QUOTA_BYTES, description="默认配额（字节，最大 1TB）")
     registration_enabled: Optional[bool] = Field(None, description="是否开放注册")
+    show_github_link: Optional[bool] = Field(None, description="登录后侧栏是否显示 GitHub 链接")
 
 
 class AdminFileListItem(BaseModel):

@@ -39,6 +39,11 @@ export const useUserStore = defineStore('user', {
       return state.userInfo?.username || ''
     },
 
+    // 侧栏是否显示 GitHub 链接：后台系统设置里的开关，随 /auth/me 下发（普通用户读不了后台设置接口）
+    showGithubLink(state) {
+      return state.userInfo?.show_github_link === true
+    },
+
     // 配额信息
     quota(state) {
       // 后端 /auth/me 返回 used_bytes（已落盘）与 reserved_bytes（进行中上传占用）；两者都计入配额

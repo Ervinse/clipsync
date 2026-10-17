@@ -50,6 +50,7 @@ class UserResponse(BaseModel):
 
 
 class UserWithStats(UserResponse):
-    """用户信息 + 存储统计"""
+    """用户信息 + 存储统计 + 前端需要的站点级显示开关"""
     used_bytes: int  # 已用空间（需要业务层计算）
     reserved_bytes: int  # 进行中上传会话占用的配额
+    show_github_link: bool  # 系统设置：侧栏是否显示 GitHub 链接（普通用户读不了后台设置接口，随 /auth/me 下发）

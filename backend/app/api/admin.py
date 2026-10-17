@@ -40,7 +40,11 @@ from ..core.deps import require_role
 from ..core.storage import delete_user_storage, cleanup_upload_temp
 from ..core.ws_manager import manager
 from ..core.timeutil import utcnow, to_naive_utc
-from ..core.app_settings import get_default_quota_bytes, get_registration_enabled
+from ..core.app_settings import (
+    get_default_quota_bytes,
+    get_registration_enabled,
+    get_show_github_link,
+)
 from ..core.quick_access import CODED_MODELS
 
 logger = logging.getLogger(__name__)
@@ -535,6 +539,7 @@ async def _read_system_settings(db: AsyncSession) -> SystemSettingsResponse:
     return SystemSettingsResponse(
         default_quota_bytes=await get_default_quota_bytes(db),
         registration_enabled=await get_registration_enabled(db),
+        show_github_link=await get_show_github_link(db),
     )
 
 
@@ -562,6 +567,11 @@ async def update_system_settings(
     if data.registration_enabled is not None:
         await _upsert_setting(
             db, "registration_enabled", "true" if data.registration_enabled else "false"
+        )
+
+    if data.show_github_link is not None:
+        await _upsert_setting(
+            db, "show_github_link", "true" if data.show_github_link else "false"
         )
 
     await db.commit()
