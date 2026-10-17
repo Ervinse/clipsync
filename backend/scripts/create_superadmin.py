@@ -8,11 +8,23 @@ from pathlib import Path
 backend_path = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_path))
 
+import re
+
 from sqlalchemy import select
 from app.database import AsyncSessionLocal, engine
 from app.models import User, UserRole
 from app.core.security import hash_password
 from app.config import settings
+from app.schemas.user import USERNAME_PATTERN
+
+
+def username_error(username: str) -> str | None:
+    """用户名不合规返回原因，合规返回 None；规则与注册接口一致（长度 3–64，只含字母、数字与 _ . -）"""
+    if len(username) < 3 or len(username) > 64:
+        return "Username must be 3-64 characters."
+    if not re.fullmatch(USERNAME_PATTERN, username):
+        return "Username may only contain letters, digits, and _ . - (no '@' or spaces)."
+    return None
 
 
 async def find_existing_superadmin(db):
@@ -42,10 +54,11 @@ async def create_superadmin():
 
         # 交互输入
         print("\nEnter superadmin information:")
-        username = input("Username (3-64 chars): ").strip()
+        username = input("Username (3-64 chars; letters, digits, _ . -): ").strip()
 
-        if len(username) < 3 or len(username) > 64:
-            print("[X] Username must be 3-64 characters.")
+        error = username_error(username)
+        if error:
+            print(f"[X] {error}")
             return
 
         # 检查用户名是否已存在

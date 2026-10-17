@@ -1,6 +1,8 @@
 """FastAPI 应用入口"""
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -17,6 +19,20 @@ app = FastAPI(
 # 限流器配置
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    """
+    请求校验失败 → 422。详情只含 type / loc / msg，不回传原始输入：
+    输入里若有孤立代理字符（如 JSON 里的 "\\ud800"），FastAPI 默认把它原样写进响应会因编码失败变成 500；
+    不回传输入也避免把客户端提交的密码等内容原样返回。
+    """
+    detail = [
+        {"type": error["type"], "loc": list(error["loc"]), "msg": error["msg"]}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": detail})
+
 
 # CORS 中间件（安全红线：只允许 .env 中 CORS_ORIGINS 白名单，不用通配符）
 app.add_middleware(

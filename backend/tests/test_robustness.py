@@ -1,4 +1,5 @@
-"""边界与容错：WebSocket 失败连接的关闭、upload_id 写法、分片 IO 错误与目录并发删除、多个超管、文本上限与 Nginx 请求体上限的关系"""
+"""边界与容错：WebSocket 失败连接的关闭、upload_id 写法、分片 IO 错误与目录并发删除、多个超管与超管用户名规则、
+孤立代理字符的校验错误响应、文本上限与 Nginx 请求体上限的关系"""
 import asyncio
 import re
 import time
@@ -11,7 +12,7 @@ from app.core import ws_manager as ws_module
 from app.core.ws_manager import ConnectionManager
 from app.models import UserRole
 from app.schemas.clipboard import MAX_CONTENT_BYTES
-from scripts.create_superadmin import find_existing_superadmin
+from scripts.create_superadmin import find_existing_superadmin, username_error
 
 
 class _FakeSocket:
@@ -141,6 +142,48 @@ def test_find_existing_superadmin_with_several_superadmins(client, make_user, db
     first = make_user(UserRole.SUPERADMIN)
     make_user(UserRole.SUPERADMIN)
     assert db(_find) == first.id
+
+
+@pytest.mark.parametrize("name", ["admin", "Admin_01", "a.b-c", "x" * 64])
+def test_superadmin_username_accepts_registration_charset(name):
+    assert username_error(name) is None
+
+
+@pytest.mark.parametrize("name", ["ab", "x" * 65, "admin@home", "has space", "中文名字", "a/b"])
+def test_superadmin_username_rejects_what_registration_rejects(name):
+    """含 @ 的用户名会让「用户名@访问码」无法拆分，超管用户名与注册接口遵守同一条规则"""
+    assert username_error(name)
+
+
+# ---------- 校验错误响应 ----------
+
+def test_lone_surrogate_in_body_is_422_not_500(client, make_user):
+    """JSON 里的孤立代理字符（"\\ud800"）无法编码成 UTF-8：校验错误的响应不能回传原始输入，否则变 500"""
+    user = make_user()
+    headers = {**user.headers, "Content-Type": "application/json"}
+    for path, body in (
+        ("/api/texts", '{"title":"\\ud800","content":"x"}'),
+        ("/api/clipboard", '{"content":"\\ud800"}'),
+        ("/api/files/upload/init", '{"original_name":"\\ud800.txt","total_size":5,"chunk_size":5}'),
+    ):
+        method = client.put if path == "/api/clipboard" else client.post
+        resp = method(path, content=body, headers=headers)
+        assert resp.status_code == 422, (path, resp.status_code)
+
+    # 免登录入口同样不能 500
+    resp = client.post(
+        "/api/access/login", content='{"full_code":"\\ud800@abcd"}', headers={"Content-Type": "application/json"}
+    )
+    assert resp.status_code == 422
+
+
+def test_validation_error_does_not_echo_input(client):
+    """422 详情只含 type / loc / msg，不把客户端提交的内容（如密码）原样返回"""
+    bad = client.post("/api/auth/register", json={"username": "ab", "password": "pw-secret-123", "invite_code": "x"})
+    assert bad.status_code == 422
+    for item in bad.json()["detail"]:
+        assert set(item) == {"type", "loc", "msg"}
+    assert "pw-secret-123" not in bad.text
 
 
 # ---------- 剪贴板文本上限 ----------
