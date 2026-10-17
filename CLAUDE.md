@@ -72,6 +72,7 @@
 | `frontend/` 代码、依赖、`vite.config.js` | `npm run build`（在 `frontend/`） |
 | `deployment/docker/*.sh` | `bash -n` 语法检查；装有 Docker 时在本机 compose 环境实际运行，否则记入 TODO.md |
 | `deployment/docker/build-release.ps1`、`publish-release.ps1` | 确认文件带 UTF-8 BOM（PowerShell 5.1 读中文需要）；PowerShell 语法解析（`[System.Management.Automation.Language.Parser]::ParseFile`，用绝对路径）；装有 Docker Desktop 时实际运行一次，否则记入 TODO.md |
+| `dev-start.ps1`、`dev-start.bat`（开发环境一键启动） | `.ps1` 带 UTF-8 BOM、PowerShell 语法解析；在开发机实际运行一次；`.bat` 只含 ASCII、CRLF 换行 |
 | compose、Dockerfile、Nginx 配置 | `docker compose config` 校验；装有 Docker 时构建并启动一次；只能在真实服务器上验证的（公网证书、cron、防火墙）记入 TODO.md |
 
 改动跨多个范围时，把对应的验证都跑一遍；汇报时写明跑了哪些、按规则跳过了哪些。
@@ -164,6 +165,7 @@
 - **文档与注释只描述当前状态**：README、各说明文档、代码注释的读者是使用和维护这份代码的人，只写代码现在是什么、为什么这样做；不写修改历史（如「原先…」「已改为…」「不再…」「已合并」「阶段 N 修复」）。修改历史写在 git 提交信息里。
 
 ## 常用命令（速查；完整 setup 见 README.md 第 16 节，部署见 deployment/DEPLOYMENT.md）
+- 开发环境一键启动：双击根目录 `dev-start.bat`（数据库容器 + 迁移 + 后端 + 前端 + 浏览器）
 - 后端启动：`uvicorn app.main:app --reload`（在 `backend/`）
 - 应用迁移：`alembic upgrade head`；改模型后生成迁移：`alembic revision --autogenerate -m "描述"`
 - 跑单个测试：`pytest tests/test_xxx.py::test_name`
