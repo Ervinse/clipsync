@@ -230,7 +230,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | value | TEXT | 设置值（字符串） |
 | updated_at | DATETIME | 更新时间 |
 
-目前只使用两个 key：`registration_enabled`（`true`/`false`，缺省视为开放）与 `default_quota_bytes`（缺省回落 `.env` 的 `DEFAULT_QUOTA_BYTES`）。
+目前使用三个 key：`registration_enabled`（`true`/`false`，缺省视为开放）、`show_github_link`（`true`/`false`，缺省视为显示；库里是其他值按关闭处理）与 `default_quota_bytes`（缺省回落 `.env` 的 `DEFAULT_QUOTA_BYTES`）。
 
 > **外键无级联**：所有外键都没有 `ON DELETE CASCADE`。删除用户时由 `DELETE /api/admin/users/{id}` 按依赖顺序显式删除上传会话、文件、文本栏目、历史、当前文本（访问码挂在这些内容上，随之删除），处理其创建/使用过的邀请码，再删用户与磁盘目录。邀请码规则：该用户**使用过**的码保留记录、`used_by` 置空（`used_at` 保留，码仍不可复用）；该用户**创建的未使用**码直接删除；该用户创建的**已使用**码保留作审计，`created_by` 转记到执行删除的超管名下（`created_by` 为 NOT NULL，不改模型）。删除前锁住被删用户行，与 `upload/init` 串行化，避免新建会话的 tmp 目录成为孤儿；磁盘清理失败只记日志，由定时清理的孤儿扫描兜底。
 
@@ -250,7 +250,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 |------|------|------|------|
 | POST | /api/auth/register | 公开 | 用户名（3–64 位，字母数字及 `_.-`）+ 密码（8 位以上、不超过 72 字节）+ 邀请码；注册开关关闭时 403；先验邀请码（无效、已用、过期均 400），邀请码有效后才检查用户名是否被占用（400，邀请码不消耗），所以没有有效邀请码的人无法探测用户名是否存在；新用户配额取系统设置的默认配额；返回 JWT |
 | POST | /api/auth/login | 公开 | 返回 JWT；用户不存在与密码错误返回同样的 401，耗时一致 |
-| GET | /api/auth/me | 登录 | 当前用户信息（含 role、配额、已用空间 `used_bytes`、上传中占用 `reserved_bytes`）；账号被禁用时 403 并带响应头 `X-Auth-Error: disabled` |
+| GET | /api/auth/me | 登录 | 当前用户信息（含 role、配额、已用空间 `used_bytes`、上传中占用 `reserved_bytes`，以及站点显示开关 `show_github_link`：普通用户读不了 `/api/admin/settings`，前端靠它决定侧栏是否显示 GitHub 链接）；账号被禁用时 403 并带响应头 `X-Auth-Error: disabled` |
 
 ### 6.2 云剪切板 `api/clipboard.py`
 
@@ -316,8 +316,8 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | POST | /api/admin/invite-codes | admin+ | 生成 16 位邀请码 `{expires_at?}`；`expires_at` 必须晚于当前时间，换算成 UTC 后超出可表示范围（如 `9999-12-31T23:59:59-05:00`）返回 400 |
 | DELETE | /api/admin/invite-codes/{id} | admin+ | 删除未使用的邀请码；已使用的保留作审计记录，返回 409 |
 | GET | /api/admin/files | admin+ | 全站文件**元数据**，分页（无下载入口） |
-| GET | /api/admin/settings | admin+ | 读取系统设置 `{default_quota_bytes, registration_enabled}` |
-| PATCH | /api/admin/settings | **superadmin** | 修改上述两项设置（默认配额 0 到 1TB） |
+| GET | /api/admin/settings | admin+ | 读取系统设置 `{default_quota_bytes, registration_enabled, show_github_link}` |
+| PATCH | /api/admin/settings | **superadmin** | 修改上述设置，字段都可选，只改传入的（默认配额 0 到 1TB） |
 
 **未实现**：直接创建用户、重置密码、变更角色、全站访问码管理。
 
@@ -424,16 +424,17 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 ├── 用户      # 分页列表；改配额 / 启用禁用 / 删除 按钮仅超管可见（superadmin 行不显示禁用、删除）
 ├── 邀请码    # 生成（填有效天数，0 为永久）/ 列表（已使用 / 已过期 / 可用）/ 复制 / 删除（已使用的不显示删除）
 ├── 文件      # 全站文件【元数据】分页列表（admin 与 superadmin 均可见，无下载入口）
-└── 设置      # 开放注册、新用户默认配额：admin 只读，superadmin 可保存
+└── 设置      # 开放注册、显示 GitHub 链接、新用户默认配额：admin 只读，superadmin 可保存
 ```
 
 **未实现**：全站访问码管理、超管在后台直接下载他人文件的入口（超管可调 `/api/files/{id}/download`）。
 
 ### 系统设置（存 DB，可热更新）
 
-后台可修改的只有两项（通过 `PATCH /api/admin/settings`，仅超管）：
+后台可修改的只有三项（通过 `PATCH /api/admin/settings`，仅超管）：
 
 - 是否开放注册（`registration_enabled`）
+- 是否在登录后的侧栏底部显示项目的 GitHub 链接（`show_github_link`，默认显示）：一行灰色小字，链接地址写在前端 `Home.vue` 里，不可配置；开关值随 `GET /api/auth/me` 下发给所有登录用户，用户刷新页面或重新登录后生效，超管在后台保存后本页侧栏立即更新
 - 新用户默认配额（`default_quota_bytes`，默认 100MB）
 
 单文件上限、分片大小、历史保留条数、上传会话过期时间、每用户并发上传会话数都只能在 `.env` 里配置，改后需重启后端。邀请码没有「默认有效期」设置，由前端按填写的天数换算成 `expires_at`。
@@ -775,7 +776,7 @@ pytest tests/test_auth.py::test_name    # 单个
 | `HISTORY_KEEP` | 每用户保留的文本历史条数 | 50 |
 | `UPLOAD_SESSION_TTL_HOURS` | 未完成上传会话的过期时间 | 24 |
 
-数据库中的系统设置只有两项：**是否开放注册**、**新用户默认配额**，优先于 `.env`，在管理后台「设置」页修改（见第 9 节）。其余各项只能改 `.env` 并重启后端。
+数据库中的系统设置只有三项：**是否开放注册**、**是否显示 GitHub 链接**、**新用户默认配额**，其中配额在 `.env` 里有对应的默认值，其余两项没有；数据库里有值时优先于 `.env`，在管理后台「设置」页修改（见第 9 节）。其余各项只能改 `.env` 并重启后端。
 
 > ⚠️ **HTTP 阶段安全提示**：纯 HTTP 下密码、令牌和所有内容都明文传输，只适合测试或可信内网；正式使用应切换 HTTPS（见第 11 节）。
 

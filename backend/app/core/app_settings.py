@@ -18,6 +18,12 @@ async def get_registration_enabled(db: AsyncSession) -> bool:
     return value is None or value.lower() == "true"
 
 
+async def get_show_github_link(db: AsyncSession) -> bool:
+    """登录后侧栏是否显示项目的 GitHub 链接（未配置时默认显示）"""
+    value = await _get_value(db, "show_github_link")
+    return value is None or value.lower() == "true"
+
+
 async def get_default_quota_bytes(db: AsyncSession) -> int:
     """新用户默认配额"""
     value = await _get_value(db, "default_quota_bytes")

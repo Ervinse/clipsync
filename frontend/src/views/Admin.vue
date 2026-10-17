@@ -67,9 +67,10 @@ const STAT_CARDS = computed(() => [
   { label: '总存储', value: formatSize(stats.value.total_storage_bytes || 0), icon: HardDrive },
 ])
 
-// 系统设置：后端 GET 对 admin 及以上开放，PATCH 仅 superadmin；目前只有这两项存库
+// 系统设置：后端 GET 对 admin 及以上开放，PATCH 仅 superadmin；存库的就是下面这几项
 const settingsForm = ref({
   registration_enabled: true,
+  show_github_link: true,
   default_quota_mb: 100,
 })
 const isSavingSettings = ref(false)
@@ -79,6 +80,7 @@ const syncSettingsForm = () => {
   if (!s) return
   settingsForm.value = {
     registration_enabled: s.registration_enabled,
+    show_github_link: s.show_github_link,
     default_quota_mb: Math.round(s.default_quota_bytes / 1024 / 1024),
   }
 }
@@ -104,9 +106,12 @@ const handleSaveSettings = async () => {
     isSavingSettings.value = true
     await adminStore.updateSettings({
       registration_enabled: settingsForm.value.registration_enabled,
+      show_github_link: settingsForm.value.show_github_link,
       default_quota_bytes: quotaMB * 1024 * 1024,
     })
     syncSettingsForm()
+    // 侧栏的 GitHub 链接开关随 /auth/me 下发：重取一次，改完立刻在本页侧栏生效（失败不影响保存结果）
+    userStore.fetchUserInfo().catch(() => {})
     toast.success('系统设置已保存')
   } catch (error) {
     toast.error('保存失败：' + error.message)
@@ -546,6 +551,22 @@ const copyInviteCode = async (code) => {
               type="checkbox"
               :disabled="!userStore.isSuperAdmin"
               aria-label="开放注册"
+            />
+            <span class="switch-track"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-text">
+            <span class="setting-title">显示 GitHub 链接</span>
+            <span class="setting-desc">登录后在侧栏底部显示一行小字链接，指向本项目的 GitHub 主页；用户刷新页面或重新登录后生效</span>
+          </div>
+          <label class="switch">
+            <input
+              v-model="settingsForm.show_github_link"
+              type="checkbox"
+              :disabled="!userStore.isSuperAdmin"
+              aria-label="显示 GitHub 链接"
             />
             <span class="switch-track"></span>
           </label>
