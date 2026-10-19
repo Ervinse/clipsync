@@ -107,17 +107,23 @@ onBeforeRouteLeave(async () => {
   })
 })
 
+// 退出前一律先确认，防止误点；有未保存的修改（且访问码仍有效）时换成危险提示
 const handleExit = async () => {
-  if (hasDirty() && !lost.value) {
-    const ok = await confirmDialog({
-      title: '退出并放弃未保存的修改？',
-      message: '有文本还没有保存，退出后会丢失。',
-      confirmText: '退出',
-      cancelText: '继续编辑',
-      danger: true,
-    })
-    if (!ok) return
-  }
+  const unsaved = hasDirty() && !lost.value
+  const ok = await confirmDialog(unsaved
+    ? {
+        title: '退出并放弃未保存的修改？',
+        message: '有文本还没有保存，退出后会丢失。',
+        confirmText: '退出',
+        cancelText: '继续编辑',
+        danger: true,
+      }
+    : {
+        title: '退出快速访问？',
+        message: '退出后需要重新输入访问码才能进入。',
+        confirmText: '退出',
+      })
+  if (!ok) return
   // 先清掉草稿，离开页面时不再触发「未保存」确认
   for (const key of Object.keys(drafts)) delete drafts[key]
   quickStore.logout()
