@@ -326,7 +326,7 @@ const copyInviteCode = async (code) => {
     <!-- 概览 -->
     <div v-if="activeTab === 'stats'" class="tab-panel">
       <div class="stat-grid">
-        <div v-for="card in STAT_CARDS" :key="card.label" class="stat-card card">
+        <div v-for="card in STAT_CARDS" :key="card.label" class="stat-card card card-hover">
           <div class="stat-head">
             <span class="stat-label">{{ card.label }}</span>
             <component :is="card.icon" class="stat-icon" />

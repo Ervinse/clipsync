@@ -18,6 +18,7 @@ import { confirmDialog } from '../utils/dialog'
 import toast from '../utils/toast'
 import BrandMark from '../components/BrandMark.vue'
 import ThemeToggle from '../components/ThemeToggle.vue'
+import LoadingSkeleton from '../components/LoadingSkeleton.vue'
 import TextEditorCard from '../components/TextEditorCard.vue'
 
 const router = useRouter()
@@ -172,7 +173,7 @@ const handleDownload = async (file) => {
       </span>
     </header>
 
-    <main class="quick-main">
+    <main class="quick-main page-enter">
       <div v-if="lost" class="alert alert-danger lost" role="alert">
         <TriangleAlert />
         <span>
@@ -182,10 +183,7 @@ const handleDownload = async (file) => {
         <button class="btn btn-secondary btn-sm" @click="handleExit">重新输入</button>
       </div>
 
-      <div v-if="loading" class="loading">
-        <LoaderCircle class="spin" />
-        加载中…
-      </div>
+      <LoadingSkeleton v-if="loading" variant="cards" :count="2" />
 
       <div v-else-if="loadError" class="empty" role="alert">
         <span class="empty-icon"><TriangleAlert :size="20" /></span>
@@ -304,7 +302,8 @@ const handleDownload = async (file) => {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  background: var(--color-bg-subtle);
+  /* 半透明浅灰：页面光晕从下面透出来 */
+  background: var(--color-glass-subtle);
 }
 
 .quick-header {
@@ -317,7 +316,10 @@ const handleDownload = async (file) => {
   gap: var(--space-3);
   height: 60px;
   padding: 0 var(--space-6);
-  background: var(--color-bg);
+  /* 吸顶栏：半透明 + 模糊，往下滚时内容从顶栏下面隐约透出 */
+  background: var(--color-topbar-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   border-bottom: 1px solid var(--color-border);
 }
 

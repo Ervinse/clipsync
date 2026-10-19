@@ -97,7 +97,7 @@ const onKeydown = (event) => {
 
 .text-card:focus-within {
   border-color: var(--color-border-hover);
-  box-shadow: var(--shadow-sm);
+  box-shadow: inset 0 1px 0 var(--color-highlight), var(--shadow-sm);
 }
 
 .text-head {

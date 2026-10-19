@@ -10,6 +10,7 @@ import toast from '../utils/toast'
 import { confirmDialog } from '../utils/dialog'
 import AccessCodeButton from '../components/AccessCodeButton.vue'
 import AccessCodeDialog from '../components/AccessCodeDialog.vue'
+import LoadingSkeleton from '../components/LoadingSkeleton.vue'
 
 const filesStore = useFilesStore()
 const userStore = useUserStore()
@@ -182,10 +183,7 @@ const formatDate = (value) => formatDateTime(value)
       <div class="upload-detail">分片 {{ uploadProgress.current }} / {{ uploadProgress.total }}</div>
     </div>
 
-    <div v-if="filesStore.isLoading" class="loading">
-      <LoaderCircle class="spin" />
-      加载中…
-    </div>
+    <LoadingSkeleton v-if="filesStore.isLoading" variant="rows" :count="4" />
 
     <div v-else-if="filesStore.loadError" class="empty" role="alert">
       <span class="empty-icon"><TriangleAlert :size="20" /></span>
@@ -256,8 +254,8 @@ const formatDate = (value) => formatDateTime(value)
   margin-bottom: var(--space-6);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  background: var(--color-bg);
-  box-shadow: var(--shadow-xs);
+  background: var(--color-glass);
+  box-shadow: inset 0 1px 0 var(--color-highlight), var(--shadow-xs);
 }
 
 .stat {

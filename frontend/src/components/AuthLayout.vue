@@ -38,7 +38,7 @@ const FEATURES = [
 
     <main class="auth-main">
       <ThemeToggle class="auth-theme" />
-      <div class="auth-panel">
+      <div class="auth-panel page-enter">
         <BrandMark class="mobile-brand" :size="28" />
         <h2 class="auth-title">{{ title }}</h2>
         <p v-if="subtitle" class="auth-subtitle">{{ subtitle }}</p>
@@ -49,11 +49,11 @@ const FEATURES = [
 </template>
 
 <style scoped>
+/* 不设底色：body 的底色和光晕层（style.css 的 body::before）从这里透出来 */
 .auth {
   display: grid;
   grid-template-columns: minmax(420px, 1fr) minmax(0, 1.1fr);
   min-height: 100vh;
-  background: var(--color-bg);
 }
 
 .auth-aside {
@@ -62,7 +62,7 @@ const FEATURES = [
   flex-direction: column;
   justify-content: space-between;
   padding: var(--space-10) var(--space-12);
-  background: var(--color-bg-subtle);
+  background: var(--color-glass-subtle);
   border-right: 1px solid var(--color-border);
   overflow: hidden;
 }
