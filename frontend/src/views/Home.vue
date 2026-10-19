@@ -182,10 +182,10 @@ const handleLogout = async () => {
 </template>
 
 <style scoped>
+/* 不设底色：body 的底色和光晕层（style.css 的 body::before）从这里透出来 */
 .layout {
   display: flex;
   min-height: 100vh;
-  background: var(--color-bg);
 }
 
 .topbar {
@@ -203,7 +203,8 @@ const handleLogout = async () => {
   height: 100dvh;
   /* 窗口矮到放不下导航和底部区域时整个侧栏滚动，底部账号、退出按钮不会被裁掉 */
   overflow-y: auto;
-  background: var(--color-bg-subtle);
+  /* 半透明浅灰，透出背后的光晕；侧栏背后没有滚动的内容，不需要模糊 */
+  background: var(--color-glass-subtle);
   border-right: 1px solid var(--color-border);
 }
 
@@ -251,7 +252,7 @@ const handleLogout = async () => {
 .nav-item.active {
   background: var(--color-bg);
   color: var(--color-text);
-  box-shadow: var(--shadow-sm);
+  box-shadow: inset 0 1px 0 var(--color-highlight), var(--shadow-sm);
 }
 
 .nav-icon {
@@ -400,11 +401,12 @@ const handleLogout = async () => {
     height: 52px;
     padding: 0 var(--space-3);
     background: var(--color-topbar-bg);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
     border-bottom: 1px solid var(--color-border);
   }
 
+  /* 抽屉叠在变暗的页面上，用不透明底色，弱提示文字才清楚 */
   .sidebar {
     position: fixed;
     left: 0;
@@ -432,6 +434,8 @@ const handleLogout = async () => {
     inset: 0;
     z-index: 150;
     background: var(--color-overlay);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
     animation: fade-in var(--duration) var(--ease);
   }
 }

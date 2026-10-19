@@ -10,6 +10,7 @@ import { createTextDrafts } from '../utils/textDrafts'
 import TextEditorCard from '../components/TextEditorCard.vue'
 import AccessCodeButton from '../components/AccessCodeButton.vue'
 import AccessCodeDialog from '../components/AccessCodeDialog.vue'
+import LoadingSkeleton from '../components/LoadingSkeleton.vue'
 
 const textsStore = useTextsStore()
 const userStore = useUserStore()
@@ -145,10 +146,7 @@ const onCodeSaved = (result) => {
 
     <p v-if="atLimit" class="limit-hint">已达到 {{ textsStore.maxTexts }} 段的上限，删除不需要的文本后才能新建。</p>
 
-    <div v-if="textsStore.isLoading" class="loading">
-      <LoaderCircle class="spin" />
-      加载中…
-    </div>
+    <LoadingSkeleton v-if="textsStore.isLoading" variant="cards" :count="2" />
 
     <div v-else-if="textsStore.loadError" class="empty" role="alert">
       <span class="empty-icon"><TriangleAlert :size="20" /></span>

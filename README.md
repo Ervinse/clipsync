@@ -596,7 +596,7 @@ CodeProject/
     │   │   │   ├── accessCode.js   # 访问码规则与过期判断
     │   │   │   ├── theme.js        # 主题（跟随系统 / 浅色 / 深色，记在本浏览器）
     │   │   │   └── download.js     # Blob 交给浏览器保存
-    │   │   ├── components/       # AuthLayout / BrandMark / ThemeToggle / ToastHost / DialogHost / TextEditorCard / AccessCodeButton / AccessCodeDialog
+    │   │   ├── components/       # AuthLayout / BrandMark / ThemeToggle / ToastHost / DialogHost / TextEditorCard / AccessCodeButton / AccessCodeDialog / LoadingSkeleton
     │   │   └── views/
     │   │       ├── Login.vue / Register.vue
     │   │       ├── Home.vue          # 登录后布局（侧边栏）

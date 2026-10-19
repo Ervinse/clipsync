@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { KeyRound, Clipboard, StickyNote, File, LoaderCircle, TriangleAlert, RotateCw, Copy, X } from '@lucide/vue'
+import { KeyRound, Clipboard, StickyNote, File, TriangleAlert, RotateCw, Copy, X } from '@lucide/vue'
 import { useAccessStore } from '../stores'
 import { formatDateTime } from '../utils/format'
 import { isExpired } from '../utils/accessCode'
@@ -9,6 +9,7 @@ import { copyToClipboard } from '../utils/clipboard'
 import toast from '../utils/toast'
 import { confirmDialog, copyDialog } from '../utils/dialog'
 import ws from '../utils/websocket'
+import LoadingSkeleton from '../components/LoadingSkeleton.vue'
 
 const router = useRouter()
 const accessStore = useAccessStore()
@@ -87,10 +88,7 @@ const handleClear = async (item) => {
       <span>访问码在云剪切板、文本、文件页面的条目旁设置。知道完整访问码的人可以查看和修改其中的文本、下载其中的文件，请妥善保管。</span>
     </div>
 
-    <div v-if="accessStore.isLoading" class="loading">
-      <LoaderCircle class="spin" />
-      加载中…
-    </div>
+    <LoadingSkeleton v-if="accessStore.isLoading" variant="cards" :count="2" />
 
     <div v-else-if="accessStore.loadError" class="empty" role="alert">
       <span class="empty-icon"><TriangleAlert :size="20" /></span>
@@ -113,7 +111,7 @@ const handleClear = async (item) => {
       <section
         v-for="group in accessStore.groups"
         :key="group.code"
-        class="group card"
+        class="group card card-hover"
         :class="{ inactive: !groupActive(group) }"
       >
         <header class="group-head">
@@ -180,7 +178,7 @@ const handleClear = async (item) => {
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-subtle);
+  background: var(--color-glass-subtle);
 }
 
 .group-code {

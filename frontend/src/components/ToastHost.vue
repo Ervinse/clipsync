@@ -50,8 +50,17 @@ const ICONS = { success: CircleCheck, error: CircleAlert, info: Info }
   color: var(--color-toast-text);
   font-size: var(--text-sm);
   line-height: 1.5;
-  box-shadow: var(--shadow-lg);
+  box-shadow: inset 0 1px 0 var(--color-toast-highlight), var(--shadow-lg);
   word-break: break-word;
+}
+
+/* 支持模糊的浏览器：半透明深色底 + 模糊背后的页面；不支持时保持上面的不透明底，文字不会看不清 */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .toast {
+    background: var(--color-toast-glass);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+  }
 }
 
 .toast-icon {
