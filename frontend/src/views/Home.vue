@@ -70,17 +70,23 @@ watch(() => route.path, () => {
 })
 
 const handleLogout = async () => {
-  // 云剪切板或文本页有没保存的文字时，先确认：登出会清掉本页状态，文字无法找回
-  if (clipboardStore.hasUnsavedEdit || textsStore.hasUnsavedEdit) {
-    const ok = await confirmDialog({
-      title: '退出登录并放弃未保存的修改？',
-      message: '有文本还没有保存，退出后会丢失。',
-      confirmText: '退出登录',
-      cancelText: '继续编辑',
-      danger: true,
-    })
-    if (!ok) return
-  }
+  // 退出前一律先确认，防止误点。云剪切板或文本页有没保存的文字时换成危险提示：
+  // 登出会清掉本页状态，文字无法找回
+  const unsaved = clipboardStore.hasUnsavedEdit || textsStore.hasUnsavedEdit
+  const ok = await confirmDialog(unsaved
+    ? {
+        title: '退出登录并放弃未保存的修改？',
+        message: '有文本还没有保存，退出后会丢失。',
+        confirmText: '退出登录',
+        cancelText: '继续编辑',
+        danger: true,
+      }
+    : {
+        title: '退出登录？',
+        message: '退出后需要重新输入用户名和密码登录。',
+        confirmText: '退出登录',
+      })
+  if (!ok) return
   userStore.logout()
   router.push('/login')
 }
