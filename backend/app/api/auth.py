@@ -17,6 +17,7 @@ from ..core.security import (
 from ..core.deps import get_current_user
 from ..core.app_settings import get_registration_enabled, get_default_quota_bytes, get_show_github_link
 from ..core.timeutil import utcnow
+from ..core.invite_code import normalize_invite_code
 from ..rate_limit import limiter
 from .files import upload_reserved_bytes
 
@@ -47,10 +48,11 @@ async def register(
         )
 
     # 2. 校验邀请码（FOR UPDATE：同一邀请码并发注册时只有一个能成功）
+    #    输入不区分大小写、可不带短横线或夹空格，规范化成标准格式再查
     result = await db.execute(
         select(InviteCode)
         .where(
-            InviteCode.code == user_in.invite_code,
+            InviteCode.code == normalize_invite_code(user_in.invite_code),
             InviteCode.used_by.is_(None),
             # used_at 非空即已用过（使用者被删除后 used_by 会置空，不能据此复用）
             InviteCode.used_at.is_(None),

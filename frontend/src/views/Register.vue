@@ -1,18 +1,22 @@
 <script setup>
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { CircleAlert, CircleCheck, LoaderCircle } from '@lucide/vue'
 import { useUserStore } from '../stores'
 import AuthLayout from '../components/AuthLayout.vue'
 
+const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+
+// 邀请信息里的注册链接带 ?code=，打开后自动填好邀请码（仍可修改）
+const codeFromLink = typeof route.query.code === 'string' ? route.query.code.trim().slice(0, 32) : ''
 
 const form = ref({
   username: '',
   password: '',
   confirmPassword: '',
-  invite_code: '',
+  invite_code: codeFromLink,
 })
 const loading = ref(false)
 const error = ref('')

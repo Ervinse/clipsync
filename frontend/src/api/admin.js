@@ -27,11 +27,16 @@ export default {
 
   // 邀请码管理
   inviteCodes: {
+    // data: { count, expires_at }，返回 { items, total }
     create(data) {
       return request.post('/admin/invite-codes', data)
     },
     list() {
       return request.get('/admin/invite-codes')
+    },
+    // 批量修改有效期（单个也走这里）：只能改未使用的码
+    updateExpiry(ids, expiresAt) {
+      return request.patch('/admin/invite-codes/expiry', { ids, expires_at: expiresAt })
     },
     delete(id) {
       return request.delete(`/admin/invite-codes/${id}`)

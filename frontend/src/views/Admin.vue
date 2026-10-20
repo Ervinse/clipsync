@@ -1,13 +1,13 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import {
   ChartColumn, Users, UserCheck, Ticket, Folder, Settings, File, HardDrive,
   Plus, Copy, Trash2, Ban, CircleCheck, Pencil, ChevronLeft, ChevronRight,
-  CircleAlert, Info, LoaderCircle, X,
+  CircleAlert, Info, LoaderCircle, X, CalendarClock,
 } from '@lucide/vue'
 import { useAdminStore, useUserStore } from '../stores'
 import { PAGE_SIZE } from '../stores/admin'
-import { formatDateTime, formatSize } from '../utils/format'
+import { formatDateTime, formatSize, parseUtc } from '../utils/format'
 import { copyToClipboard } from '../utils/clipboard'
 import toast from '../utils/toast'
 import { confirmDialog, promptDialog, copyDialog, dialogState } from '../utils/dialog'
@@ -19,7 +19,7 @@ const userStore = useUserStore()
 // Esc 关闭「创建邀请码」弹窗（不依赖焦点在弹窗内）；全局对话框打开时 Esc 只作用于它
 const onEscape = (event) => {
   if (event.key === 'Escape' && showCreateInviteModal.value && !dialogState.current) {
-    showCreateInviteModal.value = false
+    closeCreateInviteModal()
   }
 }
 onMounted(() => window.addEventListener('keydown', onEscape))
@@ -35,10 +35,14 @@ const TABS = [
 const activeTab = ref('stats')
 const showCreateInviteModal = ref(false)
 const isCreatingInvite = ref(false)
-// 邀请码一次性使用，后端只接收 expires_at
+// 一次生成 1–20 个，同一批共用一个有效期（与后端 MAX_INVITE_BATCH 一致）
+const MAX_INVITE_BATCH = 20
 const inviteForm = ref({
+  count: 1,
   expires_in_days: 7,
 })
+// 本次生成的邀请码：非空时弹窗切换成「生成结果」页
+const createdInvites = ref(null)
 
 onMounted(async () => {
   // 并行加载，互不影响：任何一个失败都不会阻断其余数据的显示
@@ -122,27 +126,173 @@ const handleSaveSettings = async () => {
 
 const openCreateInviteModal = () => {
   inviteForm.value = {
+    count: 1,
     expires_in_days: 7,
   }
+  createdInvites.value = null
   showCreateInviteModal.value = true
 }
 
+const closeCreateInviteModal = () => {
+  showCreateInviteModal.value = false
+  createdInvites.value = null
+}
+
+// 有效天数校验：空、非整数、负数返回 null；0 表示永久有效
+const parseDays = (raw) => {
+  if (raw === '' || raw === null || raw === undefined) return null
+  const days = Number(raw)
+  return Number.isInteger(days) && days >= 0 ? days : null
+}
+
+// 天数换算成带时区的 ISO 时间，从现在开始计算；0 表示永久有效（null）
+const daysToExpiresAt = (days) =>
+  days > 0 ? new Date(Date.now() + days * 86400 * 1000).toISOString() : null
+
 const handleCreateInvite = async () => {
+  const count = Number(inviteForm.value.count)
+  if (!Number.isInteger(count) || count < 1 || count > MAX_INVITE_BATCH) {
+    toast.error(`生成数量必须是 1 到 ${MAX_INVITE_BATCH} 之间的整数`)
+    return
+  }
+  const days = parseDays(inviteForm.value.expires_in_days)
+  if (days === null) {
+    toast.error('有效期必须是非负整数（天）')
+    return
+  }
   try {
     isCreatingInvite.value = true
-    // 0 或空表示永久有效；其余换算为带时区的 ISO 时间
-    const days = Number(inviteForm.value.expires_in_days)
-    await adminStore.createInviteCode({
-      expires_at: days > 0
-        ? new Date(Date.now() + days * 86400 * 1000).toISOString()
-        : null,
+    createdInvites.value = await adminStore.createInviteCodes({
+      count,
+      expires_at: daysToExpiresAt(days),
     })
-    showCreateInviteModal.value = false
-    toast.success('邀请码已创建')
   } catch (error) {
     toast.error('创建失败：' + error.message)
   } finally {
     isCreatingInvite.value = false
+  }
+}
+
+// 有效期的完整写法，用于生成结果页与邀请信息，例如 2025年6月20日 14:30；永久有效返回 null
+const formatExpiryLong = (value) => {
+  const date = parseUtc(value)
+  if (!date || Number.isNaN(date.getTime())) return null
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+// 同一批共用一个有效期，取第一个即可
+const createdExpiry = computed(() => formatExpiryLong(createdInvites.value?.[0]?.expires_at))
+
+// 注册链接取当前打开管理页的地址；只有一个码时带上 ?code= 让注册页自动填好
+const registerUrl = (code) => {
+  const base = `${window.location.origin}/register`
+  return code ? `${base}?code=${encodeURIComponent(code)}` : base
+}
+
+/**
+ * 邀请信息：发给别人的整段文字。
+ * 标签统一三个字，聊天软件里后面的内容自然对齐；只用空行分组，不加装饰符号
+ */
+const buildInviteMessage = (invites) => {
+  const expiry = formatExpiryLong(invites[0]?.expires_at)
+  const expiryLine = `有效期  ${expiry ? `${expiry} 前` : '长期有效'}`
+  const title = 'ClipSync · 注册邀请'
+  if (invites.length === 1) {
+    return [title, '', `邀请码  ${invites[0].code}`, expiryLine, '', registerUrl(invites[0].code)].join('\n')
+  }
+  return [
+    title,
+    '',
+    '邀请码  每个限注册一个账号',
+    ...invites.map((invite) => invite.code),
+    '',
+    expiryLine,
+    registerUrl(),
+  ].join('\n')
+}
+
+// 复制成功提示；HTTP 部署下 navigator.clipboard 不可用时降级为手动复制对话框
+const copyText = async (text, successMessage) => {
+  if (await copyToClipboard(text)) {
+    toast.success(successMessage)
+  } else {
+    copyDialog({ value: text })
+  }
+}
+
+const copyCreatedCodes = () => {
+  const invites = createdInvites.value || []
+  copyText(invites.map((invite) => invite.code).join('\n'), `已复制 ${invites.length} 个邀请码`)
+}
+
+const copyCreatedMessage = () => {
+  copyText(buildInviteMessage(createdInvites.value || []), '邀请信息已复制')
+}
+
+// 邀请码状态：used_at 非空即已用过（使用者被删除后 used_by 会置空）；未用过再看是否过期
+const inviteStatus = (invite) => {
+  if (invite.used_at || invite.used_by) return 'used'
+  const expires = parseUtc(invite.expires_at)
+  if (expires && expires.getTime() <= Date.now()) return 'expired'
+  return 'available'
+}
+const INVITE_STATUS = {
+  used: { label: '已使用', cls: '' },
+  expired: { label: '已过期', cls: 'badge-warning' },
+  available: { label: '可用', cls: 'badge-success' },
+}
+
+// 勾选：只有未使用的码（含已过期未使用）可以勾选并修改有效期
+const selectedInviteIds = ref([])
+const isInviteSelectable = (invite) => inviteStatus(invite) !== 'used'
+const selectableInviteIds = computed(() =>
+  adminStore.inviteCodes.filter(isInviteSelectable).map((invite) => invite.id),
+)
+const allInvitesSelected = computed(() =>
+  selectableInviteIds.value.length > 0 && selectedInviteIds.value.length === selectableInviteIds.value.length,
+)
+const someInvitesSelected = computed(() => selectedInviteIds.value.length > 0 && !allInvitesSelected.value)
+
+// 列表刷新后（删除、被注册用掉、修改后重取）去掉已不存在或不可选的勾选
+watch(selectableInviteIds, (ids) => {
+  const valid = new Set(ids)
+  selectedInviteIds.value = selectedInviteIds.value.filter((id) => valid.has(id))
+})
+
+const toggleAllInvites = () => {
+  selectedInviteIds.value = allInvitesSelected.value ? [] : [...selectableInviteIds.value]
+}
+
+const toggleInvite = (id) => {
+  const ids = selectedInviteIds.value
+  selectedInviteIds.value = ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]
+}
+
+// 修改有效期：单个（行内按钮）与批量（勾选后工具栏按钮）共用，天数从现在开始算
+const handleEditInviteExpiry = async (ids) => {
+  if (ids.length === 0) return
+  const input = await promptDialog({
+    title: ids.length === 1 ? '修改有效期' : `修改 ${ids.length} 个邀请码的有效期`,
+    message: '从现在开始计算，0 表示永久有效。',
+    label: '有效期',
+    defaultValue: 7,
+    inputType: 'number',
+    suffix: '天',
+    confirmText: '保存',
+  })
+  if (input === null) return
+  const days = parseDays(input.trim())
+  if (days === null) {
+    toast.error('有效期必须是非负整数（天）')
+    return
+  }
+  try {
+    await adminStore.updateInviteExpiry(ids, daysToExpiresAt(days))
+    selectedInviteIds.value = selectedInviteIds.value.filter((id) => !ids.includes(id))
+    toast.success(ids.length === 1 ? '有效期已更新' : `已更新 ${ids.length} 个邀请码的有效期`)
+  } catch (error) {
+    toast.error('修改失败：' + error.message)
   }
 }
 
@@ -239,19 +389,6 @@ const handleDeleteUser = async (user) => {
   }
 }
 
-// 邀请码状态：used_at 非空即已用过（使用者被删除后 used_by 会置空）；未用过再看是否过期
-const inviteStatus = (invite) => {
-  if (invite.used_at || invite.used_by) return 'used'
-  // 后端时间为 UTC（不带时区后缀），补 Z 再解析
-  if (invite.expires_at && new Date(invite.expires_at + 'Z').getTime() <= Date.now()) return 'expired'
-  return 'available'
-}
-const INVITE_STATUS = {
-  used: { label: '已使用', cls: '' },
-  expired: { label: '已过期', cls: 'badge-warning' },
-  available: { label: '可用', cls: 'badge-success' },
-}
-
 const ROLE_LABEL = { superadmin: '超级管理员', admin: '管理员', user: '普通用户' }
 const ROLE_CLASS = { superadmin: 'badge-accent', admin: 'badge-accent', user: '' }
 
@@ -289,14 +426,7 @@ const gotoFilesPage = async (delta) => {
 // 后端时间为 naive UTC，formatDateTime 内部按 UTC 解析；空值（如永久有效的邀请码）显示「永久有效」
 const formatDate = (value) => formatDateTime(value, '永久有效', false)
 
-// HTTP 部署下 navigator.clipboard 不可用，copyToClipboard 会降级
-const copyInviteCode = async (code) => {
-  if (await copyToClipboard(code)) {
-    toast.success('邀请码已复制')
-  } else {
-    copyDialog({ value: code })
-  }
-}
+const copyInviteCode = (code) => copyText(code, '邀请码已复制')
 </script>
 
 <template>
@@ -426,11 +556,21 @@ const copyInviteCode = async (code) => {
     <!-- 邀请码管理 -->
     <div v-if="activeTab === 'invites'" class="tab-panel">
       <div class="panel-toolbar">
-        <p class="toolbar-text">邀请码只能使用一次，注册时填写</p>
-        <button class="btn btn-primary" @click="openCreateInviteModal">
-          <Plus />
-          创建邀请码
-        </button>
+        <p v-if="selectedInviteIds.length === 0" class="toolbar-text">邀请码只能使用一次，注册时填写</p>
+        <p v-else class="toolbar-text toolbar-selected">已选 {{ selectedInviteIds.length }} 个</p>
+        <span class="toolbar-buttons">
+          <template v-if="selectedInviteIds.length > 0">
+            <button class="btn btn-secondary" @click="selectedInviteIds = []">取消选择</button>
+            <button class="btn btn-secondary" @click="handleEditInviteExpiry([...selectedInviteIds])">
+              <CalendarClock />
+              修改有效期
+            </button>
+          </template>
+          <button class="btn btn-primary" @click="openCreateInviteModal">
+            <Plus />
+            创建邀请码
+          </button>
+        </span>
       </div>
 
       <div v-if="adminStore.inviteCodes.length === 0" class="empty">
@@ -443,6 +583,17 @@ const copyInviteCode = async (code) => {
         <table class="table">
           <thead>
             <tr>
+              <th class="cell-check">
+                <input
+                  type="checkbox"
+                  class="checkbox"
+                  aria-label="全选可修改的邀请码"
+                  :checked="allInvitesSelected"
+                  :indeterminate="someInvitesSelected"
+                  :disabled="selectableInviteIds.length === 0"
+                  @change="toggleAllInvites"
+                />
+              </th>
               <th>邀请码</th>
               <th>状态</th>
               <th>过期时间</th>
@@ -451,7 +602,22 @@ const copyInviteCode = async (code) => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="invite in adminStore.inviteCodes" :key="invite.id">
+            <tr
+              v-for="invite in adminStore.inviteCodes"
+              :key="invite.id"
+              :class="{ 'row-selected': selectedInviteIds.includes(invite.id) }"
+            >
+              <td class="cell-check">
+                <!-- 已使用的码不能修改有效期（后端返回 409），不显示勾选框 -->
+                <input
+                  v-if="isInviteSelectable(invite)"
+                  type="checkbox"
+                  class="checkbox"
+                  :aria-label="`选择邀请码 ${invite.code}`"
+                  :checked="selectedInviteIds.includes(invite.id)"
+                  @change="toggleInvite(invite.id)"
+                />
+              </td>
               <td><span class="code mono">{{ invite.code }}</span></td>
               <td>
                 <span class="badge badge-dot" :class="INVITE_STATUS[inviteStatus(invite)].cls">
@@ -466,9 +632,18 @@ const copyInviteCode = async (code) => {
                     <Copy :size="14" />
                     复制
                   </button>
-                  <!-- 已使用的邀请码后端禁止删除（409），按钮不显示 -->
+                  <!-- 已使用的邀请码后端禁止修改有效期与删除（409），按钮不显示 -->
                   <button
-                    v-if="inviteStatus(invite) !== 'used'"
+                    v-if="isInviteSelectable(invite)"
+                    class="btn-icon"
+                    title="修改有效期"
+                    aria-label="修改有效期"
+                    @click="handleEditInviteExpiry([invite.id])"
+                  >
+                    <CalendarClock />
+                  </button>
+                  <button
+                    v-if="isInviteSelectable(invite)"
                     class="btn-icon danger"
                     title="删除"
                     aria-label="删除"
@@ -608,25 +783,42 @@ const copyInviteCode = async (code) => {
     </div>
 
     <!-- 创建邀请码弹窗 -->
-    <div v-if="showCreateInviteModal" class="modal-overlay" @mousedown.self="showCreateInviteModal = false">
+    <!-- 生成成功后同一个弹窗切换为「生成结果」页，只列本次生成的码，方便复制 -->
+    <div v-if="showCreateInviteModal" class="modal-overlay" @mousedown.self="closeCreateInviteModal">
       <form
+        v-if="!createdInvites"
         class="modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="create-invite-title"
         @submit.prevent="handleCreateInvite"
-        @keydown.esc="showCreateInviteModal = false"
+        @keydown.esc="closeCreateInviteModal"
       >
         <div class="modal-header header-with-close">
           <div>
             <h2 id="create-invite-title" class="modal-title">创建邀请码</h2>
             <p class="modal-desc">每个邀请码只能注册一个账号</p>
           </div>
-          <button type="button" class="btn-icon" aria-label="关闭" @click="showCreateInviteModal = false">
+          <button type="button" class="btn-icon" aria-label="关闭" @click="closeCreateInviteModal">
             <X />
           </button>
         </div>
-        <div class="modal-body">
+        <div class="modal-body invite-form">
+          <label class="field">
+            <span class="field-label">数量</span>
+            <span class="input-with-suffix">
+              <input
+                v-model.number="inviteForm.count"
+                class="input"
+                type="number"
+                min="1"
+                :max="MAX_INVITE_BATCH"
+                placeholder="1"
+              />
+              <span class="input-suffix">个</span>
+            </span>
+            <span class="field-hint">一次最多 {{ MAX_INVITE_BATCH }} 个</span>
+          </label>
           <label class="field">
             <span class="field-label">有效期</span>
             <span class="input-with-suffix">
@@ -639,17 +831,58 @@ const copyInviteCode = async (code) => {
               />
               <span class="input-suffix">天</span>
             </span>
-            <span class="field-hint">0 表示永久有效</span>
+            <span class="field-hint">0 表示永久有效；同一批共用这个有效期，生成后可以再改</span>
           </label>
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" @click="showCreateInviteModal = false">取消</button>
+          <button type="button" class="btn btn-secondary" @click="closeCreateInviteModal">取消</button>
           <button type="submit" class="btn btn-primary" :disabled="isCreatingInvite">
             <LoaderCircle v-if="isCreatingInvite" class="spin" />
-            创建
+            生成
           </button>
         </div>
       </form>
+
+      <div
+        v-else
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="created-invite-title"
+        @keydown.esc="closeCreateInviteModal"
+      >
+        <div class="modal-header header-with-close">
+          <div>
+            <h2 id="created-invite-title" class="modal-title">已生成 {{ createdInvites.length }} 个邀请码</h2>
+            <p class="modal-desc">{{ createdExpiry ? `有效期至 ${createdExpiry}` : '长期有效' }}</p>
+          </div>
+          <button type="button" class="btn-icon" aria-label="关闭" @click="closeCreateInviteModal">
+            <X />
+          </button>
+        </div>
+        <div class="modal-body">
+          <ul class="created-list">
+            <li v-for="invite in createdInvites" :key="invite.id" class="created-item">
+              <span class="created-code mono">{{ invite.code }}</span>
+              <button type="button" class="btn btn-secondary btn-sm" @click="copyInviteCode(invite.code)">
+                <Copy :size="14" />
+                复制
+              </button>
+            </li>
+          </ul>
+        </div>
+        <div class="modal-footer created-footer">
+          <span class="created-copy">
+            <button type="button" class="btn btn-secondary" @click="copyCreatedCodes">
+              复制邀请码
+            </button>
+            <button type="button" class="btn btn-secondary" @click="copyCreatedMessage">
+              复制邀请信息
+            </button>
+          </span>
+          <button type="button" class="btn btn-primary" @click="closeCreateInviteModal">完成</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -743,6 +976,81 @@ const copyInviteCode = async (code) => {
   border-radius: var(--radius-sm);
   background: var(--color-bg-muted);
   color: var(--color-text);
+}
+
+/* 邀请码勾选列：原生复选框，跟随强调色 */
+.table .cell-check {
+  width: 40px;
+  padding-right: 0;
+}
+
+.checkbox {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  vertical-align: middle;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+
+.checkbox:disabled {
+  cursor: default;
+}
+
+.table tbody tr.row-selected td {
+  background: var(--color-accent-subtle);
+}
+
+.toolbar-buttons {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.toolbar-selected {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+/* 生成结果页：只列本次生成的码 */
+.created-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.created-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.created-item:last-child {
+  border-bottom: none;
+}
+
+.created-code {
+  font-size: var(--text-base);
+  letter-spacing: 0.04em;
+  color: var(--color-text);
+}
+
+.created-footer {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.created-copy {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .file-name {
