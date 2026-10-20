@@ -67,9 +67,26 @@ class UpdateUserStatus(BaseModel):
     is_active: bool
 
 
+MAX_INVITE_BATCH = 20
+MAX_INVITE_EXPIRY_IDS = 500
+
+
 class InviteCodeCreate(BaseModel):
-    """创建邀请码请求"""
-    expires_at: Optional[datetime] = Field(None, description="过期时间（可选）")
+    """创建邀请码请求：一次生成 count 个，同一批共用一个过期时间"""
+    count: int = Field(1, ge=1, le=MAX_INVITE_BATCH, description="生成数量（1–20）")
+    expires_at: Optional[datetime] = Field(None, description="过期时间（可选，空为永久有效）")
+
+
+class InviteCodeExpiryUpdate(BaseModel):
+    """批量修改邀请码有效期请求"""
+    ids: list[int] = Field(..., min_length=1, max_length=MAX_INVITE_EXPIRY_IDS, description="邀请码 id 列表")
+    expires_at: Optional[datetime] = Field(None, description="新的过期时间（空为永久有效）")
+
+
+class InviteCodeExpiryResult(BaseModel):
+    """批量修改有效期结果"""
+    updated: int
+    expires_at: Optional[datetime]
 
 
 class InviteCodeResponse(BaseModel):

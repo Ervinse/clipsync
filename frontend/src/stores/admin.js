@@ -119,17 +119,32 @@ export const useAdminStore = defineStore('admin', {
     },
 
     /**
-     * 创建邀请码
+     * 批量生成邀请码（data: { count, expires_at }），返回本次生成的邀请码数组
+     * 列表刷新失败不影响已生成的结果
      */
-    async createInviteCode(data) {
+    async createInviteCodes(data) {
+      let result
       try {
-        const result = await api.admin.inviteCodes.create(data)
-        await this.fetchInviteCodes()
-        return result
+        result = await api.admin.inviteCodes.create(data)
       } catch (error) {
         console.error('创建邀请码失败:', error)
         throw error
       }
+      await this.fetchInviteCodes().catch(() => {})
+      return result?.items || []
+    },
+
+    /**
+     * 批量修改邀请码有效期（expiresAt 为 null 表示永久有效）
+     */
+    async updateInviteExpiry(ids, expiresAt) {
+      try {
+        await api.admin.inviteCodes.updateExpiry(ids, expiresAt)
+      } catch (error) {
+        console.error('修改邀请码有效期失败:', error)
+        throw error
+      }
+      await this.fetchInviteCodes().catch(() => {})
     },
 
     /**

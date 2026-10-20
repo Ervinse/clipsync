@@ -1,11 +1,12 @@
 """管理后台路由：统计 + 用户管理 + 邀请码 + 系统设置"""
 import logging
-import secrets
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select, func, delete as sql_delete, update as sql_update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -29,6 +30,8 @@ from ..schemas import (
     UpdateUserQuota,
     UpdateUserStatus,
     InviteCodeCreate,
+    InviteCodeExpiryUpdate,
+    InviteCodeExpiryResult,
     InviteCodeResponse,
     InviteCodeListResponse,
     SystemSettingsResponse,
@@ -46,6 +49,7 @@ from ..core.app_settings import (
     get_show_github_link,
 )
 from ..core.quick_access import CODED_MODELS
+from ..core.invite_code import generate_invite_code
 
 logger = logging.getLogger(__name__)
 
@@ -372,45 +376,10 @@ async def delete_user(
 # ========== 邀请码管理 ==========
 
 
-def generate_invite_code() -> str:
-    """生成 16 位邀请码（大小写字母 + 数字）"""
-    alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-    return "".join(secrets.choice(alphabet) for _ in range(16))
-
-
-@router.post("/invite-codes", response_model=InviteCodeResponse)
-async def create_invite_code(
-    data: InviteCodeCreate,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERADMIN)),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    生成邀请码
-
-    权限：admin + superadmin
-    """
-    # 1. 生成唯一邀请码（冲突重试）
-    max_retries = 5
-    code = None
-
-    for _ in range(max_retries):
-        candidate = generate_invite_code()
-        result = await db.execute(
-            select(InviteCode).where(InviteCode.code == candidate)
-        )
-        if result.scalar_one_or_none() is None:
-            code = candidate
-            break
-
-    if code is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="邀请码生成失败，请重试",
-        )
-
-    # 2. 创建邀请码（过期时间统一转 naive UTC，与 register 中的 utcnow() 比较口径一致）
+def _parse_invite_expiry(value: datetime | None) -> datetime | None:
+    """过期时间统一转 naive UTC（与 register 中的 utcnow() 比较口径一致），且必须晚于当前时间"""
     try:
-        expires_at = to_naive_utc(data.expires_at)
+        expires_at = to_naive_utc(value)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -421,27 +390,111 @@ async def create_invite_code(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="过期时间必须晚于当前时间",
         )
-    invite_code = InviteCode(
-        code=code,
-        created_by=current_user.id,
-        expires_at=expires_at,
-        created_at=utcnow(),
-    )
-    db.add(invite_code)
-    await db.commit()
+    return expires_at
+
+
+@router.post("/invite-codes", response_model=InviteCodeListResponse)
+async def create_invite_codes(
+    data: InviteCodeCreate,
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    批量生成邀请码：一次 1–20 个，同一批共用一个过期时间；全部成功或全部不生成
+
+    权限：admin + superadmin
+    """
+    expires_at = _parse_invite_expiry(data.expires_at)
+
+    # 生成 count 个互不相同、且库里不存在的码（重名概率极低，有冲突就重新抽，最多 5 轮）
+    codes: set[str] = set()
+    for _ in range(5):
+        while len(codes) < data.count:
+            codes.add(generate_invite_code())
+        result = await db.execute(select(InviteCode.code).where(InviteCode.code.in_(codes)))
+        taken = set(result.scalars().all())
+        if not taken:
+            break
+        codes -= taken
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="邀请码生成失败，请重试",
+        )
+
+    now = utcnow()
+    invites = [
+        InviteCode(code=code, created_by=current_user.id, expires_at=expires_at, created_at=now)
+        for code in codes
+    ]
+    db.add_all(invites)
+    try:
+        await db.commit()
+    except IntegrityError:
+        # 唯一约束兜底：查重之后有并发请求恰好生成了同一个码
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="邀请码生成失败，请重试",
+        )
 
     # 新建的码必然未被使用，不需要再查使用者
-    return InviteCodeResponse(
-        id=invite_code.id,
-        code=invite_code.code,
-        created_by=invite_code.created_by,
-        created_by_username=current_user.username,
-        used_by=None,
-        used_by_username=None,
-        expires_at=invite_code.expires_at,
-        used_at=invite_code.used_at,
-        created_at=invite_code.created_at,
+    items = [
+        InviteCodeResponse(
+            id=invite.id,
+            code=invite.code,
+            created_by=invite.created_by,
+            created_by_username=current_user.username,
+            used_by=None,
+            used_by_username=None,
+            expires_at=invite.expires_at,
+            used_at=None,
+            created_at=invite.created_at,
+        )
+        for invite in sorted(invites, key=lambda i: i.id)
+    ]
+    return InviteCodeListResponse(items=items, total=len(items))
+
+
+@router.patch("/invite-codes/expiry", response_model=InviteCodeExpiryResult)
+async def update_invite_codes_expiry(
+    data: InviteCodeExpiryUpdate,
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    批量修改邀请码有效期（单个修改也走这里）：只能改未使用的码，已过期但未使用的可借此续期
+
+    任何一个 id 不存在（404）或已被使用（409）时整批不改。
+    行锁与注册时的 FOR UPDATE 互斥，避免「刚被用掉的码又被改了有效期」。
+
+    权限：admin + superadmin
+    """
+    expires_at = _parse_invite_expiry(data.expires_at)
+    ids = set(data.ids)
+
+    result = await db.execute(
+        select(InviteCode).where(InviteCode.id.in_(ids)).with_for_update()
     )
+    invites = result.scalars().all()
+
+    if len(invites) != len(ids):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="部分邀请码不存在，请刷新列表后重试",
+        )
+    # used_at 非空即用过（使用者被删后 used_by 会置空）
+    if any(i.used_at is not None or i.used_by is not None for i in invites):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="已使用的邀请码不能修改有效期",
+        )
+
+    await db.execute(
+        sql_update(InviteCode).where(InviteCode.id.in_(ids)).values(expires_at=expires_at)
+    )
+    await db.commit()
+    return InviteCodeExpiryResult(updated=len(ids), expires_at=expires_at)
 
 
 @router.get("/invite-codes", response_model=InviteCodeListResponse)
