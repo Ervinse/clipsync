@@ -85,7 +85,7 @@ git switch master        # 正式部署用 master；git status 应显示 working
 powershell -ExecutionPolicy Bypass -File deployment\docker\build-release.ps1
 ```
 
-脚本先显示要打包的分支、提交和镜像标签。打包的不是 master 的最新提交，或者不带 `-Ref` 打包当前检出的提交而工作区有未提交的改动时，会要求输入 `y` 确认。脚本只打包**已提交**的代码，未提交的改动不会进入镜像。
+脚本先显示要打包的分支、提交和镜像标签。打包的不是 master 的最新提交，或者打包的是当前检出的提交（`-Ref` 为默认的 `HEAD`）而工作区有未提交的改动时，会要求输入 `y` 确认。脚本只打包**已提交**的代码，未提交的改动不会进入镜像。
 
 | 参数 | 作用 |
 |------|------|

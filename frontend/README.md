@@ -35,7 +35,7 @@ npm run dev
 npm run build
 ```
 
-构建产物在 `dist/` 目录。`npm run preview` 在本机预览构建产物（不带 `/api`、`/ws` 代理，只用于看页面）。
+构建产物在 `dist/` 目录。`npm run preview` 在本机预览构建产物（端口 4173，沿用开发服务器的 `/api`、`/ws` 代理，需要后端在运行）。
 
 ### 测试与验证
 
