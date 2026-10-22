@@ -93,8 +93,10 @@ async def write_text(
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=CONFLICT_DETAIL)
 
-    text.title = data.title
-    text.content = data.content
+    if data.title is not None:
+        text.title = data.title
+    if data.content is not None:
+        text.content = data.content
     text.version += 1
     text.updated_at = utcnow()
     await db.commit()

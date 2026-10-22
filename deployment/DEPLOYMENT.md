@@ -28,15 +28,17 @@ ClipSync 只支持 Docker Compose 部署：MySQL、后端、前端（Nginx）三
 | 文件 | 作用 |
 |------|------|
 | `.env` | 你的配置（从 `.env.example` 复制）。部署包里没有，更新时不会被覆盖 |
+| `.env.example` | 配置模板，各项说明见第 6.2 节 |
 | `docker-compose.yml` | 三个服务的定义 |
 | `docker-compose.https.yml` / `docker-compose.build.yml` | 叠加使用：启用 HTTPS / 在服务器上从源码构建 |
 | `nginx-common.conf`、`nginx-docker.conf`、`nginx-https.conf` | frontend 容器的 Nginx 配置（公共规则 / HTTP 站点 / HTTPS 站点） |
 | `backup.sh`、`health_check.sh`、`cert.sh` | 备份、健康检查、HTTPS 证书申请与续期 |
 | `clipsync.cron`、`clipsync.logrotate` | 宿主机定时任务与其日志轮转的模板 |
-| `VERSION` | 方式 A 的部署包才有：打包时的分支、提交号、时间；正式版本的发布包还有版本号 |
-| `acme/`、`letsencrypt/` | 运行后自动生成：证书验证文件、HTTPS 证书 |
+| `DEPLOYMENT.md` | 本手册 |
+| `VERSION` | 方式 A 的部署包才有：`commit=`、`branch=`、`latest=`（镜像是否带 `latest` 标签）、`built=`；正式版本的发布包另有 `version=`、`published=` |
+| `acme/`、`letsencrypt/` | 申请 HTTPS 证书后自动生成：证书验证文件、HTTPS 证书。部署包里没有 |
 
-除 `.env` 外，这些文件会在每次更新部署包时被覆盖。需要调整的配置都放在 `.env` 里，不要直接修改其他文件。
+除 `.env`、`acme/`、`letsencrypt/` 外，这些文件都在部署包里，每次更新部署包时会被覆盖。需要调整的配置都放在 `.env` 里，不要直接修改其他文件。
 
 ## 2. 版本与分支
 
@@ -83,11 +85,11 @@ git switch master        # 正式部署用 master；git status 应显示 working
 powershell -ExecutionPolicy Bypass -File deployment\docker\build-release.ps1
 ```
 
-脚本先显示要打包的分支、提交和镜像标签。打包的不是 master 的最新提交，或者工作区有未提交的改动时，会要求输入 `y` 确认。脚本只打包**已提交**的代码，未提交的改动不会进入镜像。
+脚本先显示要打包的分支、提交和镜像标签。打包的不是 master 的最新提交，或者不带 `-Ref` 打包当前检出的提交而工作区有未提交的改动时，会要求输入 `y` 确认。脚本只打包**已提交**的代码，未提交的改动不会进入镜像。
 
 | 参数 | 作用 |
 |------|------|
-| `-Ref <分支或提交>` | 打包指定的提交，默认是当前检出的提交 |
+| `-Ref <分支、标签或提交>` | 打包指定的提交，默认是当前检出的提交 |
 | `-AppOnly` | 不打包 MySQL 镜像（服务器上已有同版本时用，文件更小） |
 | `-WithCertbot` | 额外打包 certbot 镜像（服务器拉取不到 Docker Hub、又要申请 HTTPS 证书时用） |
 | `-Yes` | 跳过确认 |
@@ -96,15 +98,20 @@ powershell -ExecutionPolicy Bypass -File deployment\docker\build-release.ps1
 
 | 文件 | 内容 |
 |------|------|
-| `clipsync-images-<提交号>[-app].tar.gz` | 镜像包：`clipsync-backend`、`clipsync-frontend`，以及 MySQL（`-AppOnly` 时没有） |
-| `clipsync-deploy-<提交号>.tar.gz` | 部署包：第 1 节表格中的文件和本手册 |
+| `clipsync-images-<提交号>[-app].tar.gz` | 镜像包：`clipsync-backend`、`clipsync-frontend`，MySQL（`-AppOnly` 时没有），certbot（加 `-WithCertbot` 时才有）。用 `-AppOnly` 时文件名带 `-app` |
+| `clipsync-deploy-<提交号>.tar.gz` | 部署包：第 1 节表格中除 `.env`、`acme/`、`letsencrypt/` 以外的文件 |
+
 ### 4.2 上传到服务器
 
 ```powershell
 scp release\<提交号>\clipsync-images-<提交号>.tar.gz release\<提交号>\clipsync-deploy-<提交号>.tar.gz root@<服务器IP>:/root/
 ```
 
-使用正式版本的发布包时，把文件名里的 `<提交号>` 换成 `<版本号>`（第 4.4 节）。
+使用正式版本的发布包时，三个文件都要上传（第 4.4 节）：
+
+```powershell
+scp release\<版本号>\clipsync-images-<版本号>.tar.gz release\<版本号>\clipsync-deploy-<版本号>.tar.gz release\<版本号>\SHA256SUMS root@<服务器IP>:/root/
+```
 
 ### 4.3 服务器：导入镜像、解压部署包
 
@@ -126,12 +133,12 @@ cd /opt/clipsync && cat VERSION
 powershell -ExecutionPolicy Bypass -File deployment\docker\publish-release.ps1 -Version <版本号>
 ```
 
-脚本不重新构建镜像：检查本机有该提交的 `clipsync-backend:<提交号>`、`clipsync-frontend:<提交号>`，且镜像里记录的提交号一致，再追加 `<版本号>` 标签导出。本机镜像被清理过时，先 `docker load` 导入该提交测试时的镜像包。产物在 `release\<版本号>\`：
+脚本不重新构建镜像：检查本机有该提交的 `clipsync-backend:<提交号>`、`clipsync-frontend:<提交号>`，且镜像里记录的提交号一致，再追加 `<版本号>` 标签导出。本机镜像被清理过时，先 `docker load` 导入该提交测试时的镜像包（`release\<提交号>\` 里的 `clipsync-images-<提交号>.tar.gz`，用 `-AppOnly` 打的是 `clipsync-images-<提交号>-app.tar.gz`）。产物在 `release\<版本号>\`：
 
 | 文件 | 内容 |
 |------|------|
-| `clipsync-images-<版本号>.tar.gz` | 镜像包：backend、frontend（各带 `<版本号>` 与 `<提交号>` 标签）、MySQL |
-| `clipsync-deploy-<版本号>.tar.gz` | 部署包：与测试构建的部署包相同，只有两处不同：`.env.example` 的 `CLIPSYNC_TAG` 预填为 `<版本号>`；`VERSION` 多了 `version=`、`published=` 两行 |
+| `clipsync-images-<版本号>.tar.gz` | 镜像包：backend、frontend（各带 `<版本号>` 与 `<提交号>` 标签）、MySQL。发布包只有这一种，总是带 MySQL |
+| `clipsync-deploy-<版本号>.tar.gz` | 部署包：其余文件与该提交的测试部署包相同。不同之处：`.env.example` 的 `CLIPSYNC_TAG` 预填为 `<版本号>`；`VERSION` 多了 `version=`、`published=`，`branch=` 固定为 `master`，`latest=` 固定为 `no`，`built=` 是镜像的构建时间 |
 | `SHA256SUMS` | 两个包的 SHA-256 |
 
 使用发布包部署：
@@ -148,7 +155,7 @@ mkdir -p /opt/clipsync && tar -xzf clipsync-deploy-<版本号>.tar.gz -C /opt/cl
 
 ## 5. 方式 B：服务器上从源码构建
 
-服务器上需要完整的项目源码，并且能访问 Docker Hub、Debian、PyPI、npm。
+服务器上需要完整的项目源码，并且能访问 Docker Hub、PyPI、npm。
 
 ```bash
 git clone <仓库地址> clipsync && cd clipsync && git switch master
@@ -195,8 +202,7 @@ vi .env          # 至少修改 CORS_ORIGINS
 | `MAX_FILE_BYTES` | 单文件上限 | 500MB |
 | `CHUNK_SIZE` | 单个上传分片上限，不能超过 Nginx 的 10MB | 5MB |
 | `MAX_UPLOAD_SESSIONS_PER_USER` / `UPLOAD_SESSION_TTL_HOURS` | 每用户同时上传数、未完成上传的保留小时数 | `5` / `24` |
-| `HISTORY_KEEP` | 每个用户保留的文本历史条数 | `50` |
-| `DEPLOY_SCHEME` / `COOKIE_SECURE` | 预留，代码未使用 | — |
+| `HISTORY_KEEP` | 每个用户保留的云剪切板历史条数 | `50` |
 
 - 三个必填项未设置时 `docker compose` 直接报错；`JWT_SECRET` 太短或仍是示例值时 backend 拒绝启动。
 - 数据库账号只在**第一次启动**（数据卷为空）时创建。之后修改 `DB_USER`、`DB_PASSWORD`、`DB_ROOT_PASSWORD` 不会改变数据库里的账号，反而会让 backend 连不上数据库。要改密码，先在数据库里 `ALTER USER`，再同步修改 `.env`。
@@ -266,14 +272,28 @@ cat VERSION
 docker compose up -d
 # 挂载的 Nginx 配置内容变化时 compose 发现不了，强制重建 frontend、backend 让新配置生效（db 不受影响）
 docker compose up -d --force-recreate backend frontend
-# 部署包里的定时任务模板可能有变化，重新安装一次
-sed "s|/opt/clipsync|$(pwd)|g" clipsync.cron > /etc/cron.d/clipsync
+# 部署包里的定时任务与日志轮转模板可能有变化，重新安装一次
+sed "s|/opt/clipsync|$(pwd)|g" clipsync.cron > /etc/cron.d/clipsync && chmod 644 /etc/cron.d/clipsync
+cp clipsync.logrotate /etc/logrotate.d/clipsync
 bash health_check.sh
 ```
 
 部署非 master 的测试版本时，先把 `.env` 的 `CLIPSYNC_TAG` 改成打包时显示的提交号，再执行 `docker compose up -d`。
 
-更新到正式版本的发布包时，命令相同，文件名里的 `<提交号>` 换成 `<版本号>`，并在 `docker compose up -d` 前把 `.env` 的 `CLIPSYNC_TAG` 改成 `<版本号>`（第 4.4 节）。
+更新到正式版本的发布包时，开发机上不打包，按第 4.4 节生成发布包，按第 4.2 节上传三个文件。服务器上：
+
+```bash
+cd /root && sha256sum -c SHA256SUMS          # 两行都显示 OK 再继续
+cd /opt/clipsync
+bash backup.sh
+docker load -i /root/clipsync-images-<版本号>.tar.gz
+tar -xzf /root/clipsync-deploy-<版本号>.tar.gz -C /opt/clipsync     # 不会覆盖 .env
+vi .env                     # CLIPSYNC_TAG 改成 <版本号>
+docker compose up -d --force-recreate backend frontend
+sed "s|/opt/clipsync|$(pwd)|g" clipsync.cron > /etc/cron.d/clipsync && chmod 644 /etc/cron.d/clipsync
+cp clipsync.logrotate /etc/logrotate.d/clipsync
+bash health_check.sh
+```
 
 ### 7.2 方式 B
 
@@ -284,6 +304,8 @@ bash backup.sh
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 docker compose up -d --force-recreate frontend
 ```
+
+上面带 `-f` 的那条命令会使 `.env` 的 `COMPOSE_FILE` 失效，frontend 暂时按 HTTP 配置运行，下一条命令再按 `COMPOSE_FILE` 重建 frontend。已启用 HTTPS 时，构建命令按第 9 节最后一条写上三个文件，可以直接用对配置。
 
 ## 8. 回滚
 
@@ -331,7 +353,7 @@ docker compose up -d backend
 ```
 
 - 启用后 80 端口只保留证书验证，其余请求都 301 跳转到 HTTPS。
-- `HSTS_ENABLED=true` 之后，浏览器在一年内只会用 HTTPS 访问这个域名。因此要确认 HTTPS 稳定后再开；开启后如果要退回 HTTP，用户的浏览器会一直打不开。
+- `HSTS_ENABLED=true` 之后，响应头为 `Strict-Transport-Security: max-age=31536000; includeSubDomains`：浏览器在一年内只会用 HTTPS 访问这个域名**及其所有子域名**。因此要确认 HTTPS 稳定后再开；开启后如果要退回 HTTP，用户的浏览器会一直打不开。
 - 更换域名：用新域名再执行一次 `bash cert.sh issue`（证书名固定为 `clipsync`，会覆盖旧证书），修改 `CORS_ORIGINS`，再执行 `docker compose up -d --force-recreate backend frontend`。
 - 退回 HTTP：先把 `HSTS_ENABLED` 改为 `false`，注释掉 `COMPOSE_FILE`，改回 `CORS_ORIGINS`，再 `docker compose up -d --force-recreate backend frontend`。
 - 设置了 `COMPOSE_FILE` 时，命令里再写 `-f` 会使 `COMPOSE_FILE` 失效。方式 B 启用 HTTPS 后重新构建，要把三个文件都写上：`docker compose -f docker-compose.yml -f docker-compose.https.yml -f docker-compose.build.yml up -d --build`。
@@ -351,6 +373,7 @@ docker compose up -d backend
 - 导出失败或内容不完整时，脚本会删除这次的备份、以非零退出码结束，不会留下看似正常的空备份。
 - 备份目录和文件只允许 root 读写：数据库备份里有明文的剪贴板文本。
 - 可以用环境变量 `BACKUP_DIR`、`DB_KEEP_DAYS`、`FILES_KEEP_DAYS` 调整目录和保留天数，例如 `DB_KEEP_DAYS=60 bash backup.sh`。改 cron 里的调用时同样适用。
+- `health_check.sh` 也按 `BACKUP_DIR`（默认 `/var/backups/clipsync`）查找最近一次备份。改了备份目录后，检查时也要带上：`BACKUP_DIR=<备份目录> bash health_check.sh`，否则会提示还没有备份。
 - 备份默认和服务器在同一块硬盘上，硬盘损坏或服务器被删除时会一起丢失。请定期把备份复制到其他机器，例如在另一台电脑上执行 `scp root@<服务器IP>:/var/backups/clipsync/clipsync_*_<日期>_* .`。
 
 手动备份：`bash backup.sh`。
@@ -431,7 +454,7 @@ MySQL Workbench、HeidiSQL、Navicat 等工具也支持「通过 SSH 连接」�
 ### 12.3 命令行
 
 ```bash
-# 在自己的电脑上：把本机 13306 端口经 SSH 转发到服务器的 127.0.0.1:3306，保持这个窗口不关
+# 在自己的电脑上：把本机 13306 端口经 SSH 转发到服务器的 127.0.0.1:3306（改过 DB_HOST_PORT 就换成那个值），保持这个窗口不关
 ssh -N -L 13306:127.0.0.1:3306 <用户>@<服务器IP>
 # 另开一个窗口
 mysql -h 127.0.0.1 -P 13306 -u reader -p clipsync
@@ -499,7 +522,7 @@ docker image prune                        # 删除没有标签的旧镜像层（
 | db 一直不是 healthy | `docker compose logs db`。磁盘满、数据目录损坏、内存不足都会导致 MySQL 启动失败 |
 | 容器启动即退出，日志 `exec format error` | 服务器不是 x86_64 |
 | 页面能打开，但登录或操作时报错 | `docker compose logs backend` 查看具体错误 |
-| 页面打不开 | 依次检查：`docker compose ps` 中 frontend 是否为 Up；本机 `curl -I http://127.0.0.1:<HTTP_PORT>/` 是否 200；云安全组是否放行了端口 |
+| 页面打不开 | 依次检查：`docker compose ps` 中 frontend 是否为 Up；本机 `curl -I http://127.0.0.1:<HTTP_PORT>/` 是否 200（启用 HTTPS 后应为 301）；云安全组是否放行了端口 |
 | frontend 反复重启，日志 `cannot load certificate` | 设置了 `COMPOSE_FILE` 启用 HTTPS，但还没有申请证书。先注释掉 `COMPOSE_FILE` 回到 HTTP，申请成功后再启用 |
 | `cert.sh issue` 失败 | 域名没有解析到本服务器、80 端口从公网访问不到，或者 frontend 没有运行。检查 `curl -I http://<域名>/` |
 | 实时同步不工作，页面提示连接断开 | 检查 `nginx-common.conf` 是否为部署包里的版本；修改过 Nginx 配置后要 `docker compose up -d --force-recreate frontend` |

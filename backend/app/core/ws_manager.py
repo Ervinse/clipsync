@@ -84,16 +84,15 @@ class ConnectionManager:
 
         return [c for c in await asyncio.gather(*(_send(c) for c in connections)) if c is not None]
 
-    async def broadcast_to_user(self, user_id: int, message: dict, exclude: WebSocket = None):
-        """向指定用户的所有在线终端广播消息（可排除触发源）；不发给快速访问页"""
+    async def broadcast_to_user(self, user_id: int, message: dict):
+        """向指定用户的所有在线终端广播消息；不发给快速访问页"""
         connections = self.active_connections.get(user_id)
         if not connections:
             return
 
         # 复制一份再并发发送：await 期间集合可能被其他协程修改；
         # 单个卡住的终端最多拖 SEND_TIMEOUT_SECONDS，不会拖慢触发广播的 HTTP 请求太久
-        targets = [c for c in list(connections) if c is not exclude]
-        failed_connections = await self._send_all(targets, message)
+        failed_connections = await self._send_all(list(connections), message)
         for failed in failed_connections:
             self.disconnect(user_id, failed)
         # 只摘掉不关闭的话，ws.py 的接收循环还在回心跳，前端以为连接正常，不会重连，

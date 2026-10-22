@@ -25,11 +25,23 @@ class TextCreate(BaseModel):
         return check_content_bytes(value)
 
 
-class TextUpdate(TextCreate):
-    """保存文本"""
+class TextUpdate(BaseModel):
+    """保存文本：title / content 省略时保持原值"""
+    title: Optional[str] = Field(None, max_length=MAX_TITLE_CHARS, description="标题（最多 100 字）；省略表示不修改")
+    content: Optional[str] = Field(None, description="文本内容（UTF-8 编码后最大 8MB）；省略表示不修改")
     base_version: Optional[int] = Field(
         None, ge=0, description="读取时的版本号；与服务端当前版本不一致返回 409。省略表示直接覆盖"
     )
+
+    @field_validator("title")
+    @classmethod
+    def _strip_title(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else value.strip()
+
+    @field_validator("content")
+    @classmethod
+    def _content_bytes(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else check_content_bytes(value)
 
 
 class TextResponse(BaseModel):
