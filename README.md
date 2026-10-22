@@ -293,7 +293,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
-| PUT | /api/access-codes | 登录 | 设置 / 修改 / 清除访问码 `{target_type: clipboard 或 text 或 file, target_id?, code（null 为清除）, expires_at?}`；text、file 必须带 `target_id`（否则 400），且只能是自己的（否则 404）；访问码格式不对 422；`expires_at` 必须晚于当前时间且不超过 8760 小时后；广播 `access_codes_changed`，并通知凭旧码、新码进入的快速访问页 |
+| PUT | /api/access-codes | 登录 | 设置 / 修改 / 清除访问码 `{target_type: clipboard 或 text 或 file, target_id?, code（null 为清除）, expires_at?}`；text、file 必须带 `target_id`（否则 400），且只能是自己的（否则 404）；访问码格式不对 422；`expires_at` 必须晚于当前时间且不超过 8760 小时后（服务端多留 1 分钟余量，容忍前后端时钟误差）；广播 `access_codes_changed`，并通知凭旧码、新码进入的快速访问页 |
 | GET | /api/access-codes | 登录 | 按访问码分组的总览 `{username, groups: [{code, items}], total}`，每项含类型、id、名称（文本标题或开头 / 文件名）、过期时间 |
 | POST | /api/access/login | **公开** | `{full_code: "用户名@访问码"}` 换取快速访问凭证 `{access_token, token_type, owner_username, code, expires_in}`（2 小时）；格式不对 400；用户名不存在、码不对、已过期、属主被禁用统一 404；锁定中 429 |
 | GET | /api/access/items | 快速访问 | 该访问码下的全部内容 `{owner_username, code, clipboard, texts, files}`；长文本只给开头 |
