@@ -22,8 +22,6 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 10080  # 7 天
 
     # 部署
-    DEPLOY_SCHEME: str = "http"
-    COOKIE_SECURE: bool = False
     HSTS_ENABLED: bool = False
     CORS_ORIGINS: str = "http://localhost:5173"
 

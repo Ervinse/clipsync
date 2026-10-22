@@ -27,7 +27,7 @@
 
 ## HTTP / HTTPS 双部署（编码要点，机制见第 11 节）
 - 前端 API 用**相对路径**（`/api/...`）；WebSocket 按 `window.location.protocol` 自动选 `ws://`/`wss://`，**禁止写死协议**。
-- 安全行为读 `.env` 开关：`HSTS_ENABLED`（后端下发 HSTS 头）、`CORS_ORIGINS`（CORS 白名单）已生效；`DEPLOY_SCHEME`、`COOKIE_SECURE` 为预留项，目前代码未使用。Token 走 `Authorization` header + localStorage，不依赖 cookie。
+- 安全行为读 `.env` 开关：`HSTS_ENABLED`（后端下发 HSTS 头）、`CORS_ORIGINS`（CORS 白名单）。Token 走 `Authorization` header + localStorage，不依赖 cookie。
 
 ## 目录结构（细节见第 13 节）
 - 项目根为 `clipsync/`，**所有文件都在此之下**，不得在根目录之外创建文件。
@@ -40,7 +40,7 @@
 - 改动任何数据模型，必须**同步写 Alembic 迁移**。
 
 ## 测试
-- 后端用 `pytest` + `pytest-asyncio`，测试放 `backend/tests/`；现有用例经 FastAPI `TestClient` 同步调用，测试库为独立的 `clipsync_test`（每次运行 DROP 重建）。
+- 后端用 `pytest`，测试放 `backend/tests/`；用例经 FastAPI `TestClient`（基于 httpx）同步调用，测试库为独立的 `clipsync_test`（每次运行 DROP 重建）。
 - 新增/修复接口后补测试；安全红线（归属校验、角色边界、路径穿越）务必覆盖。
 - 何时运行测试见下方「按改动范围验证」：只改文档不跑测试；前端没有自动化测试，改前端只跑 `npm run build` 并手动验证。
 
@@ -88,22 +88,22 @@
 ## 部署打包（镜像标签与版本一致性）
 - 本项目没有 CI/CD；镜像构建、打提交号与 `latest` 标签、打测试包只在 `deployment/docker/build-release.ps1` 一处完成，它是本规范的权威实现。调整打包策略即改这个脚本，并同步更新本节。
 - 版本号标签只由 `deployment/docker/publish-release.ps1` 打（见下方「正式版本晋级」），`build-release.ps1` 不打版本号标签。
-- **commit 哈希标签（必打）**：用 `git rev-parse --verify <ref>^{commit}`（`<ref>` 默认 `HEAD`，可用 `-Ref` 指定分支或提交）取完整哈希，截前 12 位作为标签，如 `clipsync-backend:9718d16c4fde`。每个镜像一定有这个标签，用于精确追溯。
+- **commit 哈希标签（必打）**：用 `git rev-parse --verify <ref>^{commit}`（`<ref>` 默认 `HEAD`，可用 `-Ref` 指定分支、标签或提交）取完整哈希，截前 12 位作为标签，如 `clipsync-backend:9718d16c4fde`。每个镜像一定有这个标签，用于精确追溯。
 - **latest 标签（有条件）**：仅当「要打包的提交哈希」等于「`master` 当前提交哈希」（按哈希比对，非分支名）时，才额外追加 `:latest`；非 master 或旧提交只有 commit 哈希标签。服务器 `.env` 的 `CLIPSYNC_TAG` 默认 `latest`，故测试分支的镜像导入后不会被误用。
 - **版本一致性**：同一个 commit 哈希（脚本里的 `$Commit` 变量）必须同时写入这几处，保证永远一致：
   1. 镜像标签（`-t <镜像名>:<commit>`）
   2. 镜像 label `org.opencontainers.image.revision=<commit>`（`health_check.sh` 据此显示运行中的提交）
   3. 部署包内 `VERSION` 文件，含 `commit=` / `branch=` / `latest=` / `built=` 四个字段
   4. 两个产物的文件名：`clipsync-images-<commit>[-app].tar.gz`、`clipsync-deploy-<commit>.tar.gz`
-- 打包只取**已提交**的代码（`git archive`），工作区未提交的改动不进镜像；打包的不是 master 最新提交或工作区不干净时，脚本要求确认。
+- 打包只取**已提交**的代码（`git archive`），工作区未提交的改动不进镜像；打包的不是 master 最新提交，或打包的是 `HEAD`（`-Ref` 的默认值）而工作区不干净时，脚本要求确认（`-Yes` 跳过确认）。
 
 ## 正式版本晋级（publish-release.ps1）
 用户要求「把某个提交 / 测试构建晋级为版本 X」时，按以下步骤做。核心原则：**不重新构建**，只给测试过的同一份镜像追加版本号标签。
 1. **确认对象**：要晋级的提交必须在 master 上，且用户确认该提交的测试构建（`release/<commit>/`）已测试通过。版本号按 SemVer，带 `-` 后缀的是预发布版。
 2. **Git 标签**：`git rev-parse --verify v<版本号>^{commit}` 检查标签。没有时在该提交上建附注标签 `git tag -a v<版本号> <commit> -m "说明"`（本地操作）；已有但指向别的提交时停下来问用户，不要移动标签。
-3. **镜像**：本机须有 `clipsync-backend:<commit>`、`clipsync-frontend:<commit>`。被清理过时用 `docker load -i release/<commit>/clipsync-images-<commit>.tar.gz` 导回，**禁止**用 `build-release.ps1` 重新构建来代替（重新构建得到的是另一份镜像）。
+3. **镜像**：本机须有 `clipsync-backend:<commit>`、`clipsync-frontend:<commit>`。被清理过时用 `docker load -i release/<commit>/clipsync-images-<commit>.tar.gz` 导回（测试构建用了 `-AppOnly` 时文件名是 `clipsync-images-<commit>-app.tar.gz`），**禁止**用 `build-release.ps1` 重新构建来代替（重新构建得到的是另一份镜像）。
 4. **运行**：`powershell -ExecutionPolicy Bypass -File deployment\docker\publish-release.ps1 -Version <版本号>`（不带 `v`）。脚本会校验镜像 label 里的提交号、追加 `<版本号>` 标签、导出镜像包（backend / frontend 各带 `<版本号>` 与 `<commit>` 标签 + compose 里的 MySQL，**不含 `latest`**）、生成部署包与 `SHA256SUMS`，产物在 `release/<版本号>/`。
-5. **发布包与测试包的唯一差别**：部署包里 `.env.example` 的 `CLIPSYNC_TAG` 预填 `<版本号>`；`VERSION` 增加 `version=` 与 `published=`，`latest=no`。`docker-compose.yml` 等其他文件与该提交完全相同，**不修改 compose**。
+5. **发布包与测试包的差别**：部署包里 `.env.example` 的 `CLIPSYNC_TAG` 预填 `<版本号>`；`VERSION` 增加 `version=` 与 `published=`，`branch=` 固定为 `master`，`latest=no`，`built=` 取镜像的构建时间。`docker-compose.yml` 等其他文件与该提交完全相同，**不修改 compose**。
 6. **核对产物**（全部做完再汇报）：`sha256sum -c SHA256SUMS`；SHA256SUMS 无 BOM、只用 LF；部署包内 `VERSION` 与 `.env.example` 的 `CLIPSYNC_TAG`；镜像包 `manifest.json` 的 `RepoTags`。装有 Docker 时在临时目录解压部署包、用发布包 `docker load` 后以版本号 `docker compose up -d` 启动一次，`health_check.sh` 显示版本号与运行中的提交，用完 `docker compose down -v` 并删除临时目录（先确认没有同名 `clipsync` 项目的容器和数据卷）。
 7. **镜像 ID**：开发机启用 containerd 镜像存储时，本机 `docker images` 的 IMAGE ID 与服务器上的不同；与服务器测试版本核对时以脚本最后打印的镜像 ID（导出包 `manifest.json` 的配置摘要）为准。
 8. **notes**：按「发布与发布说明」更新 `release-notes/v<版本号>.md` 与 `.internal.md`，把三个文件的 SHA-256 与镜像 ID 记入 `.internal.md`。

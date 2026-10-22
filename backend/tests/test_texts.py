@@ -21,6 +21,20 @@ def test_text_crud(client, make_user):
     assert client.get(f"/api/texts/{created['id']}", headers=user.headers).status_code == 404
 
 
+def test_update_keeps_omitted_fields(client, make_user):
+    user = make_user()
+    text_id = new_text(client, user, "正文", title="标题")["id"]
+
+    only_title = client.put(f"/api/texts/{text_id}", json={"title": "新标题"}, headers=user.headers).json()
+    assert only_title["title"] == "新标题" and only_title["content"] == "正文"
+
+    only_content = client.put(f"/api/texts/{text_id}", json={"content": "新正文"}, headers=user.headers).json()
+    assert only_content["title"] == "新标题" and only_content["content"] == "新正文"
+
+    cleared = client.put(f"/api/texts/{text_id}", json={"title": "", "content": ""}, headers=user.headers).json()
+    assert cleared["title"] == "" and cleared["content"] == ""
+
+
 def test_title_optional_and_limited(client, make_user):
     user = make_user()
     assert client.post("/api/texts", json={"content": "x"}, headers=user.headers).json()["title"] == ""

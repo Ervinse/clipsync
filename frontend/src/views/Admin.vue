@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import {
   ChartColumn, Users, UserCheck, Ticket, Folder, Settings, File, HardDrive,
   Plus, Copy, Trash2, Ban, CircleCheck, Pencil, ChevronLeft, ChevronRight,
-  CircleAlert, Info, LoaderCircle, X, CalendarClock,
+  CircleAlert, Info, LoaderCircle, X, CalendarClock, KeyRound, ShieldCheck,
 } from '@lucide/vue'
 import { useAdminStore, useUserStore } from '../stores'
 import { PAGE_SIZE } from '../stores/admin'
@@ -69,6 +69,8 @@ const STAT_CARDS = computed(() => [
   { label: '活跃用户', value: stats.value.active_users || 0, icon: UserCheck },
   { label: '文件总数', value: stats.value.total_files || 0, icon: File },
   { label: '总存储', value: formatSize(stats.value.total_storage_bytes || 0), icon: HardDrive },
+  { label: '访问码总数', value: stats.value.total_access_codes || 0, icon: KeyRound },
+  { label: '有效访问码', value: stats.value.active_access_codes || 0, icon: ShieldCheck },
 ])
 
 // 系统设置：后端 GET 对 admin 及以上开放，PATCH 仅 superadmin；存库的就是下面这几项
@@ -890,7 +892,7 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
 <style scoped>
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-4);
 }
 

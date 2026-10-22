@@ -167,7 +167,7 @@ try {
         $image = "${app}:$Commit"
         $id = Get-NativeValue docker @("image", "inspect", "--format", "{{.Id}}", $image)
         if (-not $id) {
-            throw "本机没有镜像 $image：先导入测试时的镜像包（docker load -i release\$Commit\clipsync-images-$Commit.tar.gz），不要重新构建"
+            throw "本机没有镜像 $image：先导入测试时的镜像包（docker load -i release\$Commit\clipsync-images-$Commit.tar.gz；用 -AppOnly 打的包文件名是 clipsync-images-$Commit-app.tar.gz），不要重新构建"
         }
         # build-release.ps1 构建时写入的提交号，确认这个标签下确实是该提交构建的镜像。
         # 用 json 输出再解析：PowerShell 5.1 传给原生命令的参数里的双引号会被去掉，模板里不能带引号
