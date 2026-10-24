@@ -94,7 +94,7 @@ const handleLogout = async () => {
 
 <template>
   <div class="layout">
-    <header class="topbar">
+    <header class="topbar liquid">
       <button class="btn-icon" aria-label="打开导航" @click="drawerOpen = true">
         <Menu :size="18" />
       </button>
@@ -188,7 +188,7 @@ const handleLogout = async () => {
 </template>
 
 <style scoped>
-/* 不设底色：body 的底色和光晕层（style.css 的 body::before）从这里透出来 */
+/* 不设底色：页面底色和光斑层（style.css 的 body::before）从这里透出来 */
 .layout {
   display: flex;
   min-height: 100vh;
@@ -209,9 +209,12 @@ const handleLogout = async () => {
   height: 100dvh;
   /* 窗口矮到放不下导航和底部区域时整个侧栏滚动，底部账号、退出按钮不会被裁掉 */
   overflow-y: auto;
-  /* 半透明浅灰，透出背后的光晕；侧栏背后没有滚动的内容，不需要模糊 */
-  background: var(--color-glass-subtle);
+  /* 一整块竖立的玻璃：半透明浅灰透出背后的光斑，表面光泽，右边缘内侧一道亮边；
+     侧栏背后没有滚动的内容，不需要模糊 */
+  background-color: var(--color-glass-subtle);
+  background-image: var(--glass-sheen);
   border-right: 1px solid var(--color-border);
+  box-shadow: inset -1px 0 0 var(--color-glass-rim);
 }
 
 .sidebar-top {
@@ -246,7 +249,8 @@ const handleLogout = async () => {
   font-weight: 500;
   color: var(--color-text-secondary);
   text-decoration: none;
-  transition: background-color var(--duration) var(--ease), color var(--duration) var(--ease);
+  transition: background-color var(--duration) var(--ease), color var(--duration) var(--ease),
+    box-shadow var(--duration) var(--ease), transform 280ms var(--ease-spring);
 }
 
 .nav-item:hover {
@@ -255,10 +259,20 @@ const handleLogout = async () => {
   text-decoration: none;
 }
 
+/* 当前菜单项是浮在侧栏上的一颗玻璃块 */
 .nav-item.active {
-  background: var(--color-bg);
+  background-color: var(--color-glass-pill);
+  background-image: var(--glass-sheen);
   color: var(--color-text);
-  box-shadow: inset 0 1px 0 var(--color-highlight), var(--shadow-sm);
+  box-shadow: var(--glass-shadow), var(--shadow-sm);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .nav-item:active {
+    transform: scale(0.97);
+    transition-duration: 100ms;
+    transition-timing-function: var(--ease);
+  }
 }
 
 .nav-icon {
@@ -406,10 +420,12 @@ const handleLogout = async () => {
     gap: var(--space-2);
     height: 52px;
     padding: 0 var(--space-3);
+    /* 吸顶栏：半透明 + 模糊（支持时再加液态折射，见 style.css 的 .liquid），底边一道亮边 */
     background: var(--color-topbar-bg);
     backdrop-filter: var(--glass-blur);
     -webkit-backdrop-filter: var(--glass-blur);
     border-bottom: 1px solid var(--color-border);
+    box-shadow: inset 0 1px 0 var(--color-highlight), 0 1px 0 var(--color-glass-rim);
   }
 
   /* 抽屉叠在变暗的页面上，用不透明底色，弱提示文字才清楚 */
@@ -440,8 +456,8 @@ const handleLogout = async () => {
     inset: 0;
     z-index: 150;
     background: var(--color-overlay);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: var(--overlay-blur);
+    -webkit-backdrop-filter: var(--overlay-blur);
     animation: fade-in var(--duration) var(--ease);
   }
 }

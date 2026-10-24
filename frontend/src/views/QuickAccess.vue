@@ -169,7 +169,7 @@ const handleDownload = async (file) => {
 
 <template>
   <div class="quick">
-    <header class="quick-header">
+    <header class="quick-header liquid">
       <BrandMark :size="24" />
       <span class="header-right">
         <ThemeToggle />
@@ -310,7 +310,7 @@ const handleDownload = async (file) => {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  /* 半透明浅灰：页面光晕从下面透出来 */
+  /* 半透明浅灰：页面光斑从下面透出来 */
   background: var(--color-glass-subtle);
 }
 
@@ -324,11 +324,12 @@ const handleDownload = async (file) => {
   gap: var(--space-3);
   height: 60px;
   padding: 0 var(--space-6);
-  /* 吸顶栏：半透明 + 模糊，往下滚时内容从顶栏下面隐约透出 */
+  /* 吸顶栏：半透明 + 模糊，往下滚时内容从顶栏下面隐约透出；支持时再加液态折射（style.css 的 .liquid） */
   background: var(--color-topbar-bg);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border-bottom: 1px solid var(--color-border);
+  box-shadow: inset 0 1px 0 var(--color-highlight), 0 1px 0 var(--color-glass-rim);
 }
 
 .header-right {

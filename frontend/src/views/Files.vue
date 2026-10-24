@@ -254,8 +254,9 @@ const formatDate = (value) => formatDateTime(value)
   margin-bottom: var(--space-6);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  background: var(--color-glass);
-  box-shadow: inset 0 1px 0 var(--color-highlight), var(--shadow-xs);
+  background-color: var(--color-glass);
+  background-image: var(--glass-sheen);
+  box-shadow: var(--glass-shadow), var(--shadow-xs);
 }
 
 .stat {

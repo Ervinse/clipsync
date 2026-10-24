@@ -36,7 +36,8 @@ const OPTIONS = [
   padding: 2px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-bg-subtle);
+  background: var(--color-glass-subtle);
+  box-shadow: inset 0 1px 2px var(--color-lowlight);
 }
 
 .theme-option {
@@ -47,15 +48,19 @@ const OPTIONS = [
   height: 24px;
   border-radius: var(--radius-sm);
   color: var(--color-text-tertiary);
-  transition: background-color var(--duration) var(--ease), color var(--duration) var(--ease);
+  transition: background-color var(--duration) var(--ease), color var(--duration) var(--ease),
+    box-shadow var(--duration) var(--ease);
 }
 
 .theme-option:hover {
   color: var(--color-text);
 }
 
+/* 当前档是凹槽里的一颗小玻璃块 */
 .theme-option.active {
-  background: var(--color-bg-emphasis);
+  background-color: var(--color-glass-pill);
+  background-image: var(--glass-sheen);
+  box-shadow: var(--glass-shadow), var(--shadow-xs);
   color: var(--color-text);
 }
 </style>

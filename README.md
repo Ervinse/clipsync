@@ -611,6 +611,7 @@ CodeProject/
     │   │   │   ├── textDrafts.js   # 多段文本的编辑草稿（文本页与快速访问页共用）
     │   │   │   ├── accessCode.js   # 访问码规则与过期判断
     │   │   │   ├── theme.js        # 主题（跟随系统 / 浅色 / 深色，记在本浏览器）
+    │   │   │   ├── glass.js        # 玻璃质感（液态折射的启用判断、悬停高光跟随鼠标）
     │   │   │   └── download.js     # Blob 交给浏览器保存
     │   │   ├── components/       # AuthLayout / BrandMark / ThemeToggle / ToastHost / DialogHost / TextEditorCard / AccessCodeButton / AccessCodeDialog / LoadingSkeleton
     │   │   └── views/
