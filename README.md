@@ -105,6 +105,8 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | 读取全局系统设置 | ✗ | ✓ | ✓ |
 | 查看全站文件的**元数据** | ✗ | ✓ | ✓ |
 | 修改全局系统设置 | ✗ | ✓ | ✓ |
+| 查看系统信息（运行的版本、启动时间、部署记录） | ✗ | ✓ | ✓ |
+| 修改部署记录的备注 | ✗ | ✗ | ✓ |
 | 修改普通用户的存储配额、启用/禁用普通用户 | ✗ | ✓ | ✓ |
 | 修改管理员的存储配额、启用/禁用管理员 | ✗ | ✗ | ✓ |
 | 把普通用户设为管理员 / 取消管理员 | ✗ | ✗ | ✓ |
@@ -254,6 +256,20 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 目前使用三个 key：`registration_enabled`（`true`/`false`，缺省视为开放）、`show_github_link`（`true`/`false`，缺省视为显示；库里是其他值按关闭处理）与 `default_quota_bytes`（缺省、无法解析、为负数或超过 1TB 时回落 `.env` 的 `DEFAULT_QUOTA_BYTES`）。
 
+### 5.10 deployments — 部署记录
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | BIGINT PK | 自增 |
+| app_version | VARCHAR(128) | 运行的版本号：Docker 部署取 `.env` 的 `CLIPSYNC_TAG`（正式版本号、提交号或 `latest`），开发环境为空 |
+| commit_sha | VARCHAR(40) | 镜像构建自哪个提交（12 位），开发环境为空 |
+| branch | VARCHAR(255) | 打包时的分支，开发环境为空 |
+| built_at | DATETIME NULL | 镜像构建时间，开发环境为空 |
+| deployed_at | DATETIME | 这个版本第一次启动的时间 |
+| note | VARCHAR(200) | 部署备注，超管在后台填写，默认空 |
+
+后端启动时由 `core/deploy_info.py` 登记：运行的版本与最近一条记录相比，版本号、提交号、分支、构建时间任一不同就新增一条（升级、回滚到旧版本、同一镜像从提交号改成版本号部署都算），完全相同（重启）不新增。登记失败只记日志，不影响启动。提交号、分支、构建时间来自镜像里的 `/app/BUILD_INFO`（`build-release.ps1` 打包时生成，见第 14 节）；版本号不写进镜像，因为正式版本晋级不重新构建。
+
 > **外键无级联**：所有外键都没有 `ON DELETE CASCADE`。删除用户时由 `DELETE /api/admin/users/{id}` 按依赖顺序显式删除上传会话、文件、文本栏目、历史、当前文本（访问码挂在这些内容上，随之删除），处理其创建/使用过的邀请码，再删用户与磁盘目录。邀请码规则：该用户**使用过**的码保留记录、`used_by` 置空（`used_at` 保留，码仍不可复用）；该用户**创建的未使用**码直接删除；该用户创建的**已使用**码保留作审计，`created_by` 转记到执行删除的超管名下（`created_by` 为 NOT NULL，不改模型）。该用户创建的批次：码被删光的批次删除，还剩已使用码的批次同样转记到执行删除的超管名下，备注保留。删除前锁住被删用户行，与 `upload/init` 串行化，避免新建会话的 tmp 目录成为孤儿；磁盘清理失败只记日志，由定时清理的孤儿扫描兜底。
 
 > **时间约定**：所有 DATETIME 列存 naive UTC；数据库会话时区固定 `+00:00`，代码统一用 `utcnow()`。
@@ -349,8 +365,10 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | GET | /api/admin/files | admin+ | 全站文件**元数据**，分页（无下载入口） |
 | GET | /api/admin/settings | admin+ | 读取系统设置 `{default_quota_bytes, registration_enabled, show_github_link}` |
 | PATCH | /api/admin/settings | admin+ | 修改上述设置，字段都可选，只改传入的（默认配额 0 到 1TB） |
+| GET | /api/admin/deploy-info | admin+ | 系统信息：运行中的 `app_version, commit_sha, branch, built_at`，本次启动时间 `started_at` 与已运行秒数 `uptime_seconds`，对应的部署记录 `current`（没登记上时为 null），最近 50 条部署记录 `history`（按时间倒序）与总数 `total` |
+| PATCH | /api/admin/deployments/{id} | **superadmin** | 修改部署备注 `{note}`（去首尾空格，最多 200 字，超出 422；空字符串为清除）；记录不存在 404；返回该记录 |
 
-用户不存在时，上面带 `{id}` 的接口返回 404。
+用户不存在时，上面带用户 `{id}` 的接口返回 404。
 
 **未实现**：直接创建用户、重置密码、全站访问码管理。
 
@@ -453,7 +471,7 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 
 面向 admin / superadmin 的前端区域：`/admin` 路由，单个页面 `views/Admin.vue`，路由守卫校验 role。
 
-### 页面结构（5 个 tab）
+### 页面结构（6 个 tab）
 
 ```
 /admin
@@ -468,7 +486,9 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 │             #   搜索（备注、生成人、邀请码，邀请码不分大小写、可不带短横线，命中的批次自动展开并高亮该码）
 │             #   与状态筛选（全部 / 有可用的 / 有已过期的 / 已用完，按批次判断），都在前端完成
 ├── 文件      # 全站文件【元数据】分页列表（admin 与 superadmin 均可见）；超管每行有下载按钮（带进度，与文件页共用下载逻辑）
-└── 设置      # 开放注册、显示 GitHub 链接、新用户默认配额：admin 与 superadmin 均可保存
+├── 设置      # 开放注册、显示 GitHub 链接、新用户默认配额：admin 与 superadmin 均可保存
+└── 系统信息  # 版本、提交号、分支、构建时间、部署时间、本次启动时间、已运行时长（页面上每 30 秒更新）；
+              #   部署记录列表（版本、提交号、部署时间、备注，当前运行的标「当前」）：admin 只能看，超管每行可改备注
 ```
 
 **未实现**：全站访问码管理。
@@ -603,7 +623,7 @@ CodeProject/
     │   │   ├── config.py         # 读取 .env，校验 JWT_SECRET 强度与 JWT_ALGORITHM
     │   │   ├── database.py       # 异步 engine / session 工厂（会话时区 UTC）
     │   │   ├── rate_limit.py     # slowapi 限流器
-    │   │   ├── models/           # user / invite / clipboard / text / file / setting
+    │   │   ├── models/           # user / invite / clipboard / text / file / setting / deployment
     │   │   ├── schemas/          # Pydantic 请求/响应模型
     │   │   ├── core/
     │   │   │   ├── security.py     # 密码哈希 + JWT
@@ -614,12 +634,13 @@ CodeProject/
     │   │   │   ├── storage.py      # 磁盘路径（UUID 校验 + 根目录约束）
     │   │   │   ├── http_utils.py   # 文件名清洗 + Content-Disposition
     │   │   │   ├── app_settings.py # 读 settings 表
+    │   │   │   ├── deploy_info.py  # 读 BUILD_INFO 与运行的版本号、启动时登记部署记录
     │   │   │   └── timeutil.py     # UTC 时间工具
     │   │   └── api/              # auth / clipboard / texts / files / access / admin / ws
     │   ├── alembic/
     │   │   ├── env.py            # 迁移入口：连接串取自 app/config.py
     │   │   ├── script.py.mako    # 新迁移文件的模板
-    │   │   └── versions/         # 278c88a5f21f 初始表结构；3f1c2a9d7b4e 文本改 MEDIUMTEXT；7c2d4e6f8a1b 访问码挂到内容上、新增 texts；9e3b5d7f1a2c 邀请码批次（已有的码按创建人 + 创建时间归批）
+    │   │   └── versions/         # 278c88a5f21f 初始表结构；3f1c2a9d7b4e 文本改 MEDIUMTEXT；7c2d4e6f8a1b 访问码挂到内容上、新增 texts；9e3b5d7f1a2c 邀请码批次（已有的码按创建人 + 创建时间归批）；b4d8f2a6c1e3 部署记录表
     │   ├── alembic.ini
     │   ├── scripts/              # create_superadmin.py / cleanup_expired.py（定时清理，由宿主机 cron 经 docker compose exec 调用）
     │   ├── tests/                # pytest 用例：安全边界、并发、实时推送、上传下载等（使用独立库 clipsync_test）
@@ -628,6 +649,7 @@ CodeProject/
     │   ├── requirements-dev.txt  # 运行依赖 + pytest、httpx 测试依赖
     │   ├── .env.example
     │   ├── .dockerignore         # 构建镜像时排除 .env、虚拟环境、测试与上传数据
+    │   ├── BUILD_INFO            # 只在打包时由 build-release.ps1 生成并进镜像（提交号、分支、构建时间），仓库里没有（已 gitignore）
     │   └── storage/              # 上传文件落盘（STORAGE_DIR 默认 ./storage，相对启动后端时的当前目录，按文档在 backend/ 下启动；已 gitignore）
     │       ├── <user_id>/<uuid>
     │       └── tmp/<upload_id>/<chunk_index>
@@ -706,6 +728,7 @@ CodeProject/
 - **真实客户端 IP**：compose 使用固定子网 `172.28.0.0/16`，uvicorn 只信任这个网段发来的 `X-Forwarded-For`；Nginx 用 `$remote_addr` 覆盖该头，客户端自带的值一律丢弃。
 - **镜像来源**：默认在开发机用 `build-release.ps1` 构建并打包，服务器 `docker load` 导入后启动，不需要联网下载；网络通畅的服务器也可叠加 `docker-compose.build.yml` 从源码构建。backend、frontend 设 `pull_policy: never`，不会从镜像仓库拉取同名镜像。
 - **版本标签**：镜像带 git 提交号标签；只有 master 上的提交额外标 `latest`。测试通过的构建由 `publish-release.ps1` 追加版本号标签（如 `1.0.0-alpha.1`）生成发布包，镜像不重新构建。服务器按 `.env` 的 `CLIPSYNC_TAG` 选用镜像。
+- **版本信息**：`build-release.ps1` 把提交号、分支、构建时间写成后端镜像里的 `/app/BUILD_INFO`；compose 把 `CLIPSYNC_TAG` 作为 `APP_VERSION` 传给 backend。后台「系统信息」显示这两部分，后端启动时据此登记部署记录（第 5.10 节）。服务器源码构建（`docker-compose.build.yml`）不生成 `BUILD_INFO`，提交号、分支、构建时间显示为空。
 - **定时任务**：宿主机 cron 每小时经 `docker compose exec` 执行 `scripts.cleanup_expired`，每天执行 `backup.sh` 备份数据库与上传文件、执行 `cert.sh renew` 检查证书续期（模板 `clipsync.cron`）。
 
 ### Nginx 关注点（`nginx-docker.conf` / `nginx-https.conf`，公共部分在 `nginx-common.conf`）
@@ -731,7 +754,7 @@ CodeProject/
 | 文本栏目 | 多段文本新建 / 编辑 / 删除（冲突检测，长文本按需载入）、WebSocket 广播 | 文本历史版本 |
 | 文件 | 分片上传（配额校验、取消）、流式下载、删除、越权与路径穿越防护 | 前端断点续传 |
 | 快速访问码 | 自定访问码设置 / 修改 / 清除、按访问码总览、「用户名@访问码」免登录进入（改文本 / 下载文件）、实时刷新、输错锁定与限流 | — |
-| 管理后台 | 概览统计、用户管理（配额 / 启用禁用 / 删除 / 任免管理员）、超管只读查看用户文本、全站文件元数据与超管下载、邀请码、系统设置 | 全站访问码管理 |
+| 管理后台 | 概览统计、用户管理（配额 / 启用禁用 / 删除 / 任免管理员）、超管只读查看用户文本、全站文件元数据与超管下载、邀请码、系统设置、系统信息（运行的版本、运行时长、部署记录与备注） | 全站访问码管理 |
 | 前端 | 登录 / 注册（含快速访问入口）、云剪切板、文本、文件、访问码、管理后台、快速访问页、路由守卫、WebSocket 接入、浅色 / 深色主题 | 自动化测试 |
 | 部署 | Docker Compose（开发机构建离线导入 / 服务器源码构建）、HTTP / HTTPS Nginx 配置、Let's Encrypt 证书申请与续期、备份 / 清理 / 健康检查脚本 | 不使用 Docker 的直接部署（不支持） |
 
@@ -825,7 +848,7 @@ pytest tests/test_auth.py::test_name    # 单个
 
 ## 17. 配置项（backend/.env）
 
-默认值以 `backend/app/config.py` 为准。本节是后端读取的变量：开发环境写在 `backend/.env`；Docker 部署写在部署目录的 `.env`（模板 `deployment/docker/.env.example`），由 compose 传给 backend 容器，其中 `DB_HOST`、`DB_PORT`、`STORAGE_DIR` 由 compose 固定，另有 `CLIPSYNC_TAG`、`HTTP_PORT`、`DB_HOST_PORT`、`DB_ROOT_PASSWORD`、`COMPOSE_FILE` 等部署专用变量（见 [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md)「配置说明」）。
+默认值以 `backend/app/config.py` 为准。本节是后端读取的变量：开发环境写在 `backend/.env`；Docker 部署写在部署目录的 `.env`（模板 `deployment/docker/.env.example`），由 compose 传给 backend 容器，其中 `DB_HOST`、`DB_PORT`、`STORAGE_DIR` 由 compose 固定、`APP_VERSION` 由 compose 取 `CLIPSYNC_TAG`，另有 `CLIPSYNC_TAG`、`HTTP_PORT`、`DB_HOST_PORT`、`DB_ROOT_PASSWORD`、`COMPOSE_FILE` 等部署专用变量（见 [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md)「配置说明」）。
 
 | 变量 | 说明 | 代码默认值 |
 |------|------|------|
@@ -843,6 +866,7 @@ pytest tests/test_auth.py::test_name    # 单个
 | `MAX_UPLOAD_SESSIONS_PER_USER` | 单用户同时进行的上传会话上限 | 5 |
 | `HISTORY_KEEP` | 每用户保留的云剪切板历史条数 | 50 |
 | `UPLOAD_SESSION_TTL_HOURS` | 未完成上传会话的过期时间 | 24 |
+| `APP_VERSION` | 后台「系统信息」显示的版本号；Docker 部署由 compose 设为 `CLIPSYNC_TAG`，不在 `.env` 里单独填；开发环境不用设置，显示「开发版本」 | 空 |
 
 数据库中的系统设置只有三项：**是否开放注册**、**是否显示 GitHub 链接**、**新用户默认配额**，其中配额在 `.env` 里有对应的默认值，其余两项没有；数据库里有值时优先于 `.env`，在管理后台「设置」页修改（见第 9 节）。其余各项只能改 `.env` 并重启后端。
 

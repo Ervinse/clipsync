@@ -89,6 +89,8 @@ grep CLIPSYNC_TAG .env              # .env 里的值；没有这一行时按 lat
 docker images clipsync-backend      # 已导入的镜像和标签，IMAGE ID 相同的几行是同一个镜像
 bash health_check.sh                # 「== 版本」一段显示部署包的 VERSION、.env 的 CLIPSYNC_TAG、正在运行的后端镜像提交号
 ```
+
+不登录服务器时，在网页管理后台的「系统信息」页也能看到：版本（即 `CLIPSYNC_TAG`）、提交号、分支、构建时间、部署时间、已运行时长，以及历次部署的记录。后端每次以新版本启动（包括回滚）时自动记一条，重启不记；超级管理员可以给每条记录写备注，例如这次部署修复了什么。提交号、分支和构建时间由 `build-release.ps1` 打包时写进镜像；用方式 B 在服务器上从源码构建时没有这三项，页面上显示为空。
 ## 3. 环境要求
 
 **服务器**
@@ -230,7 +232,7 @@ vi .env          # 至少修改 CORS_ORIGINS
 
 | 变量 | 说明 | 默认 |
 |------|------|------|
-| `CLIPSYNC_TAG` | 使用哪个版本的镜像：`latest`、提交号或正式版本号（第 2 节） | `latest`（正式版本发布包里的模板预填版本号） |
+| `CLIPSYNC_TAG` | 使用哪个版本的镜像：`latest`、提交号或正式版本号（第 2 节）；同时作为管理后台「系统信息」显示的版本 | `latest`（正式版本发布包里的模板预填版本号） |
 | `HTTP_PORT` | 网站端口。启用 HTTPS 时必须是 80 | `80` |
 | `DB_HOST_PORT` | 数据库在宿主机 `127.0.0.1` 上的端口，3306 被占用时修改 | `3306` |
 | `COMPOSE_FILE` | 启用 HTTPS 时设为 `docker-compose.yml:docker-compose.https.yml`（第 9 节） | 不设置 |

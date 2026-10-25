@@ -95,6 +95,7 @@
   2. 镜像 label `org.opencontainers.image.revision=<commit>`（`health_check.sh` 据此显示运行中的提交）
   3. 部署包内 `VERSION` 文件，含 `commit=` / `branch=` / `latest=` / `built=` 四个字段
   4. 两个产物的文件名：`clipsync-images-<commit>[-app].tar.gz`、`clipsync-deploy-<commit>.tar.gz`
+  5. 后端镜像里的 `/app/BUILD_INFO`（`commit=` / `branch=` / `built=`，built 为 UTC），后台「系统信息」据此显示；版本号不写进镜像，由 compose 把 `CLIPSYNC_TAG` 作为 `APP_VERSION` 传入
 - 打包只取**已提交**的代码（`git archive`），工作区未提交的改动不进镜像；打包的不是 master 最新提交，或打包的是 `HEAD`（`-Ref` 的默认值）而工作区不干净时，脚本要求确认（`-Yes` 跳过确认）。
 
 ## 正式版本晋级（publish-release.ps1）
