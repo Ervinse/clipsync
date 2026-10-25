@@ -49,7 +49,7 @@ const FEATURES = [
 </template>
 
 <style scoped>
-/* 不设底色：body 的底色和光晕层（style.css 的 body::before）从这里透出来 */
+/* 不设底色：页面底色和光斑层（style.css 的 body::before）从这里透出来 */
 .auth {
   display: grid;
   grid-template-columns: minmax(420px, 1fr) minmax(0, 1.1fr);

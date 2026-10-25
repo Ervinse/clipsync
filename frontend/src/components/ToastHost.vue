@@ -13,7 +13,7 @@ const ICONS = { success: CircleCheck, error: CircleAlert, info: Info }
       <div
         v-for="item in toastState.items"
         :key="item.id"
-        class="toast"
+        class="toast liquid"
         :class="item.type"
         :role="item.type === 'error' ? 'alert' : 'status'"
       >
@@ -50,11 +50,12 @@ const ICONS = { success: CircleCheck, error: CircleAlert, info: Info }
   color: var(--color-toast-text);
   font-size: var(--text-sm);
   line-height: 1.5;
-  box-shadow: inset 0 1px 0 var(--color-toast-highlight), var(--shadow-lg);
+  box-shadow: inset 0 1px 0 var(--color-toast-highlight), inset 0 -1px 0 rgba(0, 0, 0, 0.25), var(--shadow-lg);
   word-break: break-word;
 }
 
-/* 支持模糊的浏览器：半透明深色底 + 模糊背后的页面；不支持时保持上面的不透明底，文字不会看不清 */
+/* 支持模糊的浏览器：半透明深色底 + 模糊背后的页面；不支持时保持上面的不透明底，文字不会看不清。
+   支持液态折射时由 style.css 的 .liquid 换成折射滤镜 */
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .toast {
     background: var(--color-toast-glass);

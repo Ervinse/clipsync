@@ -5,9 +5,21 @@
  * 页面只引用这里的变量和类，不在页面里写死颜色值；页面自己的 <style scoped> 只放该页特有的布局。
  * 颜色变量分浅色（:root）与深色（:root[data-theme='dark']）两套，data-theme 由 utils/theme.js 设置；
  * 新增颜色变量时两套都要写。
- * 质感层：body::before 铺一层很淡的强调色光晕；卡片、侧栏用半透明底色（--color-glass*）透出光晕，
- * 叠在内容上的东西（弹窗遮罩、弹窗、提示条、吸顶栏）用 backdrop-filter 模糊背后的内容。
- * 半透明底色与原底色同色，只降不透明度，文字对比度按叠上光晕后的颜色核算过，调高光晕或透明度前要重新核算。
+ * 质感层（玻璃）：
+ * 浅色、深色两套参数不同，浅色的登录 / 注册页与登录后的页面也不同：
+ *   - 浅色登录后：不铺光斑（纯白底），玻璃更透（0.4），光泽与亮边加倍，卡片、表格、侧栏模糊 24px，折射扭曲明显
+ *   - 浅色登录 / 注册页：同上，另外铺光斑（四角 + 中部，边缘收紧到 50%）
+ *   - 深色：各页都铺光斑（四角 + 中部），玻璃 0.62，光泽与亮边正常，卡片等不模糊、只加轻度折射
+ * - 背景：body::before 铺几团同色系（靛蓝）的光斑，缓慢漂移，给半透明的玻璃提供可透的颜色。
+ * - 玻璃面：卡片、表格、侧栏、弹窗、次要按钮用半透明底色（--color-glass*）+ 斜向光泽（--glass-sheen）
+ *   + 边缘高光（--glass-shadow：上沿亮边、下沿暗边、内圈亮边），显出玻璃的厚度；
+ *   卡片、表格、侧栏另有背景模糊 / 折射（--surface-filter）。
+ * - 模糊：叠在内容上的东西（弹窗遮罩、提示条、吸顶栏）用 backdrop-filter 模糊背后的内容。
+ * - 液态折射：提示条和吸顶栏带 .liquid，卡片、表格、侧栏也一样，在 Chromium 内核浏览器上叠一层 SVG 折射滤镜
+ *   （App.vue 的 #cs-liquid-light / #cs-liquid-dark），背后的内容像隔着有起伏的玻璃；
+ *   是否启用由 utils/glass.js 判断，其他浏览器只有模糊。
+ * - 系统开了「降低透明度」时玻璃一律换成不透明底色、不模糊、无光斑；开了「减少动态效果」时光斑不漂移。
+ * 文字对比度按光斑最浓处、叠上玻璃底色与光泽后的颜色核算过（弱提示文字仍有 4.5:1），调高光斑或透明度前要重新核算。
  * 不要在这里给 #app 定宽、居中，也不要改全局 h1/h2 字号，会覆盖各页面自己的布局。
  */
 
@@ -28,7 +40,7 @@
   /* 文字：主文字 / 次要说明 / 弱提示 */
   --color-text: #17171a;
   --color-text-secondary: #5d5d67;
-  --color-text-tertiary: #71717a;
+  --color-text-tertiary: #6b6b74;
   --color-text-inverse: #ffffff;
 
   /* 主按钮用近黑色；强调色（靛蓝）只用于链接、焦点框、进度条、开关等交互标记。
@@ -55,23 +67,35 @@
   /* 弹窗背后的遮罩 */
   --color-overlay: rgba(16, 16, 20, 0.4);
 
-  /* 窄屏顶栏、快速访问页顶栏的半透明底 */
-  --color-topbar-bg: rgba(255, 255, 255, 0.9);
+  /* 窄屏顶栏、快速访问页顶栏的半透明底。背后滚过深色按钮时次要文字仍有 4.5:1，不要再调低 */
+  --color-topbar-bg: rgba(255, 255, 255, 0.86);
+  /* 次要按钮悬停时的玻璃底与跟着鼠标走的柔光 */
+  --color-glass-hover: rgba(244, 244, 246, 0.92);
+  --color-glass-glow: rgba(255, 255, 255, 0.9);
+  /* 弹窗遮罩、窄屏抽屉遮罩模糊背后页面的强度 */
+  --overlay-blur: blur(8px);
 
-  /* 毛玻璃底色：与 --color-bg / --color-bg-subtle 同色，只降不透明度。
+  /* 玻璃底色：与 --color-bg / --color-bg-subtle 同色，只降不透明度。
      弹窗叠在变暗的页面上，不透明度保持在 0.94 以上，弱提示文字才满足 4.5:1；
      弹窗底栏、窄屏抽屉侧栏也叠在变暗的页面上，半透明会不达标，仍用不透明的 --color-bg-subtle */
-  --color-glass: rgba(255, 255, 255, 0.72);
-  --color-glass-subtle: rgba(249, 249, 250, 0.82);
+  --color-glass: rgba(255, 255, 255, 0.4);
+  --color-glass-subtle: rgba(249, 249, 250, 0.44);
   --color-glass-modal: rgba(255, 255, 255, 0.94);
+  /* 侧栏当前菜单项、主题开关当前档的玻璃块 */
+  --color-glass-pill: rgba(255, 255, 255, 0.86);
 
-  /* 卡片、弹窗顶边 1px 的高光（玻璃边缘反光） */
-  --color-highlight: rgba(255, 255, 255, 0.7);
+  /* 玻璃边缘：上沿亮边（--color-highlight）、下沿暗边（--color-lowlight）、贴着边框内侧的一圈亮边（--color-glass-rim） */
+  --color-highlight: rgba(255, 255, 255, 1);
+  --color-lowlight: rgba(16, 16, 20, 0.1);
+  --color-glass-rim: rgba(255, 255, 255, 0.8);
+  --glass-shadow: inset 0 1px 0 var(--color-highlight), inset 0 -1px 0 var(--color-lowlight),
+    inset 0 0 0 1px var(--color-glass-rim);
+  /* 玻璃表面从左上角斜向淡出的光泽，叠在底色上面 */
+  --glass-sheen: linear-gradient(135deg, rgba(255, 255, 255, 1), rgba(255, 255, 255, 0.24) 35%, rgba(255, 255, 255, 0) 60%);
 
-  /* 页面背后的光晕：强调色靛蓝降到很低的不透明度，左上角与右下角各一团。
-     最浓处弱提示文字（--color-text-tertiary）仍有 4.5:1，不要再调高 */
-  --page-glow: radial-gradient(900px 600px at 0% 0%, rgba(62, 99, 221, 0.045), transparent 70%),
-    radial-gradient(800px 600px at 100% 100%, rgba(62, 99, 221, 0.035), transparent 70%);
+  /* 页面背后的光斑：浅色主题下登录后的页面不铺光斑（纯白底，质感靠玻璃的光泽、亮边与模糊），
+     登录 / 注册页另有一套（见下方「浅色登录 / 注册页」） */
+  --page-glow: none;
 
   /* 主按钮表面的光泽与顶边高光，按钮颜色本身不变 */
   --btn-primary-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 60%);
@@ -129,9 +153,13 @@
   --shadow-lg: 0 16px 40px -12px rgba(16, 16, 20, 0.22), 0 4px 12px -4px rgba(16, 16, 20, 0.08);
   --duration: 150ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
+  /* 带一点回弹的缓动：按钮松开、菜单选中块滑动时略微越过终点再回来，像有弹性的液体 */
+  --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
 
-  /* 毛玻璃的模糊强度（不随主题变） */
-  --glass-blur: blur(20px) saturate(160%);
+  /* 提示条、吸顶栏的毛玻璃模糊强度（不随主题变）；支持折射时换成 --liquid-filter，见「液态玻璃」 */
+  --glass-blur: blur(20px) saturate(170%);
+  /* 卡片、表格、侧栏的背景模糊（浅色主题）；深色主题在下方覆盖为不模糊 */
+  --surface-filter: blur(24px) saturate(170%);
 
   /* 控件高度与布局尺寸 */
   --control-height-sm: 30px;
@@ -155,7 +183,7 @@
 
   --color-text: #ededef;
   --color-text-secondary: #a8a8b2;
-  --color-text-tertiary: #8b8b95;
+  --color-text-tertiary: #93939d;
   --color-text-inverse: #17171a;
 
   /* 主按钮在深色下反过来用近白色 */
@@ -178,15 +206,30 @@
   --color-danger-border: #5c2630;
 
   --color-overlay: rgba(0, 0, 0, 0.6);
-  --color-topbar-bg: rgba(17, 17, 19, 0.85);
+  --color-topbar-bg: rgba(17, 17, 19, 0.82);
+  --color-glass-hover: rgba(255, 255, 255, 0.14);
+  --color-glass-glow: rgba(255, 255, 255, 0.1);
 
-  --color-glass: rgba(17, 17, 19, 0.72);
-  --color-glass-subtle: rgba(24, 24, 27, 0.82);
+  --color-glass: rgba(17, 17, 19, 0.62);
+  --color-glass-subtle: rgba(24, 24, 27, 0.66);
   --color-glass-modal: rgba(17, 17, 19, 0.92);
-  --color-highlight: rgba(255, 255, 255, 0.06);
+  --color-glass-pill: rgba(255, 255, 255, 0.09);
 
-  --page-glow: radial-gradient(900px 600px at 0% 0%, rgba(123, 147, 240, 0.1), transparent 70%),
-    radial-gradient(800px 600px at 100% 100%, rgba(123, 147, 240, 0.06), transparent 70%);
+  --color-highlight: rgba(255, 255, 255, 0.09);
+  --color-lowlight: rgba(0, 0, 0, 0.3);
+  --color-glass-rim: rgba(255, 255, 255, 0.03);
+  --glass-sheen: linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 45%);
+
+  /* 深色主题各页面都铺光斑：同一色系（靛蓝及相邻的蓝、紫蓝）四角各一团，中部一团透到卡片背后，尺寸随窗口缩放。
+     最浓处弱提示文字（--color-text-tertiary）、强调色与状态色仍有 4.5:1，不要再调高 */
+  --page-glow: radial-gradient(42vmax 34vmax at 6% 8%, rgba(123, 147, 240, 0.15), transparent 70%),
+    radial-gradient(38vmax 32vmax at 94% 92%, rgba(129, 140, 248, 0.11), transparent 70%),
+    radial-gradient(30vmax 26vmax at 82% 14%, rgba(96, 165, 250, 0.09), transparent 70%),
+    radial-gradient(28vmax 24vmax at 18% 88%, rgba(139, 135, 245, 0.08), transparent 70%),
+    radial-gradient(30vmax 24vmax at 58% 46%, rgba(123, 147, 240, 0.1), transparent 70%);
+
+  /* 深色主题的卡片、表格、侧栏不模糊；支持折射时只加折射，见「液态玻璃」 */
+  --surface-filter: none;
 
   /* 深色下主按钮是近白色，光泽用更亮的白，顶边高光更明显 */
   --btn-primary-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 60%);
@@ -205,6 +248,16 @@
   --shadow-lg: 0 16px 40px -12px rgba(0, 0, 0, 0.7), 0 4px 12px -4px rgba(0, 0, 0, 0.4);
 }
 
+/* 浅色登录 / 注册页（AuthLayout.vue 的 .auth 在页面上时）：铺光斑，四角各一团、中部一团，边缘比深色收得更紧（50%）。
+   最浓处弱提示文字、强调色与状态色仍有 4.5:1，不要再调高。不支持 :has() 的浏览器在登录页也是纯白底 */
+:root:not([data-theme='dark']):has(.auth) {
+  --page-glow: radial-gradient(42vmax 34vmax at 6% 8%, rgba(62, 99, 221, 0.09), transparent 50%),
+    radial-gradient(38vmax 32vmax at 94% 92%, rgba(79, 70, 229, 0.07), transparent 50%),
+    radial-gradient(30vmax 26vmax at 82% 14%, rgba(59, 130, 246, 0.06), transparent 50%),
+    radial-gradient(28vmax 24vmax at 18% 88%, rgba(99, 102, 241, 0.05), transparent 50%),
+    radial-gradient(30vmax 24vmax at 58% 46%, rgba(62, 99, 221, 0.06), transparent 50%);
+}
+
 /* ---------- 基础重置 ---------- */
 *,
 *::before,
@@ -214,8 +267,11 @@
   box-sizing: border-box;
 }
 
+/* 底色放在 html 上、body 不设底色：body 有底色而 html 也有（index.html 深色时先给 html 设了底色）时，
+   body 的底色会盖住下面 z-index: -1 的光斑层 */
 html {
   -webkit-text-size-adjust: 100%;
+  background: var(--color-bg);
 }
 
 body {
@@ -224,17 +280,17 @@ body {
   font-size: var(--text-base);
   line-height: 1.5;
   color: var(--color-text);
-  background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: 'cv11';
 }
 
-/* 光晕层固定在窗口上，不随页面滚动；z-index: -1 让它画在底色之上、所有内容之下 */
+/* 光斑层固定在窗口上，不随页面滚动；z-index: -1 让它画在底色之上、所有内容之下。
+   比窗口四周各大出 8%，缓慢漂移时边缘不会露出来（漂移见文件末尾的动效部分） */
 body::before {
   content: '';
   position: fixed;
-  inset: 0;
+  inset: -8%;
   z-index: -1;
   background: var(--page-glow);
   pointer-events: none;
@@ -309,7 +365,7 @@ a:hover {
   white-space: nowrap;
   user-select: none;
   transition: background-color var(--duration) var(--ease), border-color var(--duration) var(--ease),
-    color var(--duration) var(--ease), box-shadow var(--duration) var(--ease), transform var(--duration) var(--ease);
+    color var(--duration) var(--ease), box-shadow var(--duration) var(--ease), transform 280ms var(--ease-spring);
 }
 
 .btn svg {
@@ -321,28 +377,45 @@ a:hover {
   cursor: not-allowed;
 }
 
-/* 主按钮：底色不变，表面叠一层从上到下的淡光泽，顶边一条高光 */
+/* 主按钮：底色不变，表面叠一层从上到下的淡光泽，顶边一条高光、底边一条暗边 */
 .btn-primary {
   background-color: var(--color-primary);
   background-image: var(--btn-primary-sheen);
   color: var(--color-text-inverse);
-  box-shadow: inset 0 1px 0 var(--color-primary-highlight), var(--shadow-xs);
+  box-shadow: inset 0 1px 0 var(--color-primary-highlight), inset 0 -1px 0 rgba(0, 0, 0, 0.18), var(--shadow-xs);
 }
 
 .btn-primary:hover:not(:disabled) {
   background-color: var(--color-primary-hover);
 }
 
+/* 次要按钮是一块小玻璃：半透明底 + 光泽 + 边缘高光 */
 .btn-secondary {
-  background: var(--color-bg);
+  background-color: var(--color-glass-pill);
+  background-image: var(--glass-sheen);
   color: var(--color-text);
   border-color: var(--color-border-strong);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--glass-shadow), var(--shadow-xs);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: var(--color-bg-subtle);
+  background-color: var(--color-glass-hover);
   border-color: var(--color-border-hover);
+}
+
+/* 悬停高光：有鼠标的设备上，按钮和可悬停卡片表面有一团跟着鼠标走的柔光。
+   --mx / --my 由 utils/glass.js 按鼠标位置写到元素上，没写时在正中 */
+@media (hover: hover) {
+  .btn-primary:hover:not(:disabled) {
+    background-image: radial-gradient(90px circle at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, 0.16), transparent 70%),
+      var(--btn-primary-sheen);
+  }
+
+  .btn-secondary:hover:not(:disabled),
+  .btn-danger-outline:hover:not(:disabled) {
+    background-image: radial-gradient(90px circle at var(--mx, 50%) var(--my, 50%), var(--color-glass-glow), transparent 70%),
+      var(--glass-sheen);
+  }
 }
 
 .btn-ghost {
@@ -364,16 +437,17 @@ a:hover {
   background: var(--color-danger-hover);
 }
 
-/* 次要的危险操作：底色同页面、红字，悬停时浅红底 */
+/* 次要的危险操作：与次要按钮同样的玻璃底、红字，悬停时浅红底 */
 .btn-danger-outline {
-  background: var(--color-bg);
+  background-color: var(--color-glass-pill);
+  background-image: var(--glass-sheen);
   color: var(--color-danger);
   border-color: var(--color-border-strong);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--glass-shadow), var(--shadow-xs);
 }
 
 .btn-danger-outline:hover:not(:disabled) {
-  background: var(--color-danger-subtle);
+  background-color: var(--color-danger-subtle);
   border-color: var(--color-danger-border);
 }
 
@@ -561,24 +635,30 @@ a:hover {
 }
 
 /* ---------- 卡片、徽标、提示条 ---------- */
-/* 卡片：半透明底透出页面光晕，顶边 1px 高光。页面里覆盖卡片阴影时保留第一层高光 */
+/* 卡片：一块玻璃，半透明底透出背后的光斑，表面斜向光泽，边缘高光（--glass-shadow）。
+   页面里覆盖卡片阴影时保留 --glass-shadow */
 .card {
-  background: var(--color-glass);
+  background-color: var(--color-glass);
+  background-image: var(--glass-sheen);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: inset 0 1px 0 var(--color-highlight), var(--shadow-xs);
+  box-shadow: var(--glass-shadow), var(--shadow-xs);
+  backdrop-filter: var(--surface-filter);
+  -webkit-backdrop-filter: var(--surface-filter);
 }
 
-/* 可悬停的独立卡片（统计卡、访问码分组）：鼠标移上去阴影加深、轻轻抬起。
+/* 可悬停的独立卡片（统计卡、访问码分组）：鼠标移上去阴影加深、轻轻抬起，表面有一团跟着鼠标走的柔光。
    只在有鼠标的设备上生效，触屏点过后不会一直停在抬起状态；抬起动作见文件末尾的动效部分 */
 @media (hover: hover) {
   .card-hover {
-    transition: box-shadow 200ms var(--ease), border-color 200ms var(--ease), transform 200ms var(--ease);
+    transition: box-shadow 200ms var(--ease), border-color 200ms var(--ease), transform 280ms var(--ease-spring);
   }
 
   .card-hover:hover {
     border-color: var(--color-border-strong);
-    box-shadow: inset 0 1px 0 var(--color-highlight), var(--shadow-md);
+    background-image: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%), var(--color-glass-glow), transparent 70%),
+      var(--glass-sheen);
+    box-shadow: var(--glass-shadow), var(--shadow-md);
   }
 }
 
@@ -781,8 +861,11 @@ a:hover {
   overflow-x: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  background: var(--color-glass);
-  box-shadow: inset 0 1px 0 var(--color-highlight), var(--shadow-xs);
+  background-color: var(--color-glass);
+  background-image: var(--glass-sheen);
+  box-shadow: var(--glass-shadow), var(--shadow-xs);
+  backdrop-filter: var(--surface-filter);
+  -webkit-backdrop-filter: var(--surface-filter);
 }
 
 .table {
@@ -892,8 +975,8 @@ a:hover {
   padding: var(--space-4);
   background: var(--color-overlay);
   /* 遮罩把背后的页面模糊并压暗，弹窗像浮在页面上方；不支持模糊的浏览器只有压暗 */
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: var(--overlay-blur);
+  -webkit-backdrop-filter: var(--overlay-blur);
   animation: fade-in var(--duration) var(--ease);
 }
 
@@ -903,11 +986,12 @@ a:hover {
   max-height: calc(100vh - 32px);
   max-height: calc(100dvh - 32px);
   overflow-y: auto;
-  background: var(--color-glass-modal);
+  background-color: var(--color-glass-modal);
+  background-image: var(--glass-sheen);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: inset 0 1px 0 var(--color-highlight), var(--shadow-lg);
-  animation: modal-in 180ms var(--ease);
+  box-shadow: var(--glass-shadow), var(--shadow-lg);
+  animation: modal-in 260ms var(--ease-spring);
 }
 
 .modal-header {
@@ -955,7 +1039,51 @@ a:hover {
 @keyframes modal-in {
   from {
     opacity: 0;
-    transform: translateY(6px) scale(0.98);
+    transform: translateY(6px) scale(0.96);
+  }
+}
+
+/* ---------- 液态玻璃（折射） ---------- */
+/* html 上有 liquid-glass（utils/glass.js 判断浏览器支持后加）时，背后的内容经 App.vue 里的 SVG 滤镜按起伏的纹理位移，
+   像隔着一块有厚度的玻璃。浅色用扭曲更明显的 #cs-liquid-light，深色用轻一些的 #cs-liquid-dark。
+   - 带 .liquid 的元素（提示条、吸顶栏）：先轻度模糊再折射（--liquid-filter）
+   - 卡片、表格、侧栏：浅色模糊后折射，深色只折射（--surface-filter）
+   不支持的浏览器保持普通毛玻璃（提示条、吸顶栏用 --glass-blur，卡片等用上面 :root 里的 --surface-filter） */
+html.liquid-glass {
+  --liquid-filter: blur(8px) url(#cs-liquid-light) saturate(170%);
+  --surface-filter: blur(24px) url(#cs-liquid-light) saturate(170%);
+}
+
+html.liquid-glass[data-theme='dark'] {
+  --liquid-filter: blur(8px) url(#cs-liquid-dark) saturate(170%);
+  --surface-filter: url(#cs-liquid-dark) saturate(170%);
+}
+
+html.liquid-glass .liquid {
+  backdrop-filter: var(--liquid-filter);
+}
+
+/* 系统开了「降低透明度」：玻璃一律换成不透明底色，不模糊、不折射，光斑也去掉。
+   各处的模糊都引用这里的变量，改变量即可全部关掉；选择器要盖过上面 html.liquid-glass 的两条 */
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  :root[data-theme='dark'],
+  html.liquid-glass,
+  html.liquid-glass[data-theme='dark'] {
+    --color-glass: var(--color-bg);
+    --color-glass-subtle: var(--color-bg-subtle);
+    --color-glass-modal: var(--color-bg);
+    --color-glass-pill: var(--color-bg);
+    --color-topbar-bg: var(--color-bg);
+    --color-toast-glass: var(--color-toast-bg);
+    --glass-blur: none;
+    --overlay-blur: none;
+    --liquid-filter: none;
+    --surface-filter: none;
+  }
+
+  body::before {
+    display: none;
   }
 }
 
@@ -976,11 +1104,16 @@ a:hover {
   }
 }
 
-/* 位移类动效：页面切换时内容从下方淡入、可悬停卡片抬起、按钮按下回弹。
+/* 位移类动效：背景光斑缓慢漂移、页面切换时内容从下方淡入、可悬停卡片抬起、按钮按下缩小松开回弹。
    系统开了「减少动态效果」时整段不生效。
+   光斑漂移一圈 40 秒，只动 transform，由显卡合成，不触发重新布局。
    .page-enter 给不用 .page 的页面主体用（登录 / 注册表单、快速访问页）。
    淡入只有 240ms，期间 transform 会让页面里 position: fixed 的弹窗以页面为参照，弹窗都由点击打开，赶不上这段时间 */
 @media (prefers-reduced-motion: no-preference) {
+  body::before {
+    animation: glow-drift 40s ease-in-out infinite alternate;
+  }
+
   .page,
   .page-enter {
     animation: page-in 240ms var(--ease);
@@ -992,9 +1125,22 @@ a:hover {
     }
   }
 
+  /* 按下时缩小用普通缓动（立即跟手），松开时走 .btn 上的回弹缓动 */
   .btn:active:not(:disabled),
   .btn-icon:active:not(:disabled) {
-    transform: scale(0.97);
+    transform: scale(0.96);
+    transition-timing-function: var(--ease);
+    transition-duration: 100ms;
+  }
+}
+
+@keyframes glow-drift {
+  50% {
+    transform: translate(2.5%, -2%) scale(1.04);
+  }
+
+  to {
+    transform: translate(-2%, 2.5%) scale(1.02);
   }
 }
 

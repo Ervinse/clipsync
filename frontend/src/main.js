@@ -7,6 +7,8 @@ import '@fontsource-variable/inter/index.css'
 import './style.css'
 // 主题：导入即按本浏览器的选择设好 data-theme，并监听系统深浅色与其他标签页的切换
 import './utils/theme'
+// 玻璃质感：判断能否启用液态折射，并让按钮、卡片的悬停高光跟着鼠标走
+import './utils/glass'
 import { useUserStore } from './stores'
 
 const app = createApp(App)
