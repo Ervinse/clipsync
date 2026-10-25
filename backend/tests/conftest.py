@@ -68,7 +68,7 @@ from app.core.quick_access import failures  # noqa: E402
 
 _TABLES = [
     "texts", "upload_sessions", "files", "clipboard_history",
-    "clipboard", "invite_codes", "settings", "users",
+    "clipboard", "invite_codes", "invite_batches", "settings", "users",
 ]
 
 # 测试用户统一密码；预先算好哈希，避免每个用户都跑一次 bcrypt

@@ -2,9 +2,11 @@
 import logging
 from datetime import datetime
 
+from collections import defaultdict
+
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import select, func, delete as sql_delete, update as sql_update
+from sqlalchemy import select, func, exists, delete as sql_delete, update as sql_update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +18,7 @@ from ..models import (
     UserRole,
     File,
     Text,
+    InviteBatch,
     InviteCode,
     Setting,
     Clipboard,
@@ -29,11 +32,14 @@ from ..schemas import (
     AdminUserDetail,
     UpdateUserQuota,
     UpdateUserStatus,
-    InviteCodeCreate,
+    InviteBatchCreate,
+    InviteBatchNoteUpdate,
     InviteCodeExpiryUpdate,
     InviteCodeExpiryResult,
     InviteCodeResponse,
-    InviteCodeListResponse,
+    InviteBatchResponse,
+    InviteBatchListResponse,
+    InviteBatchDeleteResult,
     SystemSettingsResponse,
     UpdateSystemSettings,
     AdminFileListItem,
@@ -352,6 +358,16 @@ async def delete_user(
     await db.execute(
         sql_update(InviteCode).where(InviteCode.created_by == user_id).values(created_by=current_user.id)
     )
+    # 邀请码批次：码被删光的批次一起删除，还剩已使用码的批次转记到操作者名下（保留备注）
+    await db.execute(
+        sql_delete(InviteBatch).where(
+            InviteBatch.created_by == user_id,
+            ~exists().where(InviteCode.batch_id == InviteBatch.id),
+        )
+    )
+    await db.execute(
+        sql_update(InviteBatch).where(InviteBatch.created_by == user_id).values(created_by=current_user.id)
+    )
     await db.execute(sql_delete(User).where(User.id == user_id))
     await db.commit()
 
@@ -393,14 +409,57 @@ def _parse_invite_expiry(value: datetime | None) -> datetime | None:
     return expires_at
 
 
-@router.post("/invite-codes", response_model=InviteCodeListResponse)
-async def create_invite_codes(
-    data: InviteCodeCreate,
+async def _load_batches(db: AsyncSession, batch_id: int | None = None) -> list[InviteBatchResponse]:
+    """查批次及其中的码：批次 + 创建者、码 + 使用者各一次查询，不逐批查（避免 N+1）；batch_id 为空时查全部"""
+    creator, used_by_user = aliased(User), aliased(User)
+    batch_query = (
+        select(InviteBatch, creator.username)
+        .join(creator, InviteBatch.created_by == creator.id)
+        .order_by(InviteBatch.created_at.desc(), InviteBatch.id.desc())
+    )
+    code_query = (
+        select(InviteCode, used_by_user.username)
+        .outerjoin(used_by_user, InviteCode.used_by == used_by_user.id)
+        .order_by(InviteCode.id)
+    )
+    if batch_id is not None:
+        batch_query = batch_query.where(InviteBatch.id == batch_id)
+        code_query = code_query.where(InviteCode.batch_id == batch_id)
+
+    batches = (await db.execute(batch_query)).all()
+    if not batches:
+        return []
+    codes_by_batch: dict[int, list[InviteCodeResponse]] = defaultdict(list)
+    for invite, used_by_username in (await db.execute(code_query)).all():
+        codes_by_batch[invite.batch_id].append(InviteCodeResponse(
+            id=invite.id,
+            code=invite.code,
+            used_by=invite.used_by,
+            used_by_username=used_by_username,
+            expires_at=invite.expires_at,
+            used_at=invite.used_at,
+        ))
+    return [
+        InviteBatchResponse(
+            id=batch.id,
+            note=batch.note,
+            created_by=batch.created_by,
+            created_by_username=creator_username,
+            created_at=batch.created_at,
+            codes=codes_by_batch[batch.id],
+        )
+        for batch, creator_username in batches
+    ]
+
+
+@router.post("/invite-batches", response_model=InviteBatchResponse)
+async def create_invite_batch(
+    data: InviteBatchCreate,
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    批量生成邀请码：一次 1–20 个，同一批共用一个过期时间；全部成功或全部不生成
+    生成一批邀请码：一次 1–20 个（1 个也算一批），同一批共用一个过期时间和备注；全部成功或全部不生成
 
     权限：admin + superadmin
     """
@@ -423,11 +482,13 @@ async def create_invite_codes(
         )
 
     now = utcnow()
-    invites = [
-        InviteCode(code=code, created_by=current_user.id, expires_at=expires_at, created_at=now)
+    batch = InviteBatch(note=data.note, created_by=current_user.id, created_at=now)
+    db.add(batch)
+    await db.flush()
+    db.add_all(
+        InviteCode(batch_id=batch.id, code=code, created_by=current_user.id, expires_at=expires_at, created_at=now)
         for code in codes
-    ]
-    db.add_all(invites)
+    )
     try:
         await db.commit()
     except IntegrityError:
@@ -438,22 +499,8 @@ async def create_invite_codes(
             detail="邀请码生成失败，请重试",
         )
 
-    # 新建的码必然未被使用，不需要再查使用者
-    items = [
-        InviteCodeResponse(
-            id=invite.id,
-            code=invite.code,
-            created_by=invite.created_by,
-            created_by_username=current_user.username,
-            used_by=None,
-            used_by_username=None,
-            expires_at=invite.expires_at,
-            used_at=None,
-            created_at=invite.created_at,
-        )
-        for invite in sorted(invites, key=lambda i: i.id)
-    ]
-    return InviteCodeListResponse(items=items, total=len(items))
+    # 与列表接口同一个格式，码按生成顺序排列
+    return (await _load_batches(db, batch.id))[0]
 
 
 @router.patch("/invite-codes/expiry", response_model=InviteCodeExpiryResult)
@@ -497,41 +544,81 @@ async def update_invite_codes_expiry(
     return InviteCodeExpiryResult(updated=len(ids), expires_at=expires_at)
 
 
-@router.get("/invite-codes", response_model=InviteCodeListResponse)
-async def list_invite_codes(
+@router.get("/invite-batches", response_model=InviteBatchListResponse)
+async def list_invite_batches(
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    获取邀请码列表
+    获取邀请码批次列表（按创建时间倒序），每批带其中全部邀请码及使用者
 
     权限：admin + superadmin
     """
-    # 创建者 join、使用者 outer join，一次查完（避免逐条查使用者用户名的 N+1）
-    creator, used_by_user = aliased(User), aliased(User)
-    result = await db.execute(
-        select(InviteCode, creator.username, used_by_user.username)
-        .join(creator, InviteCode.created_by == creator.id)
-        .outerjoin(used_by_user, InviteCode.used_by == used_by_user.id)
-        .order_by(InviteCode.created_at.desc(), InviteCode.id.desc())
-    )
-    rows = result.all()
+    items = await _load_batches(db)
+    return InviteBatchListResponse(items=items, total=len(items))
 
-    items = []
-    for invite_code, creator_username, used_by_username in rows:
-        items.append(InviteCodeResponse(
-            id=invite_code.id,
-            code=invite_code.code,
-            created_by=invite_code.created_by,
-            created_by_username=creator_username,
-            used_by=invite_code.used_by,
-            used_by_username=used_by_username,
-            expires_at=invite_code.expires_at,
-            used_at=invite_code.used_at,
-            created_at=invite_code.created_at,
-        ))
 
-    return InviteCodeListResponse(items=items, total=len(items))
+@router.patch("/invite-batches/{batch_id}", response_model=InviteBatchResponse)
+async def update_invite_batch_note(
+    batch_id: int,
+    data: InviteBatchNoteUpdate,
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    修改批次备注（空字符串为清空）；批次里的码已全部用掉也可以改
+
+    权限：admin + superadmin
+    """
+    batch = (await db.execute(
+        select(InviteBatch).where(InviteBatch.id == batch_id)
+    )).scalar_one_or_none()
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="批次不存在",
+        )
+    batch.note = data.note
+    await db.commit()
+    return (await _load_batches(db, batch_id))[0]
+
+
+@router.delete("/invite-batches/{batch_id}", response_model=InviteBatchDeleteResult)
+async def delete_invite_batch_unused(
+    batch_id: int,
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    删除批次里所有未使用的邀请码（含已过期未使用的）；已使用的保留作审计记录。
+    批次里不剩码时批次一起删除，否则批次与备注保留。
+
+    行锁与注册时的 FOR UPDATE 互斥，避免删除的同时有人用这批里的码注册。
+
+    权限：admin + superadmin
+    """
+    batch = (await db.execute(
+        select(InviteBatch).where(InviteBatch.id == batch_id).with_for_update()
+    )).scalar_one_or_none()
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="批次不存在",
+        )
+
+    invites = (await db.execute(
+        select(InviteCode).where(InviteCode.batch_id == batch_id).with_for_update()
+    )).scalars().all()
+    # used_at 非空即用过（使用者被删后 used_by 会置空）
+    unused_ids = [i.id for i in invites if i.used_at is None and i.used_by is None]
+
+    if unused_ids:
+        await db.execute(sql_delete(InviteCode).where(InviteCode.id.in_(unused_ids)))
+    batch_deleted = len(unused_ids) == len(invites)
+    if batch_deleted:
+        await db.execute(sql_delete(InviteBatch).where(InviteBatch.id == batch_id))
+    await db.commit()
+    return InviteBatchDeleteResult(deleted=len(unused_ids), batch_deleted=batch_deleted)
 
 
 @router.delete("/invite-codes/{invite_code_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -541,7 +628,7 @@ async def delete_invite_code(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    删除邀请码
+    删除单个未使用的邀请码；批次里不剩码时批次一起删除
 
     权限：admin + superadmin
     """
@@ -564,8 +651,14 @@ async def delete_invite_code(
             detail="邀请码已被使用，不能删除",
         )
 
-    # 删除邀请码
+    # 删除邀请码；批次被删空时一起删除，列表里不留空批次
     await db.execute(sql_delete(InviteCode).where(InviteCode.id == invite_code_id))
+    await db.execute(
+        sql_delete(InviteBatch).where(
+            InviteBatch.id == invite_code.batch_id,
+            ~exists().where(InviteCode.batch_id == InviteBatch.id),
+        )
+    )
     await db.commit()
 
     return None

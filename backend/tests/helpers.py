@@ -2,6 +2,8 @@
 from pathlib import Path
 
 from app.config import settings
+from app.core.timeutil import utcnow
+from app.models import InviteBatch, InviteCode
 
 # 与应用实际使用的存储目录保持一致（由 conftest 在导入 app 前写入环境变量）
 STORAGE_ROOT = Path(settings.STORAGE_DIR).resolve()
@@ -47,6 +49,23 @@ def new_text(client, user, content="hello", title=""):
     resp = client.post("/api/texts", json={"title": title, "content": content}, headers=user.headers)
     assert resp.status_code == 201, resp.text
     return resp.json()
+
+
+def add_invite(db, code, created_by, batch_id=None, note="", **kwargs):
+    """直接写库加一个邀请码，返回 (invite_id, batch_id)；不传 batch_id 时新建一个只含这个码的批次。
+    kwargs 直接传给 InviteCode（used_by / used_at / expires_at）"""
+    async def _create(s):
+        bid = batch_id
+        if bid is None:
+            batch = InviteBatch(note=note, created_by=created_by, created_at=utcnow())
+            s.add(batch)
+            await s.flush()
+            bid = batch.id
+        invite = InviteCode(batch_id=bid, code=code, created_by=created_by, created_at=utcnow(), **kwargs)
+        s.add(invite)
+        await s.flush()
+        return invite.id, bid
+    return db(_create)
 
 
 def quick_login(client, full_code):
