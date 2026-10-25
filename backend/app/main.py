@@ -14,6 +14,10 @@ from .rate_limit import limiter
 from .api import auth, clipboard, texts, files, ws, access, admin
 from .database import AsyncSessionLocal
 from .core.deploy_info import current_build, record_deployment
+from .core.logging_setup import setup_app_logging
+
+# app 下各模块的日志输出到容器日志：审计日志（超管查看 / 下载他人内容）与部署登记依赖 INFO 级别能输出
+setup_app_logging()
 
 logger = logging.getLogger(__name__)
 

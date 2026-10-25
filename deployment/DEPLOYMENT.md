@@ -531,6 +531,8 @@ MySQL 的版本号固定在 `docker-compose.yml` 的 `image:` 一行，随新版
 docker compose ps                         # 容器状态
 docker compose logs -f backend            # 实时查看日志（Ctrl+C 退出），服务名：db / backend / frontend
 docker compose logs --tail 100 frontend   # 最近 100 行
+docker compose logs backend | grep 超管    # 超级管理员查看、下载其他用户内容的记录（操作者与对象用户的 id）
+docker compose logs backend | grep 登记新部署   # 后端以新版本启动的记录
 docker compose restart backend            # 重启单个服务
 docker compose stop                       # 停止全部（数据保留）
 docker compose up -d                      # 启动全部 / 让 .env 的修改生效
