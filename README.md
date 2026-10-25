@@ -592,6 +592,7 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 | 密码存储 | bcrypt 哈希，绝不存明文，不在日志/响应回显。 |
 | 认证 | JWT，必须带 `exp`（默认 7 天），只允许 HS 系列算法；`JWT_SECRET` 少于 32 位或为示例值时后端拒绝启动；每次请求回库校验用户存在且未禁用。 |
 | 角色权限 | 三级角色后端强制校验；admin 看不到文件/文本内容、只能管理普通用户，仅 superadmin 可读他人内容（只读、记日志）与任免管理员。 |
+| 操作日志 | `main.py` 启动时调用 `core/logging_setup.py`，`app` 下各模块的 INFO 及以上日志输出到标准错误（只配置 `app` 这一支，不改第三方库的日志级别）。审计记录「超管查看用户内容」「超管下载用户文件」只含操作者 id、对象用户 id 与内容类别或文件 id，不含内容本身；另有「登记新部署」与磁盘清理失败等记录。Docker 部署用 `docker compose logs backend` 查看。 |
 | 登录爆破 | 注册、登录、快速访问接口限流（数值见第 6 节开头）；登录在用户不存在时也执行一次 bcrypt，防时序枚举。限流按真实客户端 IP，依赖 uvicorn `--proxy-headers` 信任反代传来的 `X-Forwarded-For`。 |
 | 数据隔离 | 隐私查询强制 `WHERE user_id = current_user`，仅 superadmin 例外。 |
 | 越权访问 | 读写、下载、删除、设置访问码前先校验归属；快速访问的查询限定「属主 + 访问码」，不信任客户端传入路径。 |
@@ -635,6 +636,7 @@ CodeProject/
     │   │   │   ├── http_utils.py   # 文件名清洗 + Content-Disposition
     │   │   │   ├── app_settings.py # 读 settings 表
     │   │   │   ├── deploy_info.py  # 读 BUILD_INFO 与运行的版本号、启动时登记部署记录
+    │   │   │   ├── logging_setup.py # app 下各模块的日志以 INFO 级别输出到标准错误（Docker 部署即容器日志）
     │   │   │   └── timeutil.py     # UTC 时间工具
     │   │   └── api/              # auth / clipboard / texts / files / access / admin / ws
     │   ├── alembic/
