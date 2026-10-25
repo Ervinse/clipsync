@@ -86,8 +86,7 @@ src/
 │   ├── TextEditorCard.vue # 一段文本的编辑卡片（文本页与快速访问页共用）
 │   ├── AccessCodeButton.vue # 条目旁的访问码按钮
 │   ├── AccessCodeDialog.vue # 设置 / 修改 / 清除访问码的弹窗
-│   ├── LoadingSkeleton.vue # 列表加载中的骨架屏（文本、文件、访问码、快速访问页共用）
-│   └── GlassTuner.vue # 玻璃效果调节面板（仅 npm run dev 下显示，生产构建不打包）
+│   └── LoadingSkeleton.vue # 列表加载中的骨架屏（文本、文件、访问码、快速访问页共用）
 ├── utils/          # 工具函数
 │   ├── websocket.js # WebSocket 管理器
 │   ├── clipboard.js # 复制到剪贴板（HTTP 下降级为 execCommand）
@@ -279,15 +278,20 @@ server: {
 - **字号**：12 / 13 / 14（正文）/ 15 / 17 / 20 / 24（页面标题）/ 32 / 40px
 - **间距**：以 4px 为单位（`--space-1` 至 `--space-16`）
 - **圆角**：6 / 8 / 12px；**阴影**：很轻的 `--shadow-xs` / `--shadow-sm`，悬停抬起的卡片用 `--shadow-md`，弹窗用 `--shadow-lg`
-- **质感（玻璃）**：只改透明度、模糊、光泽与边缘，不改布局；颜色保持强调色靛蓝一个色系，浓度偏克制
-  - 背景光斑：页面背后有四团同色系（靛蓝及相邻的蓝、紫蓝）的光斑（`body::before`，变量 `--page-glow`），尺寸随窗口缩放，缓慢漂移（一圈 40 秒，只动 `transform`）；`Home.vue` 与 `AuthLayout.vue` 的外层不设底色，让光斑透出来
+- **质感（玻璃）**：只改透明度、模糊、光泽与边缘，不改布局；颜色保持强调色靛蓝一个色系
+  - 三套参数：
+    | 场景 | 背景光斑 | 玻璃底色不透明度 | 光泽与亮边 | 卡片、表格、侧栏 | 折射幅度 |
+    |------|------|------|------|------|------|
+    | 浅色，登录 / 注册页 | 四角 + 中部，边缘收紧到 50% | 0.4 | 加倍 | 模糊 24px + 折射 | 50 |
+    | 浅色，登录后的页面与快速访问页 | 无（纯白底） | 0.4 | 加倍 | 模糊 24px + 折射 | 50 |
+    | 深色，所有页面 | 四角 + 中部，边缘 70% | 0.62 | 正常 | 只折射、不模糊 | 16 |
+  - 背景光斑：同色系（靛蓝及相邻的蓝、紫蓝）的光斑铺在 `body::before`（变量 `--page-glow`），尺寸随窗口缩放，缓慢漂移（一圈 40 秒，只动 `transform`）。浅色登录 / 注册页由 `style.css` 的 `:root:not([data-theme='dark']):has(.auth)` 换上光斑（`.auth` 是 `AuthLayout.vue` 的外层），不支持 `:has()` 的浏览器在登录页也是纯白底；`Home.vue` 与 `AuthLayout.vue` 的外层不设底色，让光斑透出来
   - 玻璃面：卡片、表格、侧栏、空状态、登录页左侧、快速访问页用半透明底色（`--color-glass` / `--color-glass-subtle`，与原底色同色、只降不透明度）；卡片、表格、侧栏、弹窗、次要按钮、当前菜单项、主题开关当前档表面有斜向光泽（`--glass-sheen`），边缘有上沿亮边、下沿暗边、内圈亮边（`--glass-shadow`），显出玻璃厚度。主按钮底色不变，表面一层淡光泽（`--btn-primary-sheen`）加上下两道边
-  - 模糊：叠在内容上的元素用 `backdrop-filter` 模糊背后的页面：弹窗遮罩与窄屏抽屉遮罩（`--overlay-blur`）、提示条、窄屏顶栏、快速访问页顶栏（`--glass-blur`）；弹窗本身与窄屏抽屉侧栏叠在压暗的页面上，用接近不透明的底色，文字才清楚。提示条只在浏览器支持模糊时才变半透明，否则保持不透明。卡片、侧栏背后只有平滑的光斑，不加模糊，省掉每帧重算
-  - 液态折射：提示条、窄屏顶栏、快速访问页顶栏带 `.liquid`；在 Chromium 内核浏览器（Chrome、Edge）上 `utils/glass.js` 给 `<html>` 加 `liquid-glass`，这些元素改用 `--liquid-filter`：背后内容先轻度模糊，再经 `App.vue` 里的 SVG 滤镜 `#cs-liquid` 按起伏纹理位移，像隔着有厚度的玻璃。Safari、Firefox 只有普通毛玻璃
+  - 模糊：卡片、表格、侧栏读 `--surface-filter`（浅色模糊 24px，深色不模糊）；叠在内容上的元素用 `backdrop-filter` 模糊背后的页面：弹窗遮罩与窄屏抽屉遮罩（`--overlay-blur`）、提示条、窄屏顶栏、快速访问页顶栏（`--glass-blur`）；弹窗本身与窄屏抽屉侧栏叠在压暗的页面上，用接近不透明的底色，文字才清楚。提示条只在浏览器支持模糊时才变半透明，否则保持不透明
+  - 液态折射：在 Chromium 内核浏览器（Chrome、Edge）上 `utils/glass.js` 给 `<html>` 加 `liquid-glass`，背后的内容经 `App.vue` 里的 SVG 滤镜按起伏纹理位移，像隔着有厚度的玻璃；浅色用 `#cs-liquid-light`（幅度 50），深色用 `#cs-liquid-dark`（幅度 16）。提示条、窄屏顶栏、快速访问页顶栏带 `.liquid`，改用 `--liquid-filter`（先轻度模糊再折射）；卡片、表格、侧栏的 `--surface-filter` 也加上折射。Safari、Firefox 只有普通毛玻璃
   - 悬停高光：有鼠标的设备上，主按钮、次要按钮、次要危险按钮、`.card-hover` 卡片悬停时表面有一团跟着鼠标走的柔光（`utils/glass.js` 写 `--mx` / `--my`，每帧最多更新一次）
   - 系统开启「降低透明度」时，玻璃一律换成不透明底色，不模糊、不折射，光斑去掉
-  - 调节面板：`npm run dev` 下页面右下角有玻璃效果调节面板（`GlassTuner.vue`，`App.vue` 只在 `import.meta.env.DEV` 时异步加载），滑块实时改写 `<html>` 上的光斑、玻璃底色、光泽与亮边、卡片与侧栏模糊（`--surface-filter`，默认 `none`）和折射幅度，可在「当前版本」与「夸张版」之间切换，「复制数值」把当前设置复制成 JSON；设置记在本浏览器 `localStorage`（键 `glass-tuner`）。面板只用于定数值，定下后写回 `style.css`
-  - 对比度按光斑最浓处、叠上玻璃底色与光泽后的颜色核算：弱提示文字（浅色 `#6b6b74`、深色 `#93939d`）、强调色与状态色都满足 4.5:1；调高光斑或透明度前要重新核算
+  - 对比度按光斑最浓处核算：直接显示在背景上的弱提示文字（浅色 `#6b6b74`、深色 `#93939d`）、强调色与状态色都满足 4.5:1；调高光斑前要重新核算
 - **加载中**：文本、文件、访问码、快速访问页的列表加载时显示骨架屏（`LoadingSkeleton.vue`，`variant="rows"` 是一张卡片里的多行，`variant="cards"` 是多张卡片），灰色占位块上有一道光扫过；屏幕阅读器读到「加载中…」
 - **图标**：`@lucide/vue` 细线图标，`App.vue` 统一设默认 16px、线宽 1.75；不用 emoji
 - **提示与确认**：不用浏览器原生 `alert` / `confirm` / `prompt`；操作结果用 `toast`（`utils/toast.js`），确认与输入用 `confirmDialog` / `promptDialog`，多选一（如保存冲突）用 `choiceDialog`（`utils/dialog.js`）；复制失败时用 `copyDialog` 显示内容让用户手动复制。危险操作的确认框默认聚焦「取消」

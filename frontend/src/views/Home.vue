@@ -216,6 +216,7 @@ const handleLogout = async () => {
   border-right: 1px solid var(--color-border);
   box-shadow: inset -1px 0 0 var(--color-glass-rim);
   backdrop-filter: var(--surface-filter);
+  -webkit-backdrop-filter: var(--surface-filter);
 }
 
 .sidebar-top {
