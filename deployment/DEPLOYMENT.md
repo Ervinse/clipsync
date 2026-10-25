@@ -40,13 +40,55 @@ ClipSync 只支持 Docker Compose 部署：MySQL、后端、前端（Nginx）三
 
 除 `.env`、`acme/`、`letsencrypt/` 外，这些文件都在部署包里，每次更新部署包时会被覆盖。需要调整的配置都放在 `.env` 里，不要直接修改其他文件。
 
-## 2. 版本与分支
+## 2. 版本与镜像标签
 
 - 正式部署使用 **master** 分支上的提交。
-- `build-release.ps1` 给镜像打 `<提交号>` 标签（git 提交号的前 12 位）。只有打包的是 master 的最新提交时，才额外打 `latest` 标签。
-- 服务器 `.env` 的 `CLIPSYNC_TAG` 默认是 `latest`，所以只会运行 master 的版本。要部署其他分支（比如测试一个还没合并的功能），把 `CLIPSYNC_TAG` 改成那次打包的提交号；测试结束后改回 `latest`。
-- 测试通过的构建用 `publish-release.ps1` 晋级为正式版本（第 4.4 节）：不重新构建，给同一份镜像追加 `<版本号>` 标签（如 `1.0.0-alpha.1`），发布包里的镜像只有 `<版本号>` 和 `<提交号>` 两个标签，没有 `latest`。
 - 镜像包和部署包来自同一次打包，文件名里的提交号（或版本号）相同，不要混用不同版本的两个包。
+
+### 2.1 镜像标签
+
+同一个镜像可以有多个标签。`docker-compose.yml` 按 `clipsync-backend:${CLIPSYNC_TAG}`、`clipsync-frontend:${CLIPSYNC_TAG}` 选用镜像，`.env` 里没有 `CLIPSYNC_TAG` 时按 `latest`。所以服务器运行哪个版本只由 `.env` 的 `CLIPSYNC_TAG` 决定，与最近导入了哪个镜像包无关。
+
+| 标签 | 由谁打 | 含义 |
+|------|------|------|
+| `<提交号>` | `build-release.ps1`，每次都打 | git 提交号的前 12 位，固定指向这次构建 |
+| `latest` | `build-release.ps1`，只在打包的是 master 最新提交时打 | 最近一次从 master 打包的构建。一个标签同一时间只指向一个镜像：导入新的带 `latest` 的镜像后，旧镜像就不再带 `latest` |
+| `<版本号>` | `publish-release.ps1`（第 4.4 节） | 正式版本（如 `1.4.0`），追加在测试过的同一份镜像上，不重新构建 |
+
+各种包里 backend、frontend 镜像带的标签：
+
+| 包 | 镜像标签 | 包内 `.env.example` 的 `CLIPSYNC_TAG` |
+|------|------|------|
+| 测试包：master 的最新提交 | `<提交号>`、`latest` | `latest` |
+| 测试包：其他分支或旧提交 | `<提交号>` | `latest` |
+| 正式版本的发布包 | `<版本号>`、`<提交号>` | `<版本号>` |
+
+`CLIPSYNC_TAG=latest` 时只会运行 master 的构建。要部署其他分支（比如测试一个还没合并的功能），把 `CLIPSYNC_TAG` 改成那次打包的提交号。
+
+### 2.2 服务器上 `CLIPSYNC_TAG` 的值
+
+`.env` 只在首次部署时从 `.env.example` 复制一次（第 6.1 节），之后解压新的部署包只会更新 `.env.example`，不会改动 `.env`。所以服务器上的值取决于首次部署用的是哪个包，以及之后有没有手动改过：
+
+| 情况 | `.env` 里的值 | 需要的操作 |
+|------|------|------|
+| 用测试包首次部署 | `latest` | 部署 master 最新提交时不用改；部署其他提交时改成该提交号 |
+| 用正式版本的发布包首次部署 | 该版本号 | 不用改 |
+| 已有部署，更新到 master 的测试包 | 保持原值 | 原值是 `latest` 时不用改；是版本号或提交号时，改成新的提交号或 `latest` |
+| 已有部署，更新到正式版本 | 保持原值 | 改成新的版本号（第 7.1 节） |
+| 回滚 | 保持原值 | 改成旧的版本号或提交号（第 8 节） |
+
+### 2.3 正式版本的发布包为什么不带 `latest`
+
+- **导入不会改变正在使用的版本**：如果发布包带 `latest`，`docker load` 会把 `latest` 从旧镜像移到新镜像上。`.env` 写着 `latest` 的服务器，下一次执行 `docker compose up -d` 时就会重建容器、换成新版本，即使还没备份或还没准备升级。
+- **版本明确、回滚简单**：版本号标签固定指向一个镜像，`.env` 写版本号时，运行的版本只在修改 `.env` 后才变化。导入过的旧镜像一直保留在服务器上，回滚时把 `CLIPSYNC_TAG` 改回旧版本号即可。
+
+### 2.4 查看当前状态
+
+```bash
+grep CLIPSYNC_TAG .env              # .env 里的值；没有这一行时按 latest
+docker images clipsync-backend      # 已导入的镜像和标签，IMAGE ID 相同的几行是同一个镜像
+bash health_check.sh                # 「== 版本」一段显示部署包的 VERSION、.env 的 CLIPSYNC_TAG、正在运行的后端镜像提交号
+```
 ## 3. 环境要求
 
 **服务器**
@@ -150,7 +192,7 @@ mkdir -p /opt/clipsync && tar -xzf clipsync-deploy-<版本号>.tar.gz -C /opt/cl
 ```
 
 - 首次部署：从 `.env.example` 复制出的 `.env` 已经是 `CLIPSYNC_TAG=<版本号>`，不用修改。
-- 已有部署更新到正式版本：解压部署包不会覆盖 `.env`，要手动把 `.env` 的 `CLIPSYNC_TAG` 改成 `<版本号>`。发布包里没有 `latest` 标签，`CLIPSYNC_TAG` 仍是 `latest` 时会用回旧镜像，或因找不到镜像而启动失败。
+- 已有部署更新到正式版本：解压部署包不会覆盖 `.env`，要手动把 `.env` 的 `CLIPSYNC_TAG` 改成 `<版本号>`。发布包里没有 `latest` 标签，`CLIPSYNC_TAG` 仍是 `latest` 时会用回旧镜像，或因找不到镜像而启动失败（原因见第 2.3 节）。
 - 核对和测试过的是同一份镜像：发布脚本最后打印的镜像 ID，与测试服务器上 `docker images clipsync-backend` 显示的 IMAGE ID 相同。开发机启用了 containerd 镜像存储时，本机 `docker images` 显示的 ID 是另一种摘要，以脚本打印的为准。
 
 ## 5. 方式 B：服务器上从源码构建
