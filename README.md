@@ -104,14 +104,18 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | 生成、查看邀请码；修改备注与有效期、删除（未使用的）邀请码 | ✗ | ✓ | ✓ |
 | 读取全局系统设置 | ✗ | ✓ | ✓ |
 | 查看全站文件的**元数据** | ✗ | ✓ | ✓ |
-| 修改用户存储配额 | ✗ | ✗ | ✓ |
-| 启用/禁用用户、删除用户 | ✗ | ✗ | ✓ |
-| 修改全局系统设置 | ✗ | ✗ | ✓ |
-| 查看/下载他人文件**内容** | ✗ | **✗** | ✓ |
+| 修改全局系统设置 | ✗ | ✓ | ✓ |
+| 修改普通用户的存储配额、启用/禁用普通用户 | ✗ | ✓ | ✓ |
+| 修改管理员的存储配额、启用/禁用管理员 | ✗ | ✗ | ✓ |
+| 把普通用户设为管理员 / 取消管理员 | ✗ | ✗ | ✓ |
+| 删除用户 | ✗ | ✗ | ✓ |
+| 下载他人文件、只读查看他人文本（云剪切板、剪切板历史、文本栏目） | ✗ | **✗** | ✓ |
 
-**未实现**：直接创建用户（免邀请码）、重置密码、变更角色、超管查看他人文本内容。目前提升管理员只能直接改数据库，超管通过 `scripts/create_superadmin.py` 创建（用户名规则与注册一致：3–64 位，只含字母、数字和 `_ . -`，不能含 `@`，否则「用户名@访问码」无法拆分）。
+**未实现**：直接创建用户（免邀请码）、重置密码、在后台创建超级管理员。超管通过 `scripts/create_superadmin.py` 创建（用户名规则与注册一致：3–64 位，只含字母、数字和 `_ . -`，不能含 `@`，否则「用户名@访问码」无法拆分）。
 
-> 关键区别：**管理员能看管理数据但看不到用户隐私内容**（只能看文件名、大小、时间等元数据）；**超级管理员才能下载他人文件**。这一约束在后端接口层强制：内容读取接口对 admin 与对普通用户一视同仁地做归属校验，仅 superadmin 可绕过。超管不能禁用或删除自己，也不能禁用或删除**其他** superadmin（返回 403）。
+> 关键区别：**管理员负责日常管理，但看不到用户隐私内容**（只能看文件名、大小、时间等元数据），也只能管理普通用户；**超级管理员才能下载他人文件、查看他人文本、任免管理员和删除用户**。日常管理交给管理员，超管账号平时不必登录。这些约束在后端接口层强制：内容读取接口对 admin 与对普通用户一视同仁地做归属校验，仅 superadmin 可绕过；超管查看他人文本只读，不能修改、删除或恢复，每次查看与下载他人文件都写一条服务器日志（操作者、对象用户、内容）。
+>
+> 角色边界：admin 不能修改任何管理员或超管（包括自己）的配额与状态（403），不能改角色、不能删除用户（403）。超管不能禁用、删除或改角色的对象是自己（400）和其他 superadmin（403）；改角色只能在 `user` 与 `admin` 之间切换，不能通过接口设为 superadmin（422）。
 
 ---
 
@@ -127,8 +131,8 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | username | VARCHAR(64) UNIQUE | 登录名 |
 | password_hash | VARCHAR(255) | bcrypt 哈希，不存明文 |
 | role | ENUM('USER','ADMIN','SUPERADMIN') | 角色，默认 USER（库中存枚举名大写，API 返回小写值 `user`/`admin`/`superadmin`） |
-| quota_bytes | BIGINT | 存储配额；注册时取系统设置的默认配额（缺省 100MB），仅超管可改，上限 1TB |
-| is_active | BOOLEAN | 是否启用（仅超管可禁用） |
+| quota_bytes | BIGINT | 存储配额；注册时取系统设置的默认配额（缺省 100MB），上限 1TB；管理员可改普通用户的，超管可改所有人的 |
+| is_active | BOOLEAN | 是否启用（管理员可禁用普通用户，超管可禁用普通用户与管理员） |
 | created_at | DATETIME | 创建时间 |
 
 ### 5.2 invite_batches / invite_codes — 邀请码批次与邀请码
@@ -327,9 +331,15 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | GET | /api/admin/stats | admin+ | 系统统计（用户总数、活跃用户、文件总数、总存储、访问码总数、有效访问码数；访问码按「属主 + 访问码」去重计数，同一个码挂在多样内容上算一个；有效 = 至少有一样内容未过期且属主未被禁用，与快速访问的判定一致） |
 | GET | /api/admin/users | admin+ | 用户列表，分页 `skip`/`limit`（≤100），含配额、已用空间、文件数 |
 | GET | /api/admin/users/{id} | admin+ | 用户详情（元数据，含剪贴板更新时间，不含内容） |
-| PATCH | /api/admin/users/{id}/quota | **superadmin** | 修改配额 `{quota_bytes}`（0 到 1TB），给目标用户广播 `quota_updated` |
-| PATCH | /api/admin/users/{id}/status | **superadmin** | 启用/禁用 `{is_active}`；禁用时立即断开其 WebSocket；不能操作自己（400）或其他 superadmin（403） |
+| PATCH | /api/admin/users/{id}/quota | admin+ | 修改配额 `{quota_bytes}`（0 到 1TB），给目标用户广播 `quota_updated`；admin 只能改普通用户的（其他返回 403） |
+| PATCH | /api/admin/users/{id}/status | admin+ | 启用/禁用 `{is_active}`；禁用时立即断开其 WebSocket；admin 只能操作普通用户（403）；不能操作自己（400）或其他 superadmin（403） |
+| PATCH | /api/admin/users/{id}/role | **superadmin** | 修改角色 `{role}`，只接受 `user` / `admin`（其他 422）；不能改自己（400）或 superadmin（403）；给目标用户广播 `role_updated` |
 | DELETE | /api/admin/users/{id} | **superadmin** | 删除用户及其全部数据并断开其 WebSocket；不能删除自己（400）或其他 superadmin（403） |
+| GET | /api/admin/users/{id}/clipboard | **superadmin** | 只读查看该用户云剪切板当前文本，格式同 `GET /api/clipboard`；记日志 |
+| GET | /api/admin/users/{id}/clipboard/history | **superadmin** | 只读查看该用户剪切板历史列表，格式同 `GET /api/clipboard/history`（长内容只给开头）；记日志 |
+| GET | /api/admin/users/{id}/clipboard/history/{history_id} | **superadmin** | 一条历史的全文；历史不属于该用户时 404；记日志 |
+| GET | /api/admin/users/{id}/texts | **superadmin** | 只读查看该用户文本栏目列表，格式同 `GET /api/texts`；记日志 |
+| GET | /api/admin/users/{id}/texts/{text_id} | **superadmin** | 一条文本的全文；文本不属于该用户时 404；记日志 |
 | GET | /api/admin/invite-batches | admin+ | 邀请码批次列表 `{items, total}`，按生成时间倒序；每批含 `id, note, created_by, created_by_username, created_at, codes`，`codes` 按生成顺序列出该批全部邀请码（`id, code, used_by, used_by_username, expires_at, used_at`） |
 | POST | /api/admin/invite-batches | admin+ | 生成一批邀请码 `{count?, expires_at?, note?}`：`count` 1–20（默认 1，超出 422），同一批共用 `expires_at` 与 `note`（去首尾空格，最多 100 字，超出 422），全部成功或全部不生成（与已有码重复时重新生成，重试仍冲突返回 500）；返回新批次，格式同列表项；`expires_at` 必须晚于当前时间，换算成 UTC 后超出可表示范围（如 `9999-12-31T23:59:59-05:00`）返回 400 |
 | PATCH | /api/admin/invite-batches/{id} | admin+ | 修改批次备注 `{note}`（空字符串为清空，校验同上）；码已全部用掉的批次也能改；批次不存在 404；返回该批次 |
@@ -338,11 +348,13 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | DELETE | /api/admin/invite-codes/{id} | admin+ | 删除单个未使用的邀请码；已使用的保留作审计记录，返回 409；所属批次删空时一起删除 |
 | GET | /api/admin/files | admin+ | 全站文件**元数据**，分页（无下载入口） |
 | GET | /api/admin/settings | admin+ | 读取系统设置 `{default_quota_bytes, registration_enabled, show_github_link}` |
-| PATCH | /api/admin/settings | **superadmin** | 修改上述设置，字段都可选，只改传入的（默认配额 0 到 1TB） |
+| PATCH | /api/admin/settings | admin+ | 修改上述设置，字段都可选，只改传入的（默认配额 0 到 1TB） |
 
-**未实现**：直接创建用户、重置密码、变更角色、全站访问码管理。
+用户不存在时，上面带 `{id}` 的接口返回 404。
 
-> **隐私红线**：`/api/admin/files` 只返回元数据（属主、文件名、大小、MIME 类型、时间），**不提供 admin 下载入口**；文件内容下载统一走 `/api/files/{id}/download`，该接口仅放行归属者与 superadmin。
+**未实现**：直接创建用户、重置密码、全站访问码管理。
+
+> **隐私红线**：`/api/admin/files` 只返回元数据（属主、文件名、大小、MIME 类型、时间），不含下载地址；文件内容下载统一走 `/api/files/{id}/download`，该接口仅放行归属者与 superadmin，superadmin 下载他人文件时记日志。他人文本内容只能经上面几个 superadmin 只读接口读取。
 
 ---
 
@@ -371,6 +383,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 { "type": "file_deleted", "data": { "id": 1 } }
 { "type": "access_codes_changed", "data": {} }
 { "type": "quota_updated", "data": { "quota_bytes": 104857600 } }
+{ "type": "role_updated",  "data": { "role": "admin" } }
 { "type": "access_items_changed", "data": {} }   // 只发给快速访问页
 ```
 
@@ -381,7 +394,8 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | `file_added` / `file_deleted` | 上传完成 / 删除文件 | 文件页静默重拉列表；访问码页在 `file_deleted` 时重拉总览；布局（`Home.vue`）刷新侧栏配额 |
 | `access_codes_changed` | 设置 / 修改 / 清除访问码，删除带访问码的文本或文件 | 访问码页重拉总览；云剪切板、文本、文件页重拉以显示最新的访问码 |
 | `access_items_changed` | 快速访问页所用访问码下的内容被修改、增删，或访问码被改动 | 快速访问页静默重拉内容 |
-| `quota_updated` | 超管修改该用户配额 | 布局刷新侧栏配额 |
+| `quota_updated` | 管理员或超管修改该用户配额 | 布局刷新侧栏配额 |
+| `role_updated` | 超管修改该用户角色 | 布局重取 `/auth/me`，侧栏的管理后台入口随之出现或消失；被取消管理员时正在后台页则转到云剪切板 |
 
 - 页面级监听在挂载时注册、卸载时清理；各页面同时订阅 `open`，连接（重新）建立后补拉一次，断线期间的变更不会漏掉。
 - 心跳：客户端每 30 秒发 `{"type":"ping"}`，服务端回 `{"type":"pong"}`；单条消息超过 1024 个字符时服务端以 1009 断开。心跳只在连接打开时发送，离线时不排队。客户端发出 ping 后 10 秒内没收到任何消息，就认为连接已半断并重建。
@@ -444,25 +458,27 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 ```
 /admin
 ├── 概览      # 用户总数、活跃用户、文件总数、总存储、访问码总数、有效访问码（口径见 6.6 的 stats）
-├── 用户      # 分页列表；改配额 / 启用禁用 / 删除 按钮仅超管可见（superadmin 行不显示禁用、删除）
+├── 用户      # 分页列表；按钮按权限显示：admin 只在普通用户行看到改配额、启用禁用；
+│             #   超管另有查看文本内容（只读弹窗：云剪切板、剪切板历史、文本栏目，长内容点开取全文）、
+│             #   设为管理员 / 取消管理员、删除；superadmin 行没有启用禁用、改角色和删除
 ├── 邀请码    # 生成一批（数量 1–20 + 有效天数，0 为永久，可点 7 天 / 14 天 / 30 天 / 90 天 / 半年 / 一年 / 永久快捷填入 + 选填备注）→ 生成结果页（复制邀请码 / 复制邀请信息）；
 │             #   按批次列出：备注、生成时间、生成人、个数、有效期概要、可用 / 已过期 / 已使用各几个，只有 1 个码的批次直接显示码；
 │             #   每批可复制邀请信息（只含可用的码）、改备注、删除其中未使用的码；点开看每个码：状态、使用者、复制、
 │             #   修改有效期（单个或勾选批量，可跨批次）、删除；已使用的不能勾选、改有效期或删除；
 │             #   搜索（备注、生成人、邀请码，邀请码不分大小写、可不带短横线，命中的批次自动展开并高亮该码）
 │             #   与状态筛选（全部 / 有可用的 / 有已过期的 / 已用完，按批次判断），都在前端完成
-├── 文件      # 全站文件【元数据】分页列表（admin 与 superadmin 均可见，无下载入口）
-└── 设置      # 开放注册、显示 GitHub 链接、新用户默认配额：admin 只读，superadmin 可保存
+├── 文件      # 全站文件【元数据】分页列表（admin 与 superadmin 均可见）；超管每行有下载按钮（带进度，与文件页共用下载逻辑）
+└── 设置      # 开放注册、显示 GitHub 链接、新用户默认配额：admin 与 superadmin 均可保存
 ```
 
-**未实现**：全站访问码管理、超管在后台直接下载他人文件的入口（超管可调 `/api/files/{id}/download`）。
+**未实现**：全站访问码管理。
 
 ### 系统设置（存 DB，可热更新）
 
-后台可修改的只有三项（通过 `PATCH /api/admin/settings`，仅超管）：
+后台可修改的只有三项（通过 `PATCH /api/admin/settings`，admin 与 superadmin）：
 
 - 是否开放注册（`registration_enabled`）
-- 是否在登录后的侧栏底部显示项目的 GitHub 链接（`show_github_link`，默认显示）：一行灰色小字，链接地址写在前端 `Home.vue` 里，不可配置；开关值随 `GET /api/auth/me` 下发给所有登录用户，用户刷新页面或重新登录后生效，超管在后台保存后本页侧栏立即更新
+- 是否在登录后的侧栏底部显示项目的 GitHub 链接（`show_github_link`，默认显示）：一行灰色小字，链接地址写在前端 `Home.vue` 里，不可配置；开关值随 `GET /api/auth/me` 下发给所有登录用户，用户刷新页面或重新登录后生效，在后台保存后本页侧栏立即更新
 - 新用户默认配额（`default_quota_bytes`，默认 100MB）
 
 单文件上限、分片大小、历史保留条数、上传会话过期时间、每用户并发上传会话数都只能在 `.env` 里配置，改后需重启后端。邀请码没有「默认有效期」设置，由前端按填写的天数换算成 `expires_at`（生成与修改有效期都从操作的这一刻开始算）。
@@ -474,7 +490,7 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 ### 前端角色控制
 
 - 路由守卫：非 admin/superadmin 访问 `/admin` 直接重定向。
-- 组件级：用户管理的修改按钮仅当 `role === 'superadmin'` 时渲染。
+- 组件级：用户行与文件行的按钮按当前角色和目标用户的角色渲染（规则同第 4 节），写在 `Admin.vue` 的 `canEditQuota` / `canToggleStatus` / `canChangeRole` / `canDeleteUser` / `canViewContent`。
 - **后端才是权限的最终防线**，前端隐藏只是体验层，所有接口都做服务端角色校验。
 
 ---
@@ -555,7 +571,7 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 | 传输加密 | HTTP（测试 / 可信内网）与 HTTPS（正式使用）可切换，HTTP 下全部内容明文传输（第 11、17 节）。 |
 | 密码存储 | bcrypt 哈希，绝不存明文，不在日志/响应回显。 |
 | 认证 | JWT，必须带 `exp`（默认 7 天），只允许 HS 系列算法；`JWT_SECRET` 少于 32 位或为示例值时后端拒绝启动；每次请求回库校验用户存在且未禁用。 |
-| 角色权限 | 三级角色后端强制校验；admin 看不到文件/文本内容，仅 superadmin 可绕过。 |
+| 角色权限 | 三级角色后端强制校验；admin 看不到文件/文本内容、只能管理普通用户，仅 superadmin 可读他人内容（只读、记日志）与任免管理员。 |
 | 登录爆破 | 注册、登录、快速访问接口限流（数值见第 6 节开头）；登录在用户不存在时也执行一次 bcrypt，防时序枚举。限流按真实客户端 IP，依赖 uvicorn `--proxy-headers` 信任反代传来的 `X-Forwarded-For`。 |
 | 数据隔离 | 隐私查询强制 `WHERE user_id = current_user`，仅 superadmin 例外。 |
 | 越权访问 | 读写、下载、删除、设置访问码前先校验归属；快速访问的查询限定「属主 + 访问码」，不信任客户端传入路径。 |
@@ -635,7 +651,7 @@ CodeProject/
     │   │   │   ├── theme.js        # 主题（跟随系统 / 浅色 / 深色，记在本浏览器）
     │   │   │   ├── glass.js        # 玻璃质感（液态折射的启用判断、悬停高光跟随鼠标）
     │   │   │   └── download.js     # Blob 交给浏览器保存
-    │   │   ├── components/       # AuthLayout / BrandMark / ThemeToggle / ToastHost / DialogHost / TextEditorCard / AccessCodeButton / AccessCodeDialog / LoadingSkeleton
+    │   │   ├── components/       # AuthLayout / BrandMark / ThemeToggle / ToastHost / DialogHost / TextEditorCard / AccessCodeButton / AccessCodeDialog / LoadingSkeleton / UserContentDialog
     │   │   └── views/
     │   │       ├── Login.vue / Register.vue
     │   │       ├── Home.vue          # 登录后布局（侧边栏）
@@ -710,12 +726,12 @@ CodeProject/
 | 模块 | 已实现 | 未实现 |
 |------|------|------|
 | 基础 | 配置（含 HTTP/HTTPS 开关）、异步数据库、数据模型、Alembic 迁移 | — |
-| 认证与角色 | 邀请码注册、登录、JWT、三级角色校验、存储配额 | 直接创建用户、重置密码、变更角色 |
+| 认证与角色 | 邀请码注册、登录、JWT、三级角色校验、存储配额、超管任免管理员 | 直接创建用户、重置密码 |
 | 云剪切板 | 当前文本读写（冲突检测）、历史查看 / 恢复 / 删除、WebSocket 广播 | — |
 | 文本栏目 | 多段文本新建 / 编辑 / 删除（冲突检测，长文本按需载入）、WebSocket 广播 | 文本历史版本 |
 | 文件 | 分片上传（配额校验、取消）、流式下载、删除、越权与路径穿越防护 | 前端断点续传 |
 | 快速访问码 | 自定访问码设置 / 修改 / 清除、按访问码总览、「用户名@访问码」免登录进入（改文本 / 下载文件）、实时刷新、输错锁定与限流 | — |
-| 管理后台 | 概览统计、用户管理（配额 / 启用禁用 / 删除）、邀请码、全站文件元数据、系统设置 | 变更角色、全站访问码管理 |
+| 管理后台 | 概览统计、用户管理（配额 / 启用禁用 / 删除 / 任免管理员）、超管只读查看用户文本、全站文件元数据与超管下载、邀请码、系统设置 | 全站访问码管理 |
 | 前端 | 登录 / 注册（含快速访问入口）、云剪切板、文本、文件、访问码、管理后台、快速访问页、路由守卫、WebSocket 接入、浅色 / 深色主题 | 自动化测试 |
 | 部署 | Docker Compose（开发机构建离线导入 / 服务器源码构建）、HTTP / HTTPS Nginx 配置、Let's Encrypt 证书申请与续期、备份 / 清理 / 健康检查脚本 | 不使用 Docker 的直接部署（不支持） |
 
