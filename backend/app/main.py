@@ -1,4 +1,7 @@
 """FastAPI 应用入口"""
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,11 +12,28 @@ from slowapi.errors import RateLimitExceeded
 from .config import settings
 from .rate_limit import limiter
 from .api import auth, clipboard, texts, files, ws, access, admin
+from .database import AsyncSessionLocal
+from .core.deploy_info import current_build, record_deployment
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """启动时登记部署记录；登记失败只记日志，不影响服务启动"""
+    try:
+        async with AsyncSessionLocal() as db:
+            await record_deployment(db, current_build())
+    except Exception:
+        logger.exception("登记部署记录失败")
+    yield
+
 
 app = FastAPI(
     title="ClipSync API",
     version="0.1.0",
     description="跨终端剪贴板与文件同步服务",
+    lifespan=lifespan,
 )
 
 # 限流器配置

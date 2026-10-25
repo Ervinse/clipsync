@@ -5,6 +5,7 @@ from .clipboard import Clipboard, ClipboardHistory
 from .text import Text
 from .file import File, UploadSession
 from .setting import Setting
+from .deployment import Deployment
 
 __all__ = [
     "User",
@@ -17,4 +18,5 @@ __all__ = [
     "File",
     "UploadSession",
     "Setting",
+    "Deployment",
 ]

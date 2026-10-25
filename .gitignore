@@ -65,6 +65,9 @@ yarn-error.log*
 # 保留 alembic/ 和 alembic.ini，但忽略可能的临时文件
 alembic/__pycache__/
 
+# 构建信息：build-release.ps1 打包时生成，只进镜像，不进仓库
+backend/BUILD_INFO
+
 # Uploaded files (production data)
 # 存储目录为 STORAGE_DIR（默认 backend/storage）
 backend/storage/

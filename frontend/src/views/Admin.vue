@@ -4,7 +4,7 @@ import {
   ChartColumn, Users, UserCheck, Ticket, Folder, Settings, File, HardDrive,
   Plus, Copy, Trash2, Ban, CircleCheck, Pencil, ChevronLeft, ChevronRight, ChevronDown, Search,
   CircleAlert, Info, LoaderCircle, X, CalendarClock, KeyRound, ShieldCheck,
-  ShieldPlus, ShieldMinus, Eye, Download,
+  ShieldPlus, ShieldMinus, Eye, Download, Server,
 } from '@lucide/vue'
 import { useAdminStore, useUserStore, useFilesStore } from '../stores'
 import UserContentDialog from '../components/UserContentDialog.vue'
@@ -33,6 +33,7 @@ const TABS = [
   { key: 'invites', label: '邀请码', icon: Ticket },
   { key: 'files', label: '文件', icon: Folder },
   { key: 'settings', label: '设置', icon: Settings },
+  { key: 'system', label: '系统信息', icon: Server },
 ]
 const activeTab = ref('stats')
 const showCreateInviteModal = ref(false)
@@ -67,6 +68,7 @@ onMounted(async () => {
     ['邀请码', adminStore.fetchInviteBatches()],
     ['文件', adminStore.fetchFiles()],
     ['设置', adminStore.fetchSettings()],
+    ['系统信息', adminStore.fetchDeployInfo()],
   ]
   const results = await Promise.allSettled(tasks.map(([, p]) => p))
   syncSettingsForm()
@@ -683,6 +685,58 @@ const gotoFilesPage = async (delta) => {
 const formatDate = (value) => formatDateTime(value, '永久有效', false)
 
 const copyInviteCode = (code) => copyText(code, '邀请码已复制')
+
+// ========== 系统信息 ==========
+// 版本号来自服务器 .env 的 CLIPSYNC_TAG；为空表示没走 Docker 部署（开发环境）
+const MAX_DEPLOY_NOTE_CHARS = 200
+const deployInfo = computed(() => adminStore.deployInfo)
+const versionLabel = (version) => {
+  if (!version) return '开发版本'
+  if (version === 'latest') return 'latest（master 最新构建）'
+  return version
+}
+const shortCommit = (sha) => (sha ? sha.slice(0, 12) : '-')
+
+// 已运行时长：取到数据后在本机继续累加，每 30 秒刷新一次显示
+const nowTick = ref(Date.now())
+let uptimeTimer = null
+onMounted(() => { uptimeTimer = window.setInterval(() => { nowTick.value = Date.now() }, 30000) })
+onUnmounted(() => window.clearInterval(uptimeTimer))
+const uptimeText = computed(() => {
+  if (!deployInfo.value) return '-'
+  const elapsed = Math.max(0, Math.floor((nowTick.value - adminStore.deployInfoFetchedAt) / 1000))
+  const total = deployInfo.value.uptime_seconds + elapsed
+  const days = Math.floor(total / 86400)
+  const hours = Math.floor((total % 86400) / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  if (days > 0) return `${days} 天 ${hours} 小时`
+  if (hours > 0) return `${hours} 小时 ${minutes} 分钟`
+  return minutes > 0 ? `${minutes} 分钟` : '不到 1 分钟'
+})
+const formatFullDate = (value) => formatDateTime(value, '-', true)
+
+const handleEditDeployNote = async (record) => {
+  const input = await promptDialog({
+    title: record.note ? '修改部署备注' : '添加部署备注',
+    message: `写下这次部署的说明，最多 ${MAX_DEPLOY_NOTE_CHARS} 个字；留空表示清除备注。`,
+    label: '备注',
+    defaultValue: record.note,
+    confirmText: '保存',
+  })
+  if (input === null) return
+  const note = input.trim()
+  if (noteLength(note) > MAX_DEPLOY_NOTE_CHARS) {
+    toast.error(`备注最多 ${MAX_DEPLOY_NOTE_CHARS} 个字`)
+    return
+  }
+  if (note === record.note) return
+  try {
+    await adminStore.updateDeploymentNote(record.id, note)
+    toast.success(note ? '备注已保存' : '备注已清除')
+  } catch (error) {
+    toast.error('保存失败：' + error.message)
+  }
+}
 </script>
 
 <template>
@@ -1168,6 +1222,97 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
           </button>
         </div>
       </form>
+    </div>
+
+    <!-- 系统信息：admin 及以上可看，只有超管能写部署备注 -->
+    <div v-if="activeTab === 'system'" class="tab-panel">
+      <div v-if="!deployInfo" class="alert alert-warning">
+        <CircleAlert />
+        <span>系统信息未能加载，请刷新页面重试。</span>
+      </div>
+      <template v-else>
+        <div class="settings card system-info">
+          <div class="setting-row">
+            <span class="setting-title">版本</span>
+            <span class="system-value">{{ versionLabel(deployInfo.app_version) }}</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-title">提交号</span>
+            <span class="system-value mono">{{ shortCommit(deployInfo.commit_sha) }}</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-title">分支</span>
+            <span class="system-value">{{ deployInfo.branch || '-' }}</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-title">构建时间</span>
+            <span class="system-value">{{ formatFullDate(deployInfo.built_at) }}</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-title">部署时间</span>
+            <span class="system-value">{{ formatFullDate(deployInfo.current?.deployed_at) }}</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-title">本次启动</span>
+            <span class="system-value">{{ formatFullDate(deployInfo.started_at) }}</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-title">已运行</span>
+            <span class="system-value">{{ uptimeText }}</span>
+          </div>
+          <p class="settings-note">
+            版本取自服务器 .env 的 CLIPSYNC_TAG；提交号、分支与构建时间在打包时写入镜像。
+            部署时间是这个版本第一次启动的时间，重启不会改变；本次启动时间每次重启都会更新。
+          </p>
+        </div>
+
+        <h2 class="system-heading">部署记录</h2>
+        <div v-if="deployInfo.history.length === 0" class="empty">
+          <span class="empty-icon"><Server :size="20" /></span>
+          <p class="empty-title">还没有部署记录</p>
+          <p class="empty-text">后端每次以新版本启动时会自动记一条</p>
+        </div>
+        <div v-else class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>版本</th>
+                <th>提交号</th>
+                <th>部署时间</th>
+                <th>备注</th>
+                <th v-if="userStore.isSuperAdmin" class="cell-actions"><span class="sr-only">操作</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="record in deployInfo.history" :key="record.id">
+                <td>
+                  {{ versionLabel(record.app_version) }}
+                  <span v-if="deployInfo.current?.id === record.id" class="badge badge-success">当前</span>
+                </td>
+                <td class="cell-muted mono" :title="record.branch">{{ shortCommit(record.commit_sha) }}</td>
+                <td class="cell-muted">{{ formatFullDate(record.deployed_at) }}</td>
+                <td>
+                  <span v-if="record.note" class="batch-note">{{ record.note }}</span>
+                  <span v-else class="batch-note-empty">无备注</span>
+                </td>
+                <td v-if="userStore.isSuperAdmin" class="cell-actions">
+                  <button
+                    class="btn-icon"
+                    :title="record.note ? '修改备注' : '添加备注'"
+                    :aria-label="record.note ? '修改备注' : '添加备注'"
+                    @click="handleEditDeployNote(record)"
+                  >
+                    <Pencil />
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-if="deployInfo.total > deployInfo.history.length" class="settings-note">
+          共 {{ deployInfo.total }} 条记录，这里显示最近 {{ deployInfo.history.length }} 条。
+        </p>
+      </template>
     </div>
 
     <!-- 创建邀请码弹窗 -->
@@ -1770,6 +1915,24 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
 
 .settings:has(.settings-footer) {
   padding-bottom: 0;
+}
+
+.system-info .setting-row {
+  padding: var(--space-3) 0;
+}
+
+.system-value {
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.system-heading {
+  margin: var(--space-6) 0 var(--space-3);
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-text);
 }
 
 .header-with-close {
