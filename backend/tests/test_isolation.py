@@ -108,6 +108,7 @@ def test_plain_user_cannot_reach_admin(client, make_user):
     ("get", "/api/admin/users/{id}/clipboard", None),
     ("get", "/api/admin/users/{id}/clipboard/history", None),
     ("get", "/api/admin/users/{id}/texts", None),
+    ("patch", "/api/admin/deployments/{id}", {"note": "x"}),
 ])
 def test_admin_cannot_call_superadmin_endpoints(client, make_user, method, path, body):
     admin = make_user(UserRole.ADMIN)

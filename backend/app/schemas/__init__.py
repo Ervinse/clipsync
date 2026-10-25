@@ -57,6 +57,9 @@ from .admin import (
     InviteBatchDeleteResult,
     SystemSettingsResponse,
     UpdateSystemSettings,
+    DeploymentResponse,
+    DeployInfoResponse,
+    DeploymentNoteUpdate,
     AdminFileListItem,
     AdminFileListResponse,
 )
@@ -109,6 +112,9 @@ __all__ = [
     "InviteBatchDeleteResult",
     "SystemSettingsResponse",
     "UpdateSystemSettings",
+    "DeploymentResponse",
+    "DeployInfoResponse",
+    "DeploymentNoteUpdate",
     "AdminFileListItem",
     "AdminFileListResponse",
 ]

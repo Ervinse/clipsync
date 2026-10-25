@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     # 部署
     HSTS_ENABLED: bool = False
     CORS_ORIGINS: str = "http://localhost:5173"
+    # 运行的版本号：Docker 部署由 compose 从 .env 的 CLIPSYNC_TAG 传入（版本号、提交号或 latest）；开发环境留空
+    APP_VERSION: str = ""
 
     # 存储
     STORAGE_DIR: str = "./storage"

@@ -160,6 +160,50 @@ class UpdateSystemSettings(BaseModel):
     show_github_link: Optional[bool] = Field(None, description="登录后侧栏是否显示 GitHub 链接")
 
 
+MAX_DEPLOYMENT_NOTE_CHARS = 200
+
+
+class DeploymentResponse(BaseModel):
+    """一条部署记录；app_version 为空表示没走 Docker 部署（开发环境）"""
+    id: int
+    app_version: str
+    commit_sha: str
+    branch: str
+    built_at: Optional[datetime]
+    deployed_at: datetime
+    note: str
+
+    class Config:
+        from_attributes = True
+
+
+class DeployInfoResponse(BaseModel):
+    """
+    正在运行的版本与部署记录。
+    app_version / commit_sha / branch / built_at 是运行中进程的信息；current 是对应的部署记录（登记失败时为空）；
+    started_at 为本次启动时间，uptime_seconds 为已运行秒数；history 为最近的部署记录，按时间倒序
+    """
+    app_version: str
+    commit_sha: str
+    branch: str
+    built_at: Optional[datetime]
+    started_at: datetime
+    uptime_seconds: int
+    current: Optional[DeploymentResponse]
+    history: list[DeploymentResponse]
+    total: int
+
+
+class DeploymentNoteUpdate(BaseModel):
+    """修改部署备注（仅超管）；空字符串表示清除"""
+    note: str = Field(..., max_length=MAX_DEPLOYMENT_NOTE_CHARS, description="备注（最多 200 字）")
+
+    @field_validator("note")
+    @classmethod
+    def _strip_note(cls, value: str) -> str:
+        return value.strip()
+
+
 class AdminFileListItem(BaseModel):
     """文件列表项（管理员视图，仅元数据）"""
     id: int

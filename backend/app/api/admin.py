@@ -1,4 +1,4 @@
-"""管理后台路由：统计 + 用户管理 + 邀请码 + 系统设置"""
+"""管理后台路由：统计 + 用户管理 + 邀请码 + 系统设置 + 系统信息"""
 import logging
 from datetime import datetime
 
@@ -24,6 +24,7 @@ from ..models import (
     Clipboard,
     ClipboardHistory,
     UploadSession,
+    Deployment,
 )
 from ..schemas import (
     SystemStats,
@@ -48,6 +49,9 @@ from ..schemas import (
     InviteBatchDeleteResult,
     SystemSettingsResponse,
     UpdateSystemSettings,
+    DeploymentResponse,
+    DeployInfoResponse,
+    DeploymentNoteUpdate,
     AdminFileListItem,
     AdminFileListResponse,
 )
@@ -62,6 +66,7 @@ from ..core.app_settings import (
 )
 from ..core.quick_access import CODED_MODELS
 from ..core.invite_code import generate_invite_code
+from ..core.deploy_info import STARTED_AT, current_build, current_deployment
 from .clipboard import to_clipboard_response, history_list_query, rows_to_history_list, to_history_item
 from .texts import summary_query, rows_to_summaries, to_text_response, MAX_TEXTS_PER_USER, NOT_FOUND_DETAIL
 
@@ -772,6 +777,62 @@ async def update_system_settings(
 
     await db.commit()
     return await _read_system_settings(db)
+
+
+# ========== 系统信息（版本与部署记录） ==========
+
+# 部署记录一次返回最近的条数
+DEPLOY_HISTORY_LIMIT = 50
+
+
+@router.get("/deploy-info", response_model=DeployInfoResponse)
+async def get_deploy_info(
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    正在运行的版本、本次启动时间、已运行时长与最近的部署记录
+
+    权限：admin + superadmin（只含版本与部署信息，不含用户数据）
+    """
+    build = current_build()
+    result = await db.execute(
+        select(Deployment).order_by(Deployment.id.desc()).limit(DEPLOY_HISTORY_LIMIT)
+    )
+    history = result.scalars().all()
+    total = (await db.execute(select(func.count(Deployment.id)))).scalar()
+    current = await current_deployment(db, build)
+    return DeployInfoResponse(
+        app_version=build.app_version,
+        commit_sha=build.commit_sha,
+        branch=build.branch,
+        built_at=build.built_at,
+        started_at=STARTED_AT,
+        uptime_seconds=max(0, int((utcnow() - STARTED_AT).total_seconds())),
+        current=DeploymentResponse.model_validate(current) if current else None,
+        history=[DeploymentResponse.model_validate(item) for item in history],
+        total=total,
+    )
+
+
+@router.patch("/deployments/{deployment_id}", response_model=DeploymentResponse)
+async def update_deployment_note(
+    deployment_id: int,
+    data: DeploymentNoteUpdate,
+    current_user: User = Depends(require_role(UserRole.SUPERADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    修改部署备注，空字符串表示清除
+
+    权限：仅 superadmin
+    """
+    deployment = await db.get(Deployment, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="部署记录不存在")
+    deployment.note = data.note
+    await db.commit()
+    return DeploymentResponse.model_validate(deployment)
 
 
 # ========== 文件管理（仅元数据） ==========
