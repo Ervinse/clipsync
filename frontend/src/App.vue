@@ -1,8 +1,12 @@
 <script setup>
 // 根组件：路由视图 + 全局共用的提示条与对话框 + 液态折射用的 SVG 滤镜。全局样式与设计变量在 style.css
+import { defineAsyncComponent } from 'vue'
 import { setLucideProps } from '@lucide/vue'
 import ToastHost from './components/ToastHost.vue'
 import DialogHost from './components/DialogHost.vue'
+
+// 开发环境专用的玻璃效果调节面板；生产构建时 import.meta.env.DEV 为 false，组件不会打包
+const GlassTuner = import.meta.env.DEV ? defineAsyncComponent(() => import('./components/GlassTuner.vue')) : null
 
 // 图标统一的默认尺寸与线宽（单个图标仍可用 :size 覆盖）
 setLucideProps({ size: 16, strokeWidth: 1.75 })
@@ -22,6 +26,7 @@ setLucideProps({ size: 16, strokeWidth: 1.75 })
   <router-view />
   <ToastHost />
   <DialogHost />
+  <GlassTuner v-if="GlassTuner" />
 </template>
 
 <style scoped>

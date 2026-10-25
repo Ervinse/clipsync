@@ -157,6 +157,8 @@
   /* 毛玻璃的模糊强度（不随主题变）；液态折射时模糊调低，先模糊再折射，背后内容的起伏才看得出 */
   --glass-blur: blur(20px) saturate(170%);
   --liquid-filter: blur(8px) url(#cs-liquid) saturate(170%);
+  /* 卡片、表格、侧栏的背景模糊；默认不模糊（背后只有平滑的光斑），开发环境的调节面板（GlassTuner.vue）会改写它 */
+  --surface-filter: none;
 
   /* 控件高度与布局尺寸 */
   --control-height-sm: 30px;
@@ -624,6 +626,7 @@ a:hover {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--glass-shadow), var(--shadow-xs);
+  backdrop-filter: var(--surface-filter);
 }
 
 /* 可悬停的独立卡片（统计卡、访问码分组）：鼠标移上去阴影加深、轻轻抬起，表面有一团跟着鼠标走的柔光。
@@ -843,6 +846,7 @@ a:hover {
   background-color: var(--color-glass);
   background-image: var(--glass-sheen);
   box-shadow: var(--glass-shadow), var(--shadow-xs);
+  backdrop-filter: var(--surface-filter);
 }
 
 .table {
@@ -1043,6 +1047,7 @@ html.liquid-glass .liquid {
     --glass-blur: none;
     --overlay-blur: none;
     --liquid-filter: none;
+    --surface-filter: none;
   }
 }
 

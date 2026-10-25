@@ -86,7 +86,8 @@ src/
 │   ├── TextEditorCard.vue # 一段文本的编辑卡片（文本页与快速访问页共用）
 │   ├── AccessCodeButton.vue # 条目旁的访问码按钮
 │   ├── AccessCodeDialog.vue # 设置 / 修改 / 清除访问码的弹窗
-│   └── LoadingSkeleton.vue # 列表加载中的骨架屏（文本、文件、访问码、快速访问页共用）
+│   ├── LoadingSkeleton.vue # 列表加载中的骨架屏（文本、文件、访问码、快速访问页共用）
+│   └── GlassTuner.vue # 玻璃效果调节面板（仅 npm run dev 下显示，生产构建不打包）
 ├── utils/          # 工具函数
 │   ├── websocket.js # WebSocket 管理器
 │   ├── clipboard.js # 复制到剪贴板（HTTP 下降级为 execCommand）
@@ -285,6 +286,7 @@ server: {
   - 液态折射：提示条、窄屏顶栏、快速访问页顶栏带 `.liquid`；在 Chromium 内核浏览器（Chrome、Edge）上 `utils/glass.js` 给 `<html>` 加 `liquid-glass`，这些元素改用 `--liquid-filter`：背后内容先轻度模糊，再经 `App.vue` 里的 SVG 滤镜 `#cs-liquid` 按起伏纹理位移，像隔着有厚度的玻璃。Safari、Firefox 只有普通毛玻璃
   - 悬停高光：有鼠标的设备上，主按钮、次要按钮、次要危险按钮、`.card-hover` 卡片悬停时表面有一团跟着鼠标走的柔光（`utils/glass.js` 写 `--mx` / `--my`，每帧最多更新一次）
   - 系统开启「降低透明度」时，玻璃一律换成不透明底色，不模糊、不折射，光斑去掉
+  - 调节面板：`npm run dev` 下页面右下角有玻璃效果调节面板（`GlassTuner.vue`，`App.vue` 只在 `import.meta.env.DEV` 时异步加载），滑块实时改写 `<html>` 上的光斑、玻璃底色、光泽与亮边、卡片与侧栏模糊（`--surface-filter`，默认 `none`）和折射幅度，可在「当前版本」与「夸张版」之间切换，「复制数值」把当前设置复制成 JSON；设置记在本浏览器 `localStorage`（键 `glass-tuner`）。面板只用于定数值，定下后写回 `style.css`
   - 对比度按光斑最浓处、叠上玻璃底色与光泽后的颜色核算：弱提示文字（浅色 `#6b6b74`、深色 `#93939d`）、强调色与状态色都满足 4.5:1；调高光斑或透明度前要重新核算
 - **加载中**：文本、文件、访问码、快速访问页的列表加载时显示骨架屏（`LoadingSkeleton.vue`，`variant="rows"` 是一张卡片里的多行，`variant="cards"` 是多张卡片），灰色占位块上有一道光扫过；屏幕阅读器读到「加载中…」
 - **图标**：`@lucide/vue` 细线图标，`App.vue` 统一设默认 16px、线宽 1.75；不用 emoji
