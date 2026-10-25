@@ -32,6 +32,12 @@ from ..schemas import (
     AdminUserDetail,
     UpdateUserQuota,
     UpdateUserStatus,
+    UpdateUserRole,
+    ClipboardResponse,
+    ClipboardHistoryItem,
+    ClipboardHistoryList,
+    TextResponse,
+    TextListResponse,
     InviteBatchCreate,
     InviteBatchNoteUpdate,
     InviteCodeExpiryUpdate,
@@ -56,6 +62,8 @@ from ..core.app_settings import (
 )
 from ..core.quick_access import CODED_MODELS
 from ..core.invite_code import generate_invite_code
+from .clipboard import to_clipboard_response, history_list_query, rows_to_history_list, to_history_item
+from .texts import summary_query, rows_to_summaries, to_text_response, MAX_TEXTS_PER_USER, NOT_FOUND_DETAIL
 
 logger = logging.getLogger(__name__)
 
@@ -221,19 +229,29 @@ async def get_user_detail(
     return await _build_user_detail(db, user)
 
 
+def _ensure_admin_targets_plain_user(current_user: User, target: User) -> None:
+    """安全红线：admin 只能管理普通用户，不能动其他 admin 和 superadmin（也包括自己）"""
+    if current_user.role == UserRole.ADMIN and target.role != UserRole.USER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="管理员只能管理普通用户",
+        )
+
+
 @router.patch("/users/{user_id}/quota", response_model=AdminUserDetail)
 async def update_user_quota(
     user_id: int,
     data: UpdateUserQuota,
-    current_user: User = Depends(require_role(UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
     """
     修改用户配额
 
-    权限：仅 superadmin
+    权限：admin（只能改普通用户）+ superadmin（可改所有人）
     """
     user = await _get_user_or_404(db, user_id)
+    _ensure_admin_targets_plain_user(current_user, user)
     user.quota_bytes = data.quota_bytes
     await db.commit()
 
@@ -250,13 +268,13 @@ async def update_user_quota(
 async def update_user_status(
     user_id: int,
     data: UpdateUserStatus,
-    current_user: User = Depends(require_role(UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
     """
     修改用户状态（启用/禁用）
 
-    权限：仅 superadmin
+    权限：admin（只能操作普通用户）+ superadmin（不能操作其他 superadmin）
     """
     # 1. 查询用户
     result = await db.execute(select(User).where(User.id == user_id))
@@ -281,6 +299,7 @@ async def update_user_status(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="不能修改其他超级管理员的状态",
         )
+    _ensure_admin_targets_plain_user(current_user, user)
 
     # 3. 更新状态
     user.is_active = data.is_active
@@ -292,6 +311,37 @@ async def update_user_status(
         await manager.disconnect_user(user.id)
 
     # 4. 返回详情
+    return await _build_user_detail(db, user)
+
+
+@router.patch("/users/{user_id}/role", response_model=AdminUserDetail)
+async def update_user_role(
+    user_id: int,
+    data: UpdateUserRole,
+    current_user: User = Depends(require_role(UserRole.SUPERADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    修改用户角色（普通用户 ↔ 管理员）
+
+    权限：仅 superadmin
+    安全红线：admin 不能改角色（否则被盗的管理员账号可以再提拔别的账号）；
+    不能把人设为 superadmin（schema 只接受 user / admin），也不能改自己或其他 superadmin 的角色
+    """
+    user = await _get_user_or_404(db, user_id)
+    if user.id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能修改自己的角色")
+    if user.role == UserRole.SUPERADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="不能修改超级管理员的角色")
+
+    user.role = UserRole(data.role)
+    await db.commit()
+
+    # 通知目标用户的在线终端刷新身份：降级后管理后台入口立即消失（接口权限由 get_current_user 每次回库判断）
+    await manager.broadcast_to_user(
+        user_id=user_id,
+        message={"type": "role_updated", "data": {"role": user.role.value}},
+    )
     return await _build_user_detail(db, user)
 
 
@@ -699,13 +749,13 @@ async def _upsert_setting(db: AsyncSession, key: str, value: str) -> None:
 @router.patch("/settings", response_model=SystemSettingsResponse)
 async def update_system_settings(
     data: UpdateSystemSettings,
-    current_user: User = Depends(require_role(UserRole.SUPERADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SUPERADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
     """
     更新系统设置
 
-    权限：仅 superadmin
+    权限：admin + superadmin
     """
     if data.default_quota_bytes is not None:
         await _upsert_setting(db, "default_quota_bytes", str(data.default_quota_bytes))
@@ -768,6 +818,91 @@ async def list_all_files(
         ))
 
     return AdminFileListResponse(items=items, total=total)
+
+
+# ========== 查看用户文本内容（仅 superadmin，只读） ==========
+# 安全红线：这一组接口是唯一能读到他人文本内容的入口，只放行 superadmin；全部只读，
+# 不提供修改、删除、恢复；每次读取写一条日志，便于事后追溯谁看过谁的内容
+
+
+async def _content_owner_or_404(db: AsyncSession, current_user: User, user_id: int, what: str) -> User:
+    user = await _get_user_or_404(db, user_id)
+    logger.info("超管查看用户内容 operator=%s target=%s what=%s", current_user.id, user_id, what)
+    return user
+
+
+@router.get("/users/{user_id}/clipboard", response_model=ClipboardResponse)
+async def get_user_clipboard(
+    user_id: int,
+    current_user: User = Depends(require_role(UserRole.SUPERADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """查看某用户云剪切板的当前文本（权限：仅 superadmin，只读）"""
+    await _content_owner_or_404(db, current_user, user_id, "clipboard")
+    result = await db.execute(select(Clipboard).where(Clipboard.user_id == user_id))
+    return to_clipboard_response(result.scalar_one_or_none())
+
+
+@router.get("/users/{user_id}/clipboard/history", response_model=ClipboardHistoryList)
+async def get_user_clipboard_history(
+    user_id: int,
+    current_user: User = Depends(require_role(UserRole.SUPERADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """查看某用户云剪切板的历史列表，长内容只给开头（权限：仅 superadmin，只读）"""
+    await _content_owner_or_404(db, current_user, user_id, "clipboard_history")
+    result = await db.execute(history_list_query(user_id))
+    return rows_to_history_list(result.all())
+
+
+@router.get("/users/{user_id}/clipboard/history/{history_id}", response_model=ClipboardHistoryItem)
+async def get_user_clipboard_history_item(
+    user_id: int,
+    history_id: int,
+    current_user: User = Depends(require_role(UserRole.SUPERADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """查看某用户一条历史的全文（权限：仅 superadmin，只读；按「用户 + 历史 id」定位）"""
+    await _content_owner_or_404(db, current_user, user_id, f"clipboard_history:{history_id}")
+    result = await db.execute(
+        select(ClipboardHistory).where(
+            ClipboardHistory.id == history_id,
+            ClipboardHistory.user_id == user_id,
+        )
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="历史记录不存在")
+    return to_history_item(item)
+
+
+@router.get("/users/{user_id}/texts", response_model=TextListResponse)
+async def list_user_texts(
+    user_id: int,
+    current_user: User = Depends(require_role(UserRole.SUPERADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """查看某用户的文本栏目列表，长内容只给开头（权限：仅 superadmin，只读）"""
+    await _content_owner_or_404(db, current_user, user_id, "texts")
+    result = await db.execute(summary_query(Text.user_id == user_id))
+    items = rows_to_summaries(result.all())
+    return TextListResponse(items=items, total=len(items), max_texts=MAX_TEXTS_PER_USER)
+
+
+@router.get("/users/{user_id}/texts/{text_id}", response_model=TextResponse)
+async def get_user_text(
+    user_id: int,
+    text_id: int,
+    current_user: User = Depends(require_role(UserRole.SUPERADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """查看某用户一条文本的全文（权限：仅 superadmin，只读；按「用户 + 文本 id」定位）"""
+    await _content_owner_or_404(db, current_user, user_id, f"text:{text_id}")
+    result = await db.execute(select(Text).where(Text.id == text_id, Text.user_id == user_id))
+    text = result.scalar_one_or_none()
+    if text is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=NOT_FOUND_DETAIL)
+    return to_text_response(text)
 
 
 
