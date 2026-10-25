@@ -98,7 +98,7 @@ def test_admin_user_detail_has_no_clipboard_content(client, make_user):
 
 def test_plain_user_cannot_reach_admin(client, make_user):
     user = make_user()
-    for path in ["/api/admin/stats", "/api/admin/users", "/api/admin/files", "/api/admin/invite-codes", "/api/admin/settings"]:
+    for path in ["/api/admin/stats", "/api/admin/users", "/api/admin/files", "/api/admin/invite-batches", "/api/admin/settings"]:
         assert client.get(path, headers=user.headers).status_code == 403, path
 
 

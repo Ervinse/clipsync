@@ -119,7 +119,7 @@ def test_out_of_range_expiry_is_400_not_500(client, make_user, value):
     user, admin = make_user(), make_user(UserRole.ADMIN)
     body = {"target_type": "clipboard", "code": "mycode", "expires_at": value}
     assert client.put("/api/access-codes", json=body, headers=user.headers).status_code == 400
-    resp = client.post("/api/admin/invite-codes", json={"expires_at": value}, headers=admin.headers)
+    resp = client.post("/api/admin/invite-batches", json={"expires_at": value}, headers=admin.headers)
     assert resp.status_code == 400
 
 

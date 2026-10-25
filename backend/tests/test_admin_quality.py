@@ -1,19 +1,20 @@
 """管理后台：查询合并（N+1 改写）后的结果正确性、邀请码删除约束"""
-from app.models import InviteCode, UserRole
+from app.models import UserRole
 from app.core.timeutil import utcnow
-from tests.helpers import upload
+from tests.helpers import upload, add_invite
 
 
 def _add_invite(db, code, created_by, used_by=None, used=False):
-    async def _create(s):
-        s.add(InviteCode(
-            code=code,
-            created_by=created_by,
-            used_by=used_by,
-            used_at=utcnow() if used else None,
-            created_at=utcnow(),
-        ))
-    db(_create)
+    return add_invite(db, code, created_by, used_by=used_by, used_at=utcnow() if used else None)
+
+
+def _codes(client, admin):
+    """批次列表展开成 {code: 码}，码上附带所属批次的创建者用户名"""
+    batches = client.get("/api/admin/invite-batches", headers=admin.headers).json()["items"]
+    return {
+        c["code"]: {**c, "created_by_username": b["created_by_username"]}
+        for b in batches for c in b["codes"]
+    }
 
 
 def test_used_invite_code_cannot_be_deleted(client, db, make_user):
@@ -22,7 +23,7 @@ def test_used_invite_code_cannot_be_deleted(client, db, make_user):
     _add_invite(db, "USEDCODE0001", admin.id, used_by=member.id, used=True)
     _add_invite(db, "FRESHCODE001", admin.id)
 
-    items = {i["code"]: i for i in client.get("/api/admin/invite-codes", headers=admin.headers).json()["items"]}
+    items = _codes(client, admin)
 
     resp = client.delete(f"/api/admin/invite-codes/{items['USEDCODE0001']['id']}", headers=admin.headers)
     assert resp.status_code == 409
@@ -35,7 +36,7 @@ def test_invite_code_list_includes_usernames(client, db, make_user):
     _add_invite(db, "USEDCODE0002", admin.id, used_by=member.id, used=True)
     _add_invite(db, "FRESHCODE002", admin.id)
 
-    items = {i["code"]: i for i in client.get("/api/admin/invite-codes", headers=admin.headers).json()["items"]}
+    items = _codes(client, admin)
     assert items["USEDCODE0002"]["created_by_username"] == admin.username
     assert items["USEDCODE0002"]["used_by_username"] == member.username
     assert items["FRESHCODE002"]["used_by_username"] is None

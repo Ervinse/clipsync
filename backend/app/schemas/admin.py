@@ -1,7 +1,7 @@
 """管理后台相关 Pydantic 模型"""
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..models import UserRole
 
@@ -69,12 +69,29 @@ class UpdateUserStatus(BaseModel):
 
 MAX_INVITE_BATCH = 20
 MAX_INVITE_EXPIRY_IDS = 500
+MAX_INVITE_NOTE_CHARS = 100
 
 
-class InviteCodeCreate(BaseModel):
-    """创建邀请码请求：一次生成 count 个，同一批共用一个过期时间"""
+class InviteBatchCreate(BaseModel):
+    """生成一批邀请码：一次生成 count 个，同一批共用一个过期时间和备注"""
     count: int = Field(1, ge=1, le=MAX_INVITE_BATCH, description="生成数量（1–20）")
     expires_at: Optional[datetime] = Field(None, description="过期时间（可选，空为永久有效）")
+    note: str = Field("", max_length=MAX_INVITE_NOTE_CHARS, description="备注（可选，最多 100 字）")
+
+    @field_validator("note")
+    @classmethod
+    def _strip_note(cls, value: str) -> str:
+        return value.strip()
+
+
+class InviteBatchNoteUpdate(BaseModel):
+    """修改批次备注（空字符串表示清空）"""
+    note: str = Field(..., max_length=MAX_INVITE_NOTE_CHARS, description="备注（最多 100 字）")
+
+    @field_validator("note")
+    @classmethod
+    def _strip_note(cls, value: str) -> str:
+        return value.strip()
 
 
 class InviteCodeExpiryUpdate(BaseModel):
@@ -90,25 +107,35 @@ class InviteCodeExpiryResult(BaseModel):
 
 
 class InviteCodeResponse(BaseModel):
-    """邀请码响应"""
+    """批次里的一个邀请码；创建人与创建时间见所属批次"""
     id: int
     code: str
-    created_by: int
-    created_by_username: str
     used_by: Optional[int]
     used_by_username: Optional[str]
     expires_at: Optional[datetime]
     used_at: Optional[datetime]
+
+
+class InviteBatchResponse(BaseModel):
+    """一批邀请码：codes 按生成顺序排列"""
+    id: int
+    note: str
+    created_by: int
+    created_by_username: str
     created_at: datetime
-
-    class Config:
-        from_attributes = True
+    codes: list[InviteCodeResponse]
 
 
-class InviteCodeListResponse(BaseModel):
-    """邀请码列表响应"""
-    items: list[InviteCodeResponse]
+class InviteBatchListResponse(BaseModel):
+    """批次列表响应：按创建时间倒序"""
+    items: list[InviteBatchResponse]
     total: int
+
+
+class InviteBatchDeleteResult(BaseModel):
+    """删除批次里未使用的码：deleted 为删掉的个数；批次里不剩码时批次一起删除"""
+    deleted: int
+    batch_deleted: bool
 
 
 class SystemSettingsResponse(BaseModel):

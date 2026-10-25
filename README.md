@@ -19,7 +19,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 - **快速访问码**：用户自己给云剪切板、某段文本或某个文件设置访问码（每样内容最多一个，多样内容可以用同一个）。在任意设备的登录页输入「用户名@访问码」即可**免登录**进入，看到该访问码下的全部内容：文本可查看与修改，文件可下载；不能新建、删除、上传。用途是方便自己跨设备取用，不是分发给他人。
 - **文本历史**：每次保存时旧内容进入历史，保留最近 `HISTORY_KEEP` 条（默认 50）；可查看、载入编辑框、恢复为当前文本或删除。
 - **多用户隔离**：普通用户只能看到自己的文本和文件。
-- **邀请码注册**：一次性邀请码，一次可生成 1–20 个，可设过期时间、生成后可批量修改；可复制带注册链接的邀请信息；系统设置可关闭注册（关闭后持有邀请码也无法注册）。
+- **邀请码注册**：一次性邀请码，一次可生成 1–20 个，每次生成是一批、可写备注；可设过期时间、生成后可批量修改；后台按批次列出，可搜索、按状态筛选，随时重新复制一批里可用的码组成的邀请信息；系统设置可关闭注册（关闭后持有邀请码也无法注册）。
 - **三级权限**：普通用户 / 管理员 / 超级管理员，配套管理后台面板。
 - **HTTP / HTTPS**：可以先以 HTTP 部署，切换 HTTPS 时应用代码不用改（见第 11 节）。
 
@@ -101,7 +101,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | 管理自己的云剪切板/文本/文件/访问码 | ✓ | ✓ | ✓ |
 | 进入管理后台面板 | ✗ | ✓ | ✓ |
 | 查看用户列表/详情、系统统计 | ✗ | ✓ | ✓ |
-| 生成、查看邀请码；修改有效期、删除（未使用的）邀请码 | ✗ | ✓ | ✓ |
+| 生成、查看邀请码；修改备注与有效期、删除（未使用的）邀请码 | ✗ | ✓ | ✓ |
 | 读取全局系统设置 | ✗ | ✓ | ✓ |
 | 查看全站文件的**元数据** | ✗ | ✓ | ✓ |
 | 修改用户存储配额 | ✗ | ✗ | ✓ |
@@ -131,11 +131,27 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | is_active | BOOLEAN | 是否启用（仅超管可禁用） |
 | created_at | DATETIME | 创建时间 |
 
-### 5.2 invite_codes — 邀请码
+### 5.2 invite_batches / invite_codes — 邀请码批次与邀请码
+
+每次生成的邀请码是一批（只生成 1 个也算一批），备注写在批次上。
+
+**invite_batches**
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | BIGINT PK | |
+| note | VARCHAR(100) | 备注，可为空字符串；生成后可修改 |
+| created_by | BIGINT FK→users | 谁生成的（管理员/超管） |
+| created_at | DATETIME | 生成时间 |
+
+> 批次里的码被删光时批次一起删除，不留空批次；还剩已使用的码时批次与备注保留。有效期不放在批次上：同一批生成时共用一个有效期，之后可以单独修改某个码。
+
+**invite_codes**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | BIGINT PK | |
+| batch_id | BIGINT FK→invite_batches | 所属批次 |
 | code | VARCHAR(32) UNIQUE | 邀请码字符串 |
 | created_by | BIGINT FK→users | 谁创建的（管理员/超管） |
 | used_by | BIGINT FK→users NULL | 被谁使用，未用为 NULL |
@@ -234,7 +250,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 目前使用三个 key：`registration_enabled`（`true`/`false`，缺省视为开放）、`show_github_link`（`true`/`false`，缺省视为显示；库里是其他值按关闭处理）与 `default_quota_bytes`（缺省、无法解析、为负数或超过 1TB 时回落 `.env` 的 `DEFAULT_QUOTA_BYTES`）。
 
-> **外键无级联**：所有外键都没有 `ON DELETE CASCADE`。删除用户时由 `DELETE /api/admin/users/{id}` 按依赖顺序显式删除上传会话、文件、文本栏目、历史、当前文本（访问码挂在这些内容上，随之删除），处理其创建/使用过的邀请码，再删用户与磁盘目录。邀请码规则：该用户**使用过**的码保留记录、`used_by` 置空（`used_at` 保留，码仍不可复用）；该用户**创建的未使用**码直接删除；该用户创建的**已使用**码保留作审计，`created_by` 转记到执行删除的超管名下（`created_by` 为 NOT NULL，不改模型）。删除前锁住被删用户行，与 `upload/init` 串行化，避免新建会话的 tmp 目录成为孤儿；磁盘清理失败只记日志，由定时清理的孤儿扫描兜底。
+> **外键无级联**：所有外键都没有 `ON DELETE CASCADE`。删除用户时由 `DELETE /api/admin/users/{id}` 按依赖顺序显式删除上传会话、文件、文本栏目、历史、当前文本（访问码挂在这些内容上，随之删除），处理其创建/使用过的邀请码，再删用户与磁盘目录。邀请码规则：该用户**使用过**的码保留记录、`used_by` 置空（`used_at` 保留，码仍不可复用）；该用户**创建的未使用**码直接删除；该用户创建的**已使用**码保留作审计，`created_by` 转记到执行删除的超管名下（`created_by` 为 NOT NULL，不改模型）。该用户创建的批次：码被删光的批次删除，还剩已使用码的批次同样转记到执行删除的超管名下，备注保留。删除前锁住被删用户行，与 `upload/init` 串行化，避免新建会话的 tmp 目录成为孤儿；磁盘清理失败只记日志，由定时清理的孤儿扫描兜底。
 
 > **时间约定**：所有 DATETIME 列存 naive UTC；数据库会话时区固定 `+00:00`，代码统一用 `utcnow()`。
 
@@ -314,10 +330,12 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | PATCH | /api/admin/users/{id}/quota | **superadmin** | 修改配额 `{quota_bytes}`（0 到 1TB），给目标用户广播 `quota_updated` |
 | PATCH | /api/admin/users/{id}/status | **superadmin** | 启用/禁用 `{is_active}`；禁用时立即断开其 WebSocket；不能操作自己（400）或其他 superadmin（403） |
 | DELETE | /api/admin/users/{id} | **superadmin** | 删除用户及其全部数据并断开其 WebSocket；不能删除自己（400）或其他 superadmin（403） |
-| GET | /api/admin/invite-codes | admin+ | 邀请码列表与状态 |
-| POST | /api/admin/invite-codes | admin+ | 批量生成邀请码 `{count?, expires_at?}`：`count` 1–20（默认 1，超出 422），同一批共用 `expires_at`，全部成功或全部不生成（与已有码重复时重新生成，重试仍冲突返回 500）；返回 `{items, total}`；`expires_at` 必须晚于当前时间，换算成 UTC 后超出可表示范围（如 `9999-12-31T23:59:59-05:00`）返回 400 |
+| GET | /api/admin/invite-batches | admin+ | 邀请码批次列表 `{items, total}`，按生成时间倒序；每批含 `id, note, created_by, created_by_username, created_at, codes`，`codes` 按生成顺序列出该批全部邀请码（`id, code, used_by, used_by_username, expires_at, used_at`） |
+| POST | /api/admin/invite-batches | admin+ | 生成一批邀请码 `{count?, expires_at?, note?}`：`count` 1–20（默认 1，超出 422），同一批共用 `expires_at` 与 `note`（去首尾空格，最多 100 字，超出 422），全部成功或全部不生成（与已有码重复时重新生成，重试仍冲突返回 500）；返回新批次，格式同列表项；`expires_at` 必须晚于当前时间，换算成 UTC 后超出可表示范围（如 `9999-12-31T23:59:59-05:00`）返回 400 |
+| PATCH | /api/admin/invite-batches/{id} | admin+ | 修改批次备注 `{note}`（空字符串为清空，校验同上）；码已全部用掉的批次也能改；批次不存在 404；返回该批次 |
+| DELETE | /api/admin/invite-batches/{id} | admin+ | 删除批次里所有未使用的码（含已过期未使用的），已使用的保留；批次里不剩码时批次一起删除；行锁与注册互斥；返回 `{deleted, batch_deleted}`；批次不存在 404 |
 | PATCH | /api/admin/invite-codes/expiry | admin+ | 批量修改有效期 `{ids, expires_at}`（`ids` 1–500 个，`expires_at` 为 null 表示永久有效，校验同上）；只能改未使用的码（已过期未使用的可续期）；任何一个 id 不存在返回 404、已使用返回 409，整批不改；行锁与注册互斥；返回 `{updated, expires_at}` |
-| DELETE | /api/admin/invite-codes/{id} | admin+ | 删除未使用的邀请码；已使用的保留作审计记录，返回 409 |
+| DELETE | /api/admin/invite-codes/{id} | admin+ | 删除单个未使用的邀请码；已使用的保留作审计记录，返回 409；所属批次删空时一起删除 |
 | GET | /api/admin/files | admin+ | 全站文件**元数据**，分页（无下载入口） |
 | GET | /api/admin/settings | admin+ | 读取系统设置 `{default_quota_bytes, registration_enabled, show_github_link}` |
 | PATCH | /api/admin/settings | **superadmin** | 修改上述设置，字段都可选，只改传入的（默认配额 0 到 1TB） |
@@ -427,8 +445,12 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 /admin
 ├── 概览      # 用户总数、活跃用户、文件总数、总存储、访问码总数、有效访问码（口径见 6.6 的 stats）
 ├── 用户      # 分页列表；改配额 / 启用禁用 / 删除 按钮仅超管可见（superadmin 行不显示禁用、删除）
-├── 邀请码    # 批量生成（数量 1–20 + 有效天数，0 为永久）→ 生成结果页（复制邀请码 / 复制邀请信息）；
-│             #   列表（已使用 / 已过期 / 可用）/ 复制 / 修改有效期（单个或勾选批量）/ 删除；已使用的不能勾选、改有效期或删除
+├── 邀请码    # 生成一批（数量 1–20 + 有效天数，0 为永久，可点 7 天 / 14 天 / 30 天 / 90 天 / 半年 / 一年 / 永久快捷填入 + 选填备注）→ 生成结果页（复制邀请码 / 复制邀请信息）；
+│             #   按批次列出：备注、生成时间、生成人、个数、有效期概要、可用 / 已过期 / 已使用各几个，只有 1 个码的批次直接显示码；
+│             #   每批可复制邀请信息（只含可用的码）、改备注、删除其中未使用的码；点开看每个码：状态、使用者、复制、
+│             #   修改有效期（单个或勾选批量，可跨批次）、删除；已使用的不能勾选、改有效期或删除；
+│             #   搜索（备注、生成人、邀请码，邀请码不分大小写、可不带短横线，命中的批次自动展开并高亮该码）
+│             #   与状态筛选（全部 / 有可用的 / 有已过期的 / 已用完，按批次判断），都在前端完成
 ├── 文件      # 全站文件【元数据】分页列表（admin 与 superadmin 均可见，无下载入口）
 └── 设置      # 开放注册、显示 GitHub 链接、新用户默认配额：admin 只读，superadmin 可保存
 ```
@@ -447,7 +469,7 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 
 ### 邀请信息
 
-生成结果页的「复制邀请信息」复制一段可以直接发出去的文字，格式写在 `Admin.vue` 的 `buildInviteMessage`：标题 `ClipSync · 注册邀请`，标签统一三个字（邀请码、有效期），只用空行分组，不加装饰符号。只有一个码时末行是带 `?code=` 的注册链接，注册页打开后自动填好邀请码；多个码时逐行列出，末行是不带码的注册链接。链接取打开管理页时浏览器里的地址（`window.location.origin`），用局域网地址打开管理页时复制出的也是局域网地址。「复制邀请码」只复制码，每行一个。
+生成结果页的「复制邀请信息」复制一段可以直接发出去的文字，格式写在 `Admin.vue` 的 `buildInviteMessage`：标题 `ClipSync · 注册邀请`，标签统一三个字（邀请码、有效期），只用空行分组，不加装饰符号。只有一个码时末行是带 `?code=` 的注册链接，注册页打开后自动填好邀请码；多个码时逐行列出，末行是不带码的注册链接。链接取打开管理页时浏览器里的地址（`window.location.origin`），用局域网地址打开管理页时复制出的也是局域网地址。「复制邀请码」只复制码，每行一个。批次列表里的「复制邀请信息」用同一个格式，但只放这批里还能用的码（已使用、已过期的不放）；这些码的有效期各不相同时，有效期一行写最早的那个。
 
 ### 前端角色控制
 
@@ -581,7 +603,7 @@ CodeProject/
     │   ├── alembic/
     │   │   ├── env.py            # 迁移入口：连接串取自 app/config.py
     │   │   ├── script.py.mako    # 新迁移文件的模板
-    │   │   └── versions/         # 278c88a5f21f 初始表结构；3f1c2a9d7b4e 文本改 MEDIUMTEXT；7c2d4e6f8a1b 访问码挂到内容上、新增 texts
+    │   │   └── versions/         # 278c88a5f21f 初始表结构；3f1c2a9d7b4e 文本改 MEDIUMTEXT；7c2d4e6f8a1b 访问码挂到内容上、新增 texts；9e3b5d7f1a2c 邀请码批次（已有的码按创建人 + 创建时间归批）
     │   ├── alembic.ini
     │   ├── scripts/              # create_superadmin.py / cleanup_expired.py（定时清理，由宿主机 cron 经 docker compose exec 调用）
     │   ├── tests/                # pytest 用例：安全边界、并发、实时推送、上传下载等（使用独立库 clipsync_test）

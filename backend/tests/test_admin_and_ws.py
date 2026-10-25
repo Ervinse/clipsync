@@ -4,20 +4,17 @@ from sqlalchemy import select, func
 from starlette.websockets import WebSocketDisconnect
 
 from app.models import (
-    User, UserRole, File, Clipboard, ClipboardHistory, Text, InviteCode,
+    User, UserRole, File, Clipboard, ClipboardHistory, Text, InviteBatch, InviteCode,
 )
 from app.core.timeutil import utcnow
-from tests.helpers import upload, STORAGE_ROOT, set_code, new_text
+from tests.helpers import upload, STORAGE_ROOT, set_code, new_text, add_invite
 
 
 def test_delete_user_removes_all_data(client, db, make_user):
     superadmin = make_user(UserRole.SUPERADMIN)
     victim = make_user()
 
-    async def _invite(s):
-        s.add(InviteCode(code="USEDCODE", created_by=superadmin.id, used_by=victim.id,
-                         used_at=utcnow(), created_at=utcnow()))
-    db(_invite)
+    add_invite(db, "USEDCODE", superadmin.id, used_by=victim.id, used_at=utcnow())
 
     upload(client, victim, b"file-data")
     client.put("/api/clipboard", json={"content": "a"}, headers=victim.headers)
@@ -41,6 +38,25 @@ def test_delete_user_removes_all_data(client, db, make_user):
     reuse = client.post("/api/auth/register",
                         json={"username": "newbie", "password": "password123", "invite_code": "USEDCODE"})
     assert reuse.status_code == 400
+
+
+def test_delete_admin_handles_their_invite_batches(client, db, make_user):
+    """被删管理员的批次：码全未使用的批次整批删除；含已使用码的批次转记到执行删除的超管名下，备注保留"""
+    superadmin, admin, member = make_user(UserRole.SUPERADMIN), make_user(UserRole.ADMIN), make_user()
+    _, unused_batch = add_invite(db, "UNUSED01", admin.id, note="没用过")
+    _, mixed_batch = add_invite(db, "USED0001", admin.id, note="用过一个", used_by=member.id, used_at=utcnow())
+    add_invite(db, "UNUSED02", admin.id, batch_id=mixed_batch)
+
+    assert client.delete(f"/api/admin/users/{admin.id}", headers=superadmin.headers).status_code == 204
+
+    async def _rows(s):
+        batches = (await s.execute(select(InviteBatch))).scalars().all()
+        codes = (await s.execute(select(InviteCode))).scalars().all()
+        return [(b.id, b.created_by, b.note) for b in batches], [(c.code, c.batch_id, c.created_by) for c in codes]
+    batches, codes = db(_rows)
+    assert batches == [(mixed_batch, superadmin.id, "用过一个")]
+    assert codes == [("USED0001", mixed_batch, superadmin.id)]
+    assert unused_batch != mixed_batch
 
 
 def test_superadmin_cannot_delete_or_disable_self(client, make_user):

@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import {
   ChartColumn, Users, UserCheck, Ticket, Folder, Settings, File, HardDrive,
-  Plus, Copy, Trash2, Ban, CircleCheck, Pencil, ChevronLeft, ChevronRight,
+  Plus, Copy, Trash2, Ban, CircleCheck, Pencil, ChevronLeft, ChevronRight, ChevronDown, Search,
   CircleAlert, Info, LoaderCircle, X, CalendarClock, KeyRound, ShieldCheck,
 } from '@lucide/vue'
 import { useAdminStore, useUserStore } from '../stores'
@@ -35,14 +35,26 @@ const TABS = [
 const activeTab = ref('stats')
 const showCreateInviteModal = ref(false)
 const isCreatingInvite = ref(false)
-// 一次生成 1–20 个，同一批共用一个有效期（与后端 MAX_INVITE_BATCH 一致）
+// 一次生成 1–20 个，同一批共用一个有效期和备注（与后端 MAX_INVITE_BATCH、MAX_INVITE_NOTE_CHARS 一致）
 const MAX_INVITE_BATCH = 20
+const MAX_INVITE_NOTE_CHARS = 100
 const inviteForm = ref({
   count: 1,
   expires_in_days: 7,
+  note: '',
 })
-// 本次生成的邀请码：非空时弹窗切换成「生成结果」页
-const createdInvites = ref(null)
+// 有效期快捷按钮：点一下填入天数（半年按 180 天、一年按 365 天算），输入框仍可手动填其他天数
+const EXPIRY_PRESETS = [
+  { days: 7, label: '7 天' },
+  { days: 14, label: '14 天' },
+  { days: 30, label: '30 天' },
+  { days: 90, label: '90 天' },
+  { days: 180, label: '半年' },
+  { days: 365, label: '一年' },
+  { days: 0, label: '永久' },
+]
+// 本次生成的批次：非空时弹窗切换成「生成结果」页
+const createdBatch = ref(null)
 
 onMounted(async () => {
   // 并行加载，互不影响：任何一个失败都不会阻断其余数据的显示
@@ -50,7 +62,7 @@ onMounted(async () => {
   const tasks = [
     ['统计', adminStore.fetchStats()],
     ['用户', adminStore.fetchUsers()],
-    ['邀请码', adminStore.fetchInviteCodes()],
+    ['邀请码', adminStore.fetchInviteBatches()],
     ['文件', adminStore.fetchFiles()],
     ['设置', adminStore.fetchSettings()],
   ]
@@ -130,15 +142,19 @@ const openCreateInviteModal = () => {
   inviteForm.value = {
     count: 1,
     expires_in_days: 7,
+    note: '',
   }
-  createdInvites.value = null
+  createdBatch.value = null
   showCreateInviteModal.value = true
 }
 
 const closeCreateInviteModal = () => {
   showCreateInviteModal.value = false
-  createdInvites.value = null
+  createdBatch.value = null
 }
+
+// 备注字数按字符算（与后端 len() 一致），emoji 等算一个字
+const noteLength = (note) => [...note].length
 
 // 有效天数校验：空、非整数、负数返回 null；0 表示永久有效
 const parseDays = (raw) => {
@@ -162,11 +178,17 @@ const handleCreateInvite = async () => {
     toast.error('有效期必须是非负整数（天）')
     return
   }
+  const note = (inviteForm.value.note || '').trim()
+  if (noteLength(note) > MAX_INVITE_NOTE_CHARS) {
+    toast.error(`备注最多 ${MAX_INVITE_NOTE_CHARS} 个字`)
+    return
+  }
   try {
     isCreatingInvite.value = true
-    createdInvites.value = await adminStore.createInviteCodes({
+    createdBatch.value = await adminStore.createInviteBatch({
       count,
       expires_at: daysToExpiresAt(days),
+      note,
     })
   } catch (error) {
     toast.error('创建失败：' + error.message)
@@ -183,8 +205,8 @@ const formatExpiryLong = (value) => {
   return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-// 同一批共用一个有效期，取第一个即可
-const createdExpiry = computed(() => formatExpiryLong(createdInvites.value?.[0]?.expires_at))
+// 刚生成的一批共用一个有效期，取第一个即可
+const createdExpiry = computed(() => formatExpiryLong(createdBatch.value?.codes?.[0]?.expires_at))
 
 // 注册链接取当前打开管理页的地址；只有一个码时带上 ?code= 让注册页自动填好
 const registerUrl = (code) => {
@@ -192,13 +214,23 @@ const registerUrl = (code) => {
   return code ? `${base}?code=${encodeURIComponent(code)}` : base
 }
 
+// 邀请信息里的有效期：一批码通常共用一个有效期；单独改过、各不相同时写最早的那个
+const inviteExpiryText = (invites) => {
+  const values = [...new Set(invites.map((invite) => invite.expires_at ?? null))]
+  if (values.length === 1) {
+    const expiry = formatExpiryLong(values[0])
+    return expiry ? `${expiry} 前` : '长期有效'
+  }
+  const earliest = values.filter(Boolean).sort((a, b) => parseUtc(a) - parseUtc(b))[0]
+  return `最早 ${formatExpiryLong(earliest)} 前`
+}
+
 /**
  * 邀请信息：发给别人的整段文字。
  * 标签统一三个字，聊天软件里后面的内容自然对齐；只用空行分组，不加装饰符号
  */
 const buildInviteMessage = (invites) => {
-  const expiry = formatExpiryLong(invites[0]?.expires_at)
-  const expiryLine = `有效期  ${expiry ? `${expiry} 前` : '长期有效'}`
+  const expiryLine = `有效期  ${inviteExpiryText(invites)}`
   const title = 'ClipSync · 注册邀请'
   if (invites.length === 1) {
     return [title, '', `邀请码  ${invites[0].code}`, expiryLine, '', registerUrl(invites[0].code)].join('\n')
@@ -224,12 +256,12 @@ const copyText = async (text, successMessage) => {
 }
 
 const copyCreatedCodes = () => {
-  const invites = createdInvites.value || []
+  const invites = createdBatch.value?.codes || []
   copyText(invites.map((invite) => invite.code).join('\n'), `已复制 ${invites.length} 个邀请码`)
 }
 
 const copyCreatedMessage = () => {
-  copyText(buildInviteMessage(createdInvites.value || []), '邀请信息已复制')
+  copyText(buildInviteMessage(createdBatch.value?.codes || []), '邀请信息已复制')
 }
 
 // 邀请码状态：used_at 非空即已用过（使用者被删除后 used_by 会置空）；未用过再看是否过期
@@ -245,16 +277,100 @@ const INVITE_STATUS = {
   available: { label: '可用', cls: 'badge-success' },
 }
 
-// 勾选：只有未使用的码（含已过期未使用）可以勾选并修改有效期
+// ---------- 批次列表：统计、筛选、搜索、展开 ----------
+
+// 每批的统计与有效期概要；有效期只看未使用的码（已用掉的码有效期没有意义）
+const batchViews = computed(() =>
+  adminStore.inviteBatches.map((batch) => {
+    const stats = { available: 0, expired: 0, used: 0 }
+    for (const invite of batch.codes) stats[inviteStatus(invite)] += 1
+    const unused = batch.codes.filter((invite) => inviteStatus(invite) !== 'used')
+    const expiries = [...new Set(unused.map((invite) => invite.expires_at ?? null))]
+    let expirySummary = '—'
+    if (expiries.length === 1) expirySummary = formatDate(expiries[0])
+    else if (expiries.length > 1) expirySummary = '各不相同'
+    return { ...batch, stats, unusedIds: unused.map((invite) => invite.id), expirySummary }
+  }),
+)
+
+// 状态筛选按批次：一批可能同时符合「有可用的」和「有已过期的」
+const INVITE_FILTERS = [
+  { key: 'all', label: '全部', test: () => true },
+  { key: 'available', label: '有可用的', test: (b) => b.stats.available > 0 },
+  { key: 'expired', label: '有已过期的', test: (b) => b.stats.expired > 0 },
+  { key: 'used', label: '已用完', test: (b) => b.stats.available === 0 && b.stats.expired === 0 },
+]
+const inviteFilter = ref('all')
+const inviteSearch = ref('')
+
+// 邀请码比较时去掉短横线和空格、不分大小写，与注册时的输入规则一致
+const compactCode = (value) => value.replace(/[\s-]/g, '').toUpperCase()
+
+// 搜索备注、创建人或邀请码；返回 { batchIds, codeIds }，codeIds 是按邀请码命中的码（用于高亮）
+const searchMatches = computed(() => {
+  const query = inviteSearch.value.trim().toLowerCase()
+  if (!query) return null
+  const codeQuery = compactCode(query)
+  const batchIds = new Set()
+  const codeIds = new Set()
+  for (const batch of batchViews.value) {
+    if (batch.note.toLowerCase().includes(query) || batch.created_by_username.toLowerCase().includes(query)) {
+      batchIds.add(batch.id)
+    }
+    if (!codeQuery) continue
+    for (const invite of batch.codes) {
+      if (compactCode(invite.code).includes(codeQuery)) {
+        batchIds.add(batch.id)
+        codeIds.add(invite.id)
+      }
+    }
+  }
+  return { batchIds, codeIds }
+})
+
+const searchedBatches = computed(() =>
+  searchMatches.value ? batchViews.value.filter((b) => searchMatches.value.batchIds.has(b.id)) : batchViews.value,
+)
+
+// 筛选按钮上的数字：在当前搜索结果里各有几批
+const filterCounts = computed(() =>
+  Object.fromEntries(INVITE_FILTERS.map((f) => [f.key, searchedBatches.value.filter(f.test).length])),
+)
+
+const filteredBatches = computed(() => {
+  const filter = INVITE_FILTERS.find((f) => f.key === inviteFilter.value) || INVITE_FILTERS[0]
+  return searchedBatches.value.filter(filter.test)
+})
+
+const isCodeMatched = (invite) => Boolean(searchMatches.value?.codeIds.has(invite.id))
+
+const clearInviteFilters = () => {
+  inviteSearch.value = ''
+  inviteFilter.value = 'all'
+}
+
+// 展开的批次；按邀请码搜到的批次自动展开，仍可以手动收起
+const expandedBatchIds = ref(new Set())
+const isExpanded = (id) => expandedBatchIds.value.has(id)
+const toggleBatch = (id) => {
+  const next = new Set(expandedBatchIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedBatchIds.value = next
+}
+watch(searchMatches, (matches) => {
+  if (!matches || matches.codeIds.size === 0) return
+  const next = new Set(expandedBatchIds.value)
+  for (const batch of batchViews.value) {
+    if (batch.codes.some((invite) => matches.codeIds.has(invite.id))) next.add(batch.id)
+  }
+  expandedBatchIds.value = next
+})
+
+// ---------- 勾选：只有未使用的码（含已过期未使用）可以勾选并修改有效期 ----------
 const selectedInviteIds = ref([])
 const isInviteSelectable = (invite) => inviteStatus(invite) !== 'used'
-const selectableInviteIds = computed(() =>
-  adminStore.inviteCodes.filter(isInviteSelectable).map((invite) => invite.id),
-)
-const allInvitesSelected = computed(() =>
-  selectableInviteIds.value.length > 0 && selectedInviteIds.value.length === selectableInviteIds.value.length,
-)
-const someInvitesSelected = computed(() => selectedInviteIds.value.length > 0 && !allInvitesSelected.value)
+const selectableInviteIds = computed(() => batchViews.value.flatMap((batch) => batch.unusedIds))
 
 // 列表刷新后（删除、被注册用掉、修改后重取）去掉已不存在或不可选的勾选
 watch(selectableInviteIds, (ids) => {
@@ -262,8 +378,19 @@ watch(selectableInviteIds, (ids) => {
   selectedInviteIds.value = selectedInviteIds.value.filter((id) => valid.has(id))
 })
 
-const toggleAllInvites = () => {
-  selectedInviteIds.value = allInvitesSelected.value ? [] : [...selectableInviteIds.value]
+// 每批表头的全选框：只作用于这一批
+const batchSelection = (batch) => {
+  const chosen = batch.unusedIds.filter((id) => selectedInviteIds.value.includes(id)).length
+  return {
+    all: batch.unusedIds.length > 0 && chosen === batch.unusedIds.length,
+    some: chosen > 0 && chosen < batch.unusedIds.length,
+  }
+}
+
+const toggleBatchSelection = (batch) => {
+  const ids = new Set(batch.unusedIds)
+  const rest = selectedInviteIds.value.filter((id) => !ids.has(id))
+  selectedInviteIds.value = batchSelection(batch).all ? rest : [...rest, ...batch.unusedIds]
 }
 
 const toggleInvite = (id) => {
@@ -309,6 +436,74 @@ const handleDeleteInvite = async (id) => {
 
   try {
     await adminStore.deleteInviteCode(id)
+  } catch (error) {
+    toast.error('删除失败：' + error.message)
+  }
+}
+
+// ---------- 批次操作 ----------
+
+// 重新复制邀请信息：只放还能用的码，已用掉或过期的放进去对方会白试
+const availableCodes = (batch) => batch.codes.filter((invite) => inviteStatus(invite) === 'available')
+
+const copyBatchMessage = (batch) => {
+  const invites = availableCodes(batch)
+  if (invites.length === 0) {
+    toast.error('这批没有可用的邀请码')
+    return
+  }
+  copyText(buildInviteMessage(invites), `邀请信息已复制（${invites.length} 个可用邀请码）`)
+}
+
+const copyBatchCodes = (batch) => {
+  const invites = availableCodes(batch)
+  if (invites.length === 0) {
+    toast.error('这批没有可用的邀请码')
+    return
+  }
+  copyText(invites.map((invite) => invite.code).join('\n'), `已复制 ${invites.length} 个可用邀请码`)
+}
+
+const handleEditBatchNote = async (batch) => {
+  const input = await promptDialog({
+    title: batch.note ? '修改备注' : '添加备注',
+    message: `写下这批邀请码的用途，最多 ${MAX_INVITE_NOTE_CHARS} 个字；留空表示清除备注。`,
+    label: '备注',
+    defaultValue: batch.note,
+    confirmText: '保存',
+  })
+  if (input === null) return
+  const note = input.trim()
+  if (noteLength(note) > MAX_INVITE_NOTE_CHARS) {
+    toast.error(`备注最多 ${MAX_INVITE_NOTE_CHARS} 个字`)
+    return
+  }
+  if (note === batch.note) return
+  try {
+    await adminStore.updateInviteBatchNote(batch.id, note)
+    toast.success(note ? '备注已保存' : '备注已清除')
+  } catch (error) {
+    toast.error('保存失败：' + error.message)
+  }
+}
+
+// 整批删除未使用的码（含已过期未使用的）；已使用的保留，批次与备注随之保留
+const handleDeleteUnusedInBatch = async (batch) => {
+  const count = batch.unusedIds.length
+  if (count === 0) return
+  const keepsUsed = batch.stats.used > 0
+  const ok = await confirmDialog({
+    title: `删除这批里 ${count} 个未使用的邀请码？`,
+    message: keepsUsed
+      ? `删除后这些邀请码无法再用于注册。已使用的 ${batch.stats.used} 个保留，这批记录和备注也保留。`
+      : '删除后这些邀请码无法再用于注册，这批记录也会一起删除。',
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) return
+  try {
+    const result = await adminStore.deleteUnusedInBatch(batch.id)
+    toast.success(`已删除 ${result.deleted} 个邀请码`)
   } catch (error) {
     toast.error('删除失败：' + error.message)
   }
@@ -555,10 +750,10 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
       </div>
     </div>
 
-    <!-- 邀请码管理 -->
+    <!-- 邀请码管理：按批次列出，每次生成是一批（1 个也算），点开看其中的码 -->
     <div v-if="activeTab === 'invites'" class="tab-panel">
       <div class="panel-toolbar">
-        <p v-if="selectedInviteIds.length === 0" class="toolbar-text">邀请码只能使用一次，注册时填写</p>
+        <p v-if="selectedInviteIds.length === 0" class="toolbar-text">每次生成的邀请码是一批，点开查看其中的码；每个码只能注册一个账号</p>
         <p v-else class="toolbar-text toolbar-selected">已选 {{ selectedInviteIds.length }} 个</p>
         <span class="toolbar-buttons">
           <template v-if="selectedInviteIds.length > 0">
@@ -575,90 +770,193 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
         </span>
       </div>
 
-      <div v-if="adminStore.inviteCodes.length === 0" class="empty">
+      <div v-if="adminStore.inviteBatches.length === 0" class="empty">
         <span class="empty-icon"><Ticket :size="20" /></span>
         <p class="empty-title">还没有邀请码</p>
         <p class="empty-text">创建邀请码后发给要注册的人</p>
       </div>
 
-      <div v-else class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th class="cell-check">
-                <input
-                  type="checkbox"
-                  class="checkbox"
-                  aria-label="全选可修改的邀请码"
-                  :checked="allInvitesSelected"
-                  :indeterminate="someInvitesSelected"
-                  :disabled="selectableInviteIds.length === 0"
-                  @change="toggleAllInvites"
-                />
-              </th>
-              <th>邀请码</th>
-              <th>状态</th>
-              <th>过期时间</th>
-              <th>使用者</th>
-              <th class="cell-actions"><span class="sr-only">操作</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="invite in adminStore.inviteCodes"
-              :key="invite.id"
-              :class="{ 'row-selected': selectedInviteIds.includes(invite.id) }"
+      <template v-else>
+        <div class="invite-filters">
+          <span class="search-box">
+            <Search class="search-icon" aria-hidden="true" />
+            <input
+              v-model="inviteSearch"
+              class="input"
+              type="search"
+              placeholder="搜索备注、创建人或邀请码"
+              aria-label="搜索备注、创建人或邀请码"
+            />
+          </span>
+          <div class="filter-group" role="group" aria-label="按状态筛选">
+            <button
+              v-for="f in INVITE_FILTERS"
+              :key="f.key"
+              type="button"
+              class="filter-chip"
+              :class="{ active: inviteFilter === f.key }"
+              :aria-pressed="inviteFilter === f.key"
+              @click="inviteFilter = f.key"
             >
-              <td class="cell-check">
-                <!-- 已使用的码不能修改有效期（后端返回 409），不显示勾选框 -->
-                <input
-                  v-if="isInviteSelectable(invite)"
-                  type="checkbox"
-                  class="checkbox"
-                  :aria-label="`选择邀请码 ${invite.code}`"
-                  :checked="selectedInviteIds.includes(invite.id)"
-                  @change="toggleInvite(invite.id)"
-                />
-              </td>
-              <td><span class="code mono">{{ invite.code }}</span></td>
-              <td>
-                <span class="badge badge-dot" :class="INVITE_STATUS[inviteStatus(invite)].cls">
-                  {{ INVITE_STATUS[inviteStatus(invite)].label }}
+              {{ f.label }}
+              <span class="filter-count">{{ filterCounts[f.key] }}</span>
+            </button>
+          </div>
+        </div>
+        <div v-if="filteredBatches.length === 0" class="empty">
+          <span class="empty-icon"><Search :size="20" /></span>
+          <p class="empty-title">没有符合条件的邀请码</p>
+          <button type="button" class="btn btn-secondary btn-sm" @click="clearInviteFilters">清除筛选</button>
+        </div>
+
+        <ul v-else class="batch-list">
+          <li v-for="batch in filteredBatches" :key="batch.id" class="batch card">
+            <div class="batch-head">
+              <button
+                type="button"
+                class="batch-toggle"
+                :aria-expanded="isExpanded(batch.id)"
+                :aria-controls="`invite-batch-${batch.id}`"
+                @click="toggleBatch(batch.id)"
+              >
+                <ChevronDown class="batch-chevron" :class="{ open: isExpanded(batch.id) }" aria-hidden="true" />
+                <span class="batch-main">
+                  <span class="batch-title">
+                    <span class="batch-note" :class="{ 'batch-note-empty': !batch.note }">{{ batch.note || '无备注' }}</span>
+                    <!-- 只有一个码的批次直接显示码 -->
+                    <span v-if="batch.codes.length === 1" class="code mono">{{ batch.codes[0].code }}</span>
+                  </span>
+                  <span class="batch-meta">
+                    {{ formatDate(batch.created_at) }} · {{ batch.created_by_username }} · 共 {{ batch.codes.length }} 个 · 有效期 {{ batch.expirySummary }}
+                  </span>
                 </span>
-              </td>
-              <td class="cell-muted">{{ formatDate(invite.expires_at) }}</td>
-              <td class="cell-muted">{{ invite.used_by ? (invite.used_by_username || invite.used_by) : '—' }}</td>
-              <td class="cell-actions">
-                <span class="row-actions">
-                  <button class="btn btn-secondary btn-sm" @click="copyInviteCode(invite.code)">
-                    <Copy :size="14" />
-                    复制
-                  </button>
-                  <!-- 已使用的邀请码后端禁止修改有效期与删除（409），按钮不显示 -->
-                  <button
-                    v-if="isInviteSelectable(invite)"
-                    class="btn-icon"
-                    title="修改有效期"
-                    aria-label="修改有效期"
-                    @click="handleEditInviteExpiry([invite.id])"
-                  >
-                    <CalendarClock />
-                  </button>
-                  <button
-                    v-if="isInviteSelectable(invite)"
-                    class="btn-icon danger"
-                    title="删除"
-                    aria-label="删除"
-                    @click="handleDeleteInvite(invite.id)"
-                  >
-                    <Trash2 />
-                  </button>
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+              </button>
+              <span class="batch-stats">
+                <span v-if="batch.stats.available" class="badge badge-dot badge-success">可用 {{ batch.stats.available }}</span>
+                <span v-if="batch.stats.expired" class="badge badge-dot badge-warning">已过期 {{ batch.stats.expired }}</span>
+                <span v-if="batch.stats.used" class="badge badge-dot">已使用 {{ batch.stats.used }}</span>
+              </span>
+              <span class="row-actions">
+                <button
+                  class="btn btn-secondary btn-sm"
+                  :disabled="batch.stats.available === 0"
+                  :title="batch.stats.available === 0 ? '这批没有可用的邀请码' : '只包含还能用的邀请码'"
+                  @click="copyBatchMessage(batch)"
+                >
+                  <Copy :size="14" />
+                  复制邀请信息
+                </button>
+                <button
+                  class="btn-icon"
+                  :title="batch.note ? '修改备注' : '添加备注'"
+                  :aria-label="batch.note ? '修改备注' : '添加备注'"
+                  @click="handleEditBatchNote(batch)"
+                >
+                  <Pencil />
+                </button>
+                <!-- 只删未使用的码；已使用的后端保留作审计记录 -->
+                <button
+                  v-if="batch.unusedIds.length > 0"
+                  class="btn-icon danger"
+                  :title="`删除未使用的 ${batch.unusedIds.length} 个`"
+                  :aria-label="`删除这批里未使用的 ${batch.unusedIds.length} 个邀请码`"
+                  @click="handleDeleteUnusedInBatch(batch)"
+                >
+                  <Trash2 />
+                </button>
+              </span>
+            </div>
+
+            <div v-if="isExpanded(batch.id)" :id="`invite-batch-${batch.id}`" class="batch-body">
+              <div class="table-wrap batch-table">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th class="cell-check">
+                        <input
+                          type="checkbox"
+                          class="checkbox"
+                          aria-label="全选这批里可修改的邀请码"
+                          :checked="batchSelection(batch).all"
+                          :indeterminate="batchSelection(batch).some"
+                          :disabled="batch.unusedIds.length === 0"
+                          @change="toggleBatchSelection(batch)"
+                        />
+                      </th>
+                      <th>邀请码</th>
+                      <th>状态</th>
+                      <th>过期时间</th>
+                      <th>使用者</th>
+                      <th class="cell-actions"><span class="sr-only">操作</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="invite in batch.codes"
+                      :key="invite.id"
+                      :class="{ 'row-selected': selectedInviteIds.includes(invite.id), 'row-matched': isCodeMatched(invite) }"
+                    >
+                      <td class="cell-check">
+                        <!-- 已使用的码不能修改有效期（后端返回 409），不显示勾选框 -->
+                        <input
+                          v-if="isInviteSelectable(invite)"
+                          type="checkbox"
+                          class="checkbox"
+                          :aria-label="`选择邀请码 ${invite.code}`"
+                          :checked="selectedInviteIds.includes(invite.id)"
+                          @change="toggleInvite(invite.id)"
+                        />
+                      </td>
+                      <td><span class="code mono">{{ invite.code }}</span></td>
+                      <td>
+                        <span class="badge badge-dot" :class="INVITE_STATUS[inviteStatus(invite)].cls">
+                          {{ INVITE_STATUS[inviteStatus(invite)].label }}
+                        </span>
+                      </td>
+                      <td class="cell-muted">{{ formatDate(invite.expires_at) }}</td>
+                      <td class="cell-muted">
+                        {{ invite.used_by ? (invite.used_by_username || invite.used_by) : (invite.used_at ? '已删除的用户' : '—') }}
+                      </td>
+                      <td class="cell-actions">
+                        <span class="row-actions">
+                          <button class="btn btn-secondary btn-sm" @click="copyInviteCode(invite.code)">
+                            <Copy :size="14" />
+                            复制
+                          </button>
+                          <!-- 已使用的邀请码后端禁止修改有效期与删除（409），按钮不显示 -->
+                          <button
+                            v-if="isInviteSelectable(invite)"
+                            class="btn-icon"
+                            title="修改有效期"
+                            aria-label="修改有效期"
+                            @click="handleEditInviteExpiry([invite.id])"
+                          >
+                            <CalendarClock />
+                          </button>
+                          <button
+                            v-if="isInviteSelectable(invite)"
+                            class="btn-icon danger"
+                            title="删除"
+                            aria-label="删除"
+                            @click="handleDeleteInvite(invite.id)"
+                          >
+                            <Trash2 />
+                          </button>
+                        </span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div v-if="batch.stats.available > 1" class="batch-footer">
+                <button type="button" class="btn btn-ghost btn-sm" @click="copyBatchCodes(batch)">
+                  只复制可用的邀请码
+                </button>
+              </div>
+            </div>
+          </li>
+        </ul>
+      </template>
     </div>
 
     <!-- 文件元数据（admin 及以上；安全红线：只展示元数据，无下载入口） -->
@@ -788,7 +1086,7 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
     <!-- 生成成功后同一个弹窗切换为「生成结果」页，只列本次生成的码，方便复制 -->
     <div v-if="showCreateInviteModal" class="modal-overlay" @mousedown.self="closeCreateInviteModal">
       <form
-        v-if="!createdInvites"
+        v-if="!createdBatch"
         class="modal"
         role="dialog"
         aria-modal="true"
@@ -821,10 +1119,12 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
             </span>
             <span class="field-hint">一次最多 {{ MAX_INVITE_BATCH }} 个</span>
           </label>
-          <label class="field">
-            <span class="field-label">有效期</span>
+          <!-- 外层不用 label：里面的快捷按钮不能被当成输入框的标签区域 -->
+          <div class="field">
+            <label class="field-label" for="invite-expiry-days">有效期</label>
             <span class="input-with-suffix">
               <input
+                id="invite-expiry-days"
                 v-model.number="inviteForm.expires_in_days"
                 class="input"
                 type="number"
@@ -833,7 +1133,31 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
               />
               <span class="input-suffix">天</span>
             </span>
+            <div class="expiry-presets" role="group" aria-label="快捷设置有效期">
+              <button
+                v-for="preset in EXPIRY_PRESETS"
+                :key="preset.days"
+                type="button"
+                class="filter-chip preset-chip"
+                :class="{ active: Number(inviteForm.expires_in_days) === preset.days && inviteForm.expires_in_days !== '' }"
+                :aria-pressed="Number(inviteForm.expires_in_days) === preset.days && inviteForm.expires_in_days !== ''"
+                @click="inviteForm.expires_in_days = preset.days"
+              >
+                {{ preset.label }}
+              </button>
+            </div>
             <span class="field-hint">0 表示永久有效；同一批共用这个有效期，生成后可以再改</span>
+          </div>
+          <label class="field">
+            <span class="field-label">备注<span class="field-optional">（选填）</span></span>
+            <input
+              v-model="inviteForm.note"
+              class="input"
+              type="text"
+              :maxlength="MAX_INVITE_NOTE_CHARS"
+              placeholder="例如：给设计组新同事"
+            />
+            <span class="field-hint">写下这批邀请码的用途，以后看到没用掉的码就知道该不该删；最多 {{ MAX_INVITE_NOTE_CHARS }} 个字，生成后可以再改</span>
           </label>
         </div>
         <div class="modal-footer">
@@ -855,8 +1179,10 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
       >
         <div class="modal-header header-with-close">
           <div>
-            <h2 id="created-invite-title" class="modal-title">已生成 {{ createdInvites.length }} 个邀请码</h2>
-            <p class="modal-desc">{{ createdExpiry ? `有效期至 ${createdExpiry}` : '长期有效' }}</p>
+            <h2 id="created-invite-title" class="modal-title">已生成 {{ createdBatch.codes.length }} 个邀请码</h2>
+            <p class="modal-desc">
+              {{ createdExpiry ? `有效期至 ${createdExpiry}` : '长期有效' }}<template v-if="createdBatch.note"> · {{ createdBatch.note }}</template>
+            </p>
           </div>
           <button type="button" class="btn-icon" aria-label="关闭" @click="closeCreateInviteModal">
             <X />
@@ -864,7 +1190,7 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
         </div>
         <div class="modal-body">
           <ul class="created-list">
-            <li v-for="invite in createdInvites" :key="invite.id" class="created-item">
+            <li v-for="invite in createdBatch.codes" :key="invite.id" class="created-item">
               <span class="created-code mono">{{ invite.code }}</span>
               <button type="button" class="btn btn-secondary btn-sm" @click="copyInviteCode(invite.code)">
                 <Copy :size="14" />
@@ -1012,6 +1338,199 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
 .toolbar-selected {
   color: var(--color-text);
   font-weight: 500;
+}
+
+/* 邀请码：搜索与状态筛选 */
+.invite-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.search-box {
+  position: relative;
+  flex: 1 1 260px;
+  max-width: 360px;
+}
+
+.search-box .input {
+  padding-left: 34px;
+}
+
+.search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+.filter-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  transition: color var(--duration) var(--ease), border-color var(--duration) var(--ease),
+    background-color var(--duration) var(--ease);
+}
+
+.filter-chip:hover {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+.filter-chip.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+.filter-count {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+/* 邀请码批次卡片 */
+.batch-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.batch-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.batch-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+}
+
+.batch-toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.batch-chevron {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  color: var(--color-text-tertiary);
+  transform: rotate(-90deg);
+  transition: transform var(--duration) var(--ease);
+}
+
+.batch-chevron.open {
+  transform: rotate(0deg);
+}
+
+.batch-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.batch-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.batch-note {
+  font-weight: 500;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.batch-note-empty {
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+
+.batch-meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.batch-stats {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.batch-body {
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+/* 批次里的表格嵌在卡片中：去掉外层玻璃效果，避免叠两层 */
+.batch-table {
+  background: var(--color-bg);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.table tbody tr.row-matched td {
+  background: var(--color-warning-subtle);
+}
+
+.batch-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-2);
+}
+
+/* 创建邀请码弹窗：有效期快捷按钮，沿用筛选按钮的样式，略小一号 */
+.expiry-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.preset-chip {
+  height: 28px;
+  font-size: var(--text-xs);
+}
+
+.field-optional {
+  font-weight: 400;
+  color: var(--color-text-tertiary);
 }
 
 /* 生成结果页：只列本次生成的码 */
@@ -1202,6 +1721,23 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
   .panel-toolbar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .search-box {
+    max-width: none;
+  }
+
+  .batch-head {
+    flex-wrap: wrap;
+  }
+
+  .batch-toggle {
+    flex-basis: 100%;
+  }
+
+  .batch-stats {
+    justify-content: flex-start;
+    flex: 1;
   }
 
   .setting-row {
