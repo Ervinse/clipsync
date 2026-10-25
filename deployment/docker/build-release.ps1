@@ -14,6 +14,7 @@
   产物放在项目根目录的 release\<提交号>\（已 gitignore）：
     clipsync-images-<提交号>[-app].tar.gz   镜像包，服务器上用 docker load -i 导入
     clipsync-deploy-<提交号>.tar.gz         部署包：compose、Nginx 配置、运维脚本、DEPLOYMENT.md、VERSION
+  后端镜像里另有 /app/BUILD_INFO（提交号、分支、构建时间），管理后台「系统信息」据此显示。
   服务器上的步骤见 deployment/DEPLOYMENT.md。测试通过后用 publish-release.ps1 晋级为正式版本。
 
 .PARAMETER Ref
@@ -197,6 +198,15 @@ try {
     Invoke-Native git @("-c", "core.autocrlf=false", "archive", "--format=tar", "-o", $srcTar, $FullCommit)
     Invoke-Native $Tar @("-xf", $srcTar, "-C", $Src)
     $DockerDir = Join-Path $Src "deployment\docker"
+    # BUILD_INFO：随代码进入后端镜像（/app/BUILD_INFO），后台「系统信息」据此显示提交号、分支与构建时间。
+    # 版本号不写在这里：正式版本晋级不重新构建，版本号由服务器 .env 的 CLIPSYNC_TAG 传给后端
+    $builtUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [System.Globalization.CultureInfo]::InvariantCulture)
+    $buildInfoText = @(
+        "commit=$Commit",
+        "branch=$Branch",
+        "built=$builtUtc"
+    ) -join "`n"
+    [System.IO.File]::WriteAllText((Join-Path $Src "backend\BUILD_INFO"), "$buildInfoText`n", $Utf8NoBom)
 
     $images = @()
     $apps = @(

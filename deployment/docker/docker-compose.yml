@@ -91,6 +91,8 @@ services:
       MAX_UPLOAD_SESSIONS_PER_USER: ${MAX_UPLOAD_SESSIONS_PER_USER:-5}
       HISTORY_KEEP: ${HISTORY_KEEP:-50}
       UPLOAD_SESSION_TTL_HOURS: ${UPLOAD_SESSION_TTL_HOURS:-24}
+      # 后台「系统信息」显示的版本号，与上面 image 用的标签相同
+      APP_VERSION: ${CLIPSYNC_TAG:-latest}
     volumes:
       - storage_data:/app/storage
     # 不对宿主机暴露 8000，只经前端容器的 Nginx 访问
