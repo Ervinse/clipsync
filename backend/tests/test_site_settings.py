@@ -1,4 +1,4 @@
-"""站点显示开关 show_github_link：默认显示、超管可改、随 /auth/me 下发给所有登录用户、管理员只读"""
+"""站点显示开关 show_github_link：默认显示、管理员与超管可改、随 /auth/me 下发给所有登录用户、普通用户不能读写后台设置"""
 from app.models import Setting, UserRole
 
 
@@ -33,11 +33,11 @@ def test_patch_other_settings_keeps_github_link_value(client, make_user):
     assert _me(client, user)["show_github_link"] is False
 
 
-def test_admin_cannot_change_github_link(client, make_user):
+def test_admin_can_change_github_link(client, make_user):
     admin, user = make_user(UserRole.ADMIN), make_user()
     resp = client.patch("/api/admin/settings", json={"show_github_link": False}, headers=admin.headers)
-    assert resp.status_code == 403
-    assert _me(client, user)["show_github_link"] is True
+    assert resp.status_code == 200
+    assert _me(client, user)["show_github_link"] is False
 
 
 def test_plain_user_cannot_read_or_change_settings_endpoint(client, make_user):

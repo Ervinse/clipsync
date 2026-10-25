@@ -190,6 +190,41 @@ async def write_clipboard(
     )
 
 
+def history_list_query(user_id: int):
+    """
+    某用户的历史列表查询（按时间倒序）；本人查看与超管只读查看共用。
+    在数据库里算字节数与开头：长文本不把全文读进内存（OCTET_LENGTH 按字节计，LEFT 按字符截取）。
+    """
+    size = func.octet_length(ClipboardHistory.content)
+    return (
+        select(
+            ClipboardHistory.id,
+            case((size <= INLINE_CONTENT_BYTES, ClipboardHistory.content), else_=literal_column("NULL")).label("content"),
+            func.left(ClipboardHistory.content, PREVIEW_CHARS).label("preview"),
+            size.label("size"),
+            ClipboardHistory.created_at,
+        )
+        .where(ClipboardHistory.user_id == user_id)
+        .order_by(desc(ClipboardHistory.created_at), desc(ClipboardHistory.id))
+    )
+
+
+def rows_to_history_list(rows) -> ClipboardHistoryList:
+    items = [ClipboardHistoryItem(**row._mapping) for row in rows]
+    return ClipboardHistoryList(items=items, total=len(items))
+
+
+def to_history_item(item: ClipboardHistory) -> ClipboardHistoryItem:
+    """单条历史的全文"""
+    return ClipboardHistoryItem(
+        id=item.id,
+        content=item.content,
+        preview=item.content[:PREVIEW_CHARS],
+        size=len(item.content.encode("utf-8")),
+        created_at=item.created_at,
+    )
+
+
 @router.get("/history", response_model=ClipboardHistoryList)
 async def get_clipboard_history(
     current_user: User = Depends(get_current_user),
@@ -200,22 +235,8 @@ async def get_clipboard_history(
 
     安全红线：查询强制按 user_id 过滤。
     """
-    # 在数据库里算字节数与开头：长文本不把全文读进内存（OCTET_LENGTH 按字节计，LEFT 按字符截取）
-    size = func.octet_length(ClipboardHistory.content)
-    result = await db.execute(
-        select(
-            ClipboardHistory.id,
-            case((size <= INLINE_CONTENT_BYTES, ClipboardHistory.content), else_=literal_column("NULL")).label("content"),
-            func.left(ClipboardHistory.content, PREVIEW_CHARS).label("preview"),
-            size.label("size"),
-            ClipboardHistory.created_at,
-        )
-        .where(ClipboardHistory.user_id == current_user.id)
-        .order_by(desc(ClipboardHistory.created_at), desc(ClipboardHistory.id))
-    )
-    items = [ClipboardHistoryItem(**row._mapping) for row in result.all()]
-
-    return ClipboardHistoryList(items=items, total=len(items))
+    result = await db.execute(history_list_query(current_user.id))
+    return rows_to_history_list(result.all())
 
 
 @router.get("/history/{history_id}", response_model=ClipboardHistoryItem)
@@ -241,13 +262,7 @@ async def get_clipboard_history_item(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="历史记录不存在或无权访问",
         )
-    return ClipboardHistoryItem(
-        id=item.id,
-        content=item.content,
-        preview=item.content[:PREVIEW_CHARS],
-        size=len(item.content.encode("utf-8")),
-        created_at=item.created_at,
-    )
+    return to_history_item(item)
 
 
 @router.post("/history/{history_id}/restore", response_model=ClipboardResponse)

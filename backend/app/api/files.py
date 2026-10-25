@@ -601,6 +601,10 @@ async def download_file(
         # 不存在与无权限统一 404，不暴露他人文件 ID 是否存在
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在")
 
+    if not is_owner:
+        # superadmin 下载他人文件：记一条日志，便于事后追溯
+        logger.info("超管下载用户文件 operator=%s target=%s file=%s", current_user.id, file_record.user_id, file_id)
+
     return await stream_file_response(file_record)
 
 

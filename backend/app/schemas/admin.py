@@ -1,6 +1,6 @@
 """管理后台相关 Pydantic 模型"""
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from ..models import UserRole
@@ -65,6 +65,11 @@ class UpdateUserQuota(BaseModel):
 class UpdateUserStatus(BaseModel):
     """修改用户状态"""
     is_active: bool
+
+
+class UpdateUserRole(BaseModel):
+    """修改用户角色：只能在普通用户与管理员之间切换，超级管理员只能用 scripts/create_superadmin.py 创建"""
+    role: Literal["user", "admin"]
 
 
 MAX_INVITE_BATCH = 20

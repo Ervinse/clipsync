@@ -103,10 +103,11 @@ def test_plain_user_cannot_reach_admin(client, make_user):
 
 
 @pytest.mark.parametrize("method,path,body", [
-    ("patch", "/api/admin/users/{id}/quota", {"quota_bytes": 1}),
-    ("patch", "/api/admin/users/{id}/status", {"is_active": False}),
     ("delete", "/api/admin/users/{id}", None),
-    ("patch", "/api/admin/settings", {"registration_enabled": False}),
+    ("patch", "/api/admin/users/{id}/role", {"role": "admin"}),
+    ("get", "/api/admin/users/{id}/clipboard", None),
+    ("get", "/api/admin/users/{id}/clipboard/history", None),
+    ("get", "/api/admin/users/{id}/texts", None),
 ])
 def test_admin_cannot_call_superadmin_endpoints(client, make_user, method, path, body):
     admin = make_user(UserRole.ADMIN)
