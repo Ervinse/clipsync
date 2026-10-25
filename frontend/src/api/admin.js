@@ -88,6 +88,18 @@ export default {
     },
   },
 
+  // 系统信息：运行的版本、启动时间与部署记录（admin 及以上可看）
+  deployInfo() {
+    return request.get('/admin/deploy-info')
+  },
+
+  // 部署记录备注（仅超管可改）
+  deployments: {
+    updateNote(id, note) {
+      return request.patch(`/admin/deployments/${id}`, { note })
+    },
+  },
+
   // 文件管理（仅元数据）
   files: {
     list(skip = 0, limit = 50) {

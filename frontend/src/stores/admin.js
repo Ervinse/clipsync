@@ -15,6 +15,9 @@ export const useAdminStore = defineStore('admin', {
     usersSkip: 0,
     inviteBatches: [],
     settings: null,
+    // 系统信息；deployInfoFetchedAt 为取到数据的本机时间，用来在页面上继续累加已运行时长
+    deployInfo: null,
+    deployInfoFetchedAt: 0,
     files: [],
     filesTotal: 0,
     filesSkip: 0,
@@ -227,6 +230,39 @@ export const useAdminStore = defineStore('admin', {
       } catch (error) {
         console.error('更新系统设置失败:', error)
         throw error
+      }
+    },
+
+    /**
+     * 获取系统信息（运行的版本与部署记录）
+     */
+    async fetchDeployInfo() {
+      try {
+        this.deployInfo = await api.admin.deployInfo()
+        this.deployInfoFetchedAt = Date.now()
+      } catch (error) {
+        console.error('获取系统信息失败:', error)
+        throw error
+      }
+    },
+
+    /**
+     * 修改部署记录的备注（仅超管）；空字符串表示清除
+     */
+    async updateDeploymentNote(id, note) {
+      let record
+      try {
+        record = await api.admin.deployments.updateNote(id, note)
+      } catch (error) {
+        console.error('修改部署备注失败:', error)
+        throw error
+      }
+      if (!this.deployInfo) return
+      const replace = (item) => (item.id === id ? record : item)
+      this.deployInfo = {
+        ...this.deployInfo,
+        current: this.deployInfo.current && replace(this.deployInfo.current),
+        history: this.deployInfo.history.map(replace),
       }
     },
 
