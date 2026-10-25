@@ -20,8 +20,31 @@ export default {
     updateStatus(id, isActive) {
       return request.patch(`/admin/users/${id}/status`, { is_active: isActive })
     },
+    // role: 'user' | 'admin'（仅超管）
+    updateRole(id, role) {
+      return request.patch(`/admin/users/${id}/role`, { role })
+    },
     delete(id) {
       return request.delete(`/admin/users/${id}`)
+    },
+  },
+
+  // 查看用户的文本内容（仅超管，只读）
+  userContent: {
+    clipboard(userId) {
+      return request.get(`/admin/users/${userId}/clipboard`)
+    },
+    clipboardHistory(userId) {
+      return request.get(`/admin/users/${userId}/clipboard/history`)
+    },
+    clipboardHistoryItem(userId, historyId) {
+      return request.get(`/admin/users/${userId}/clipboard/history/${historyId}`)
+    },
+    texts(userId) {
+      return request.get(`/admin/users/${userId}/texts`)
+    },
+    text(userId, textId) {
+      return request.get(`/admin/users/${userId}/texts/${textId}`)
     },
   },
 

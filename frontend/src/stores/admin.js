@@ -93,6 +93,19 @@ export const useAdminStore = defineStore('admin', {
     },
 
     /**
+     * 修改用户角色（仅超管；role 为 'user' 或 'admin'）
+     */
+    async updateUserRole(userId, role) {
+      try {
+        await api.admin.users.updateRole(userId, role)
+      } catch (error) {
+        console.error('修改角色失败:', error)
+        throw error
+      }
+      await this.fetchUsers().catch(() => {})
+    },
+
+    /**
      * 删除用户
      */
     async deleteUser(userId) {

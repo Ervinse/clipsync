@@ -4,8 +4,10 @@ import {
   ChartColumn, Users, UserCheck, Ticket, Folder, Settings, File, HardDrive,
   Plus, Copy, Trash2, Ban, CircleCheck, Pencil, ChevronLeft, ChevronRight, ChevronDown, Search,
   CircleAlert, Info, LoaderCircle, X, CalendarClock, KeyRound, ShieldCheck,
+  ShieldPlus, ShieldMinus, Eye, Download,
 } from '@lucide/vue'
-import { useAdminStore, useUserStore } from '../stores'
+import { useAdminStore, useUserStore, useFilesStore } from '../stores'
+import UserContentDialog from '../components/UserContentDialog.vue'
 import { PAGE_SIZE } from '../stores/admin'
 import { formatDateTime, formatSize, parseUtc } from '../utils/format'
 import { copyToClipboard } from '../utils/clipboard'
@@ -58,7 +60,7 @@ const createdBatch = ref(null)
 
 onMounted(async () => {
   // 并行加载，互不影响：任何一个失败都不会阻断其余数据的显示
-  // 文件元数据 admin 及以上均可查看（后端 /api/admin/files 同此权限），不含下载入口
+  // 文件元数据 admin 及以上均可查看（后端 /api/admin/files 同此权限，只返回元数据）；超管的下载按钮走 /api/files/{id}/download
   const tasks = [
     ['统计', adminStore.fetchStats()],
     ['用户', adminStore.fetchUsers()],
@@ -85,7 +87,7 @@ const STAT_CARDS = computed(() => [
   { label: '有效访问码', value: stats.value.active_access_codes || 0, icon: ShieldCheck },
 ])
 
-// 系统设置：后端 GET 对 admin 及以上开放，PATCH 仅 superadmin；存库的就是下面这几项
+// 系统设置：后端 GET / PATCH 对 admin 及以上开放；存库的就是下面这几项
 const settingsForm = ref({
   registration_enabled: true,
   show_github_link: true,
@@ -104,10 +106,6 @@ const syncSettingsForm = () => {
 }
 
 const handleSaveSettings = async () => {
-  if (!userStore.isSuperAdmin) {
-    toast.error('仅超级管理员可修改系统设置')
-    return
-  }
   // 设置没加载成功时，表单里是初始默认值而不是真实设置，此时保存会把真实设置改成默认值
   if (!adminStore.settings) {
     toast.error('当前设置未能加载，请刷新页面后再保存')
@@ -509,9 +507,18 @@ const handleDeleteUnusedInBatch = async (batch) => {
   }
 }
 
+// 用户行的按钮按角色显示（与后端校验一致，后端是最终防线）：
+// admin 只能管理普通用户；superadmin 可改所有人的配额，可启用/禁用、删除、改角色的对象不含 superadmin
+const canEditQuota = (user) => userStore.isSuperAdmin || user.role === 'user'
+const canToggleStatus = (user) => user.role === 'user' || (userStore.isSuperAdmin && user.role === 'admin')
+const canDeleteUser = (user) => userStore.isSuperAdmin && user.role !== 'superadmin'
+const canChangeRole = (user) => userStore.isSuperAdmin && user.role !== 'superadmin'
+// 查看他人文本内容：仅超管，自己的内容在各自页面看
+const canViewContent = (user) => userStore.isSuperAdmin && user.id !== userStore.userInfo?.id
+
 const handleToggleUserStatus = async (user) => {
-  if (!userStore.isSuperAdmin) {
-    toast.error('仅超级管理员可执行此操作')
+  if (!canToggleStatus(user)) {
+    toast.error('没有权限执行此操作')
     return
   }
 
@@ -534,8 +541,8 @@ const handleToggleUserStatus = async (user) => {
 }
 
 const handleUpdateQuota = async (user) => {
-  if (!userStore.isSuperAdmin) {
-    toast.error('仅超级管理员可执行此操作')
+  if (!canEditQuota(user)) {
+    toast.error('没有权限执行此操作')
     return
   }
 
@@ -564,9 +571,61 @@ const handleUpdateQuota = async (user) => {
   }
 }
 
+const handleChangeRole = async (user) => {
+  if (!canChangeRole(user)) {
+    toast.error('仅超级管理员可修改角色')
+    return
+  }
+  const promote = user.role === 'user'
+  const ok = await confirmDialog(promote
+    ? {
+        title: `把「${user.username}」设为管理员？`,
+        message: '管理员可以管理普通用户（改配额、启用禁用）、邀请码和系统设置，但看不到任何人的文本和文件内容，也不能删除用户。',
+        confirmText: '设为管理员',
+      }
+    : {
+        title: `取消「${user.username}」的管理员身份？`,
+        message: '取消后该用户变回普通用户，立即失去管理后台的权限。',
+        confirmText: '取消管理员',
+        danger: true,
+      })
+  if (!ok) return
+
+  try {
+    await adminStore.updateUserRole(user.id, promote ? 'admin' : 'user')
+    toast.success(promote ? '已设为管理员' : '已取消管理员身份')
+  } catch (error) {
+    toast.error('操作失败：' + error.message)
+  }
+}
+
+// 超管只读查看某个用户的文本内容
+const contentViewUser = ref(null)
+const openContentView = (user) => {
+  if (!canViewContent(user)) return
+  contentViewUser.value = user
+}
+
+// 超管下载他人文件：与文件页共用下载逻辑（带进度，同一文件不重复发起）
+const filesStore = useFilesStore()
+const handleAdminDownload = async (file) => {
+  try {
+    await filesStore.downloadFile(file)
+  } catch (error) {
+    toast.error('下载失败：' + (error.message || '未知错误'))
+  }
+}
+const downloadProgressText = (file) => {
+  const state = filesStore.downloads[file.id]
+  if (!state) return '下载'
+  return state.total > 0
+    ? `下载中 ${Math.min(100, Math.round((state.loaded / state.total) * 100))}%`
+    : '下载中…'
+}
+
 const handleDeleteUser = async (user) => {
-  if (!userStore.isSuperAdmin) {
-    toast.error('仅超级管理员可执行此操作')
+  if (!canDeleteUser(user)) {
+    toast.error('仅超级管理员可删除用户')
     return
   }
 
@@ -674,7 +733,7 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
               <th>存储使用</th>
               <th>状态</th>
               <th>注册时间</th>
-              <th v-if="userStore.isSuperAdmin" class="cell-actions"><span class="sr-only">操作</span></th>
+              <th class="cell-actions"><span class="sr-only">操作</span></th>
             </tr>
           </thead>
           <tbody>
@@ -706,14 +765,39 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
                 </span>
               </td>
               <td class="cell-muted">{{ formatDate(user.created_at) }}</td>
-              <td v-if="userStore.isSuperAdmin" class="cell-actions">
+              <td class="cell-actions">
+                <!-- 按钮按权限显示：admin 只能管理普通用户；改角色、删除、查看内容仅超管（后端同样校验） -->
                 <span class="row-actions">
-                  <button class="btn-icon" title="修改配额" aria-label="修改配额" @click="handleUpdateQuota(user)">
+                  <button
+                    v-if="canViewContent(user)"
+                    class="btn-icon"
+                    title="查看文本内容"
+                    aria-label="查看文本内容"
+                    @click="openContentView(user)"
+                  >
+                    <Eye />
+                  </button>
+                  <button
+                    v-if="canEditQuota(user)"
+                    class="btn-icon"
+                    title="修改配额"
+                    aria-label="修改配额"
+                    @click="handleUpdateQuota(user)"
+                  >
                     <Pencil />
                   </button>
-                  <!-- superadmin 之间互不可禁用 / 删除（后端返回 403），按钮不显示 -->
                   <button
-                    v-if="user.role !== 'superadmin'"
+                    v-if="canChangeRole(user)"
+                    class="btn-icon"
+                    :title="user.role === 'user' ? '设为管理员' : '取消管理员'"
+                    :aria-label="user.role === 'user' ? '设为管理员' : '取消管理员'"
+                    @click="handleChangeRole(user)"
+                  >
+                    <ShieldPlus v-if="user.role === 'user'" />
+                    <ShieldMinus v-else />
+                  </button>
+                  <button
+                    v-if="canToggleStatus(user)"
                     class="btn-icon"
                     :title="user.is_active ? '禁用' : '启用'"
                     :aria-label="user.is_active ? '禁用' : '启用'"
@@ -723,7 +807,7 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
                     <CircleCheck v-else />
                   </button>
                   <button
-                    v-if="user.role !== 'superadmin'"
+                    v-if="canDeleteUser(user)"
                     class="btn-icon danger"
                     title="删除"
                     aria-label="删除"
@@ -959,11 +1043,12 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
       </template>
     </div>
 
-    <!-- 文件元数据（admin 及以上；安全红线：只展示元数据，无下载入口） -->
+    <!-- 文件元数据（admin 及以上）；安全红线：下载按钮只给超管，下载走 /api/files/{id}/download，后端只放行属主与超管 -->
     <div v-if="activeTab === 'files'" class="tab-panel">
       <div class="alert alert-info panel-note">
         <Info />
-        <span>这里只显示文件的元数据，管理员无法查看或下载其他用户的文件内容。</span>
+        <span v-if="userStore.isSuperAdmin">超级管理员可以下载任何用户的文件，每次下载都会记入服务器日志。</span>
+        <span v-else>这里只显示文件的元数据，管理员无法查看或下载其他用户的文件内容。</span>
       </div>
       <div v-if="adminStore.files.length === 0" class="empty">
         <span class="empty-icon"><Folder :size="20" /></span>
@@ -978,6 +1063,7 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
               <th>大小</th>
               <th>所属用户</th>
               <th>上传时间</th>
+              <th v-if="userStore.isSuperAdmin" class="cell-actions"><span class="sr-only">操作</span></th>
             </tr>
           </thead>
           <tbody>
@@ -986,6 +1072,18 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
               <td class="cell-muted num">{{ formatSize(file.size) }}</td>
               <td>{{ file.username }}</td>
               <td class="cell-muted">{{ formatDate(file.created_at) }}</td>
+              <td v-if="userStore.isSuperAdmin" class="cell-actions">
+                <button
+                  class="btn-icon"
+                  :title="downloadProgressText(file)"
+                  :aria-label="downloadProgressText(file)"
+                  :disabled="!!filesStore.downloads[file.id]"
+                  @click="handleAdminDownload(file)"
+                >
+                  <LoaderCircle v-if="filesStore.downloads[file.id]" class="spin" />
+                  <Download v-else />
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -1003,16 +1101,12 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
       </div>
     </div>
 
-    <!-- 系统设置（admin 只读，superadmin 可修改；后端为最终防线） -->
+    <!-- 系统设置（admin 与 superadmin 均可修改） -->
     <div v-if="activeTab === 'settings'" class="tab-panel">
       <form class="settings card" @submit.prevent="handleSaveSettings">
         <div v-if="!adminStore.settings" class="alert alert-warning">
           <CircleAlert />
           <span>当前设置未能加载，下面显示的不是真实设置，无法保存。请刷新页面重试。</span>
-        </div>
-        <div v-else-if="!userStore.isSuperAdmin" class="alert alert-info">
-          <Info />
-          <span>仅超级管理员可修改系统设置，当前为只读。</span>
         </div>
 
         <div class="setting-row">
@@ -1023,9 +1117,7 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
           <label class="switch">
             <input
               v-model="settingsForm.registration_enabled"
-              type="checkbox"
-              :disabled="!userStore.isSuperAdmin"
-              aria-label="开放注册"
+              type="checkbox"              aria-label="开放注册"
             />
             <span class="switch-track"></span>
           </label>
@@ -1039,9 +1131,7 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
           <label class="switch">
             <input
               v-model="settingsForm.show_github_link"
-              type="checkbox"
-              :disabled="!userStore.isSuperAdmin"
-              aria-label="显示 GitHub 链接"
+              type="checkbox"              aria-label="显示 GitHub 链接"
             />
             <span class="switch-track"></span>
           </label>
@@ -1058,9 +1148,7 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
               v-model.number="settingsForm.default_quota_mb"
               class="input"
               type="number"
-              min="0"
-              :disabled="!userStore.isSuperAdmin"
-            />
+              min="0"            />
             <span class="input-suffix">MB</span>
           </span>
         </div>
@@ -1069,7 +1157,7 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
           单文件上限、分片大小、历史保留条数等由 backend/.env 配置，需重启后端生效，不在此修改。
         </p>
 
-        <div v-if="userStore.isSuperAdmin" class="settings-footer">
+        <div class="settings-footer">
           <button
             type="submit"
             class="btn btn-primary"
@@ -1212,6 +1300,9 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
         </div>
       </div>
     </div>
+
+    <!-- 超管只读查看用户文本内容 -->
+    <UserContentDialog v-if="contentViewUser" :user="contentViewUser" @close="contentViewUser = null" />
   </div>
 </template>
 

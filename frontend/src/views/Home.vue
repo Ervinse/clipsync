@@ -24,8 +24,26 @@ const QUOTA_EVENTS = ['file_added', 'file_deleted', 'quota_updated', 'open']
 const onQuotaChanged = () => {
   userStore.fetchUserInfo().catch(() => {})
 }
-onMounted(() => QUOTA_EVENTS.forEach((event) => ws.on(event, onQuotaChanged)))
-onUnmounted(() => QUOTA_EVENTS.forEach((event) => ws.off(event, onQuotaChanged)))
+// 超管修改了本账号的角色：重取身份，侧栏的管理后台入口随之出现或消失；
+// 被取消管理员时正停在后台页，转回云剪切板（后台接口此时已由后端拒绝）
+const onRoleUpdated = async () => {
+  try {
+    await userStore.fetchUserInfo()
+  } catch {
+    return
+  }
+  if (route.meta.requiresAdmin && !userStore.isAdmin) {
+    router.replace('/clipboard')
+  }
+}
+onMounted(() => {
+  QUOTA_EVENTS.forEach((event) => ws.on(event, onQuotaChanged))
+  ws.on('role_updated', onRoleUpdated)
+})
+onUnmounted(() => {
+  QUOTA_EVENTS.forEach((event) => ws.off(event, onQuotaChanged))
+  ws.off('role_updated', onRoleUpdated)
+})
 
 const navItems = computed(() => {
   const items = [
