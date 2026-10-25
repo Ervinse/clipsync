@@ -13,7 +13,7 @@ export const useAdminStore = defineStore('admin', {
     users: [],
     usersTotal: 0,
     usersSkip: 0,
-    inviteCodes: [],
+    inviteBatches: [],
     settings: null,
     files: [],
     filesTotal: 0,
@@ -106,12 +106,12 @@ export const useAdminStore = defineStore('admin', {
     },
 
     /**
-     * 获取邀请码列表
+     * 获取邀请码批次列表（每批带其中全部邀请码）
      */
-    async fetchInviteCodes() {
+    async fetchInviteBatches() {
       try {
-        const data = await api.admin.inviteCodes.list()
-        this.inviteCodes = data?.items || []
+        const data = await api.admin.inviteBatches.list()
+        this.inviteBatches = data?.items || []
       } catch (error) {
         console.error('获取邀请码列表失败:', error)
         throw error
@@ -119,19 +119,48 @@ export const useAdminStore = defineStore('admin', {
     },
 
     /**
-     * 批量生成邀请码（data: { count, expires_at }），返回本次生成的邀请码数组
+     * 生成一批邀请码（data: { count, expires_at, note }），返回新批次
      * 列表刷新失败不影响已生成的结果
      */
-    async createInviteCodes(data) {
-      let result
+    async createInviteBatch(data) {
+      let batch
       try {
-        result = await api.admin.inviteCodes.create(data)
+        batch = await api.admin.inviteBatches.create(data)
       } catch (error) {
         console.error('创建邀请码失败:', error)
         throw error
       }
-      await this.fetchInviteCodes().catch(() => {})
-      return result?.items || []
+      await this.fetchInviteBatches().catch(() => {})
+      return batch
+    },
+
+    /**
+     * 修改批次备注（空字符串为清空）
+     */
+    async updateInviteBatchNote(batchId, note) {
+      let batch
+      try {
+        batch = await api.admin.inviteBatches.updateNote(batchId, note)
+      } catch (error) {
+        console.error('修改备注失败:', error)
+        throw error
+      }
+      this.inviteBatches = this.inviteBatches.map((b) => (b.id === batchId ? batch : b))
+    },
+
+    /**
+     * 删除批次里所有未使用的邀请码，返回 { deleted, batch_deleted }
+     */
+    async deleteUnusedInBatch(batchId) {
+      let result
+      try {
+        result = await api.admin.inviteBatches.deleteUnused(batchId)
+      } catch (error) {
+        console.error('删除邀请码失败:', error)
+        throw error
+      }
+      await this.fetchInviteBatches().catch(() => {})
+      return result
     },
 
     /**
@@ -144,20 +173,22 @@ export const useAdminStore = defineStore('admin', {
         console.error('修改邀请码有效期失败:', error)
         throw error
       }
-      await this.fetchInviteCodes().catch(() => {})
+      await this.fetchInviteBatches().catch(() => {})
     },
 
     /**
-     * 删除邀请码
+     * 删除单个邀请码；批次删空时后端会一起删除批次，这里同步去掉
      */
     async deleteInviteCode(id) {
       try {
         await api.admin.inviteCodes.delete(id)
-        this.inviteCodes = this.inviteCodes.filter(c => c.id !== id)
       } catch (error) {
         console.error('删除邀请码失败:', error)
         throw error
       }
+      this.inviteBatches = this.inviteBatches
+        .map((b) => ({ ...b, codes: b.codes.filter((c) => c.id !== id) }))
+        .filter((b) => b.codes.length > 0)
     },
 
     /**
