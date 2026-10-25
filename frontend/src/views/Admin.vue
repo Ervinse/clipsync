@@ -43,6 +43,16 @@ const inviteForm = ref({
   expires_in_days: 7,
   note: '',
 })
+// 有效期快捷按钮：点一下填入天数（半年按 180 天、一年按 365 天算），输入框仍可手动填其他天数
+const EXPIRY_PRESETS = [
+  { days: 7, label: '7 天' },
+  { days: 14, label: '14 天' },
+  { days: 30, label: '30 天' },
+  { days: 90, label: '90 天' },
+  { days: 180, label: '半年' },
+  { days: 365, label: '一年' },
+  { days: 0, label: '永久' },
+]
 // 本次生成的批次：非空时弹窗切换成「生成结果」页
 const createdBatch = ref(null)
 
@@ -1109,10 +1119,12 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
             </span>
             <span class="field-hint">一次最多 {{ MAX_INVITE_BATCH }} 个</span>
           </label>
-          <label class="field">
-            <span class="field-label">有效期</span>
+          <!-- 外层不用 label：里面的快捷按钮不能被当成输入框的标签区域 -->
+          <div class="field">
+            <label class="field-label" for="invite-expiry-days">有效期</label>
             <span class="input-with-suffix">
               <input
+                id="invite-expiry-days"
                 v-model.number="inviteForm.expires_in_days"
                 class="input"
                 type="number"
@@ -1121,8 +1133,21 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
               />
               <span class="input-suffix">天</span>
             </span>
+            <div class="expiry-presets" role="group" aria-label="快捷设置有效期">
+              <button
+                v-for="preset in EXPIRY_PRESETS"
+                :key="preset.days"
+                type="button"
+                class="filter-chip preset-chip"
+                :class="{ active: Number(inviteForm.expires_in_days) === preset.days && inviteForm.expires_in_days !== '' }"
+                :aria-pressed="Number(inviteForm.expires_in_days) === preset.days && inviteForm.expires_in_days !== ''"
+                @click="inviteForm.expires_in_days = preset.days"
+              >
+                {{ preset.label }}
+              </button>
+            </div>
             <span class="field-hint">0 表示永久有效；同一批共用这个有效期，生成后可以再改</span>
-          </label>
+          </div>
           <label class="field">
             <span class="field-label">备注<span class="field-optional">（选填）</span></span>
             <input
@@ -1489,6 +1514,18 @@ const copyInviteCode = (code) => copyText(code, '邀请码已复制')
   display: flex;
   justify-content: flex-end;
   margin-top: var(--space-2);
+}
+
+/* 创建邀请码弹窗：有效期快捷按钮，沿用筛选按钮的样式，略小一号 */
+.expiry-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.preset-chip {
+  height: 28px;
+  font-size: var(--text-xs);
 }
 
 .field-optional {
