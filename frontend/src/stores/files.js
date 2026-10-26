@@ -23,8 +23,9 @@ export const useFilesStore = defineStore('files', {
   getters: {
     // 按时间倒序排列的文件列表
     sortedFiles(state) {
+      // created_at 精度只到秒，同一秒上传的文件按 id 倒序兜底，与后端排序一致
       return [...state.files].sort((a, b) =>
-        new Date(b.created_at) - new Date(a.created_at)
+        (new Date(b.created_at) - new Date(a.created_at)) || (b.id - a.id)
       )
     },
 

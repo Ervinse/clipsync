@@ -133,7 +133,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | username | VARCHAR(64) UNIQUE | 登录名 |
 | password_hash | VARCHAR(255) | bcrypt 哈希，不存明文 |
 | role | ENUM('USER','ADMIN','SUPERADMIN') | 角色，默认 USER（库中存枚举名大写，API 返回小写值 `user`/`admin`/`superadmin`） |
-| quota_bytes | BIGINT | 存储配额；注册时取系统设置的默认配额（缺省 100MB），上限 1TB；管理员可改普通用户的，超管可改所有人的 |
+| quota_bytes | BIGINT | 存储配额；注册与 `create_superadmin` 创建超管时都取系统设置的默认配额（缺省 100MB），上限 1TB；管理员可改普通用户的，超管可改所有人的 |
 | is_active | BOOLEAN | 是否启用（管理员可禁用普通用户，超管可禁用普通用户与管理员） |
 | created_at | DATETIME | 创建时间 |
 
@@ -191,7 +191,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 > 用户更新「当前文本」时，旧内容非空且与新内容不同才写入本表作为历史版本，供界面查看与恢复。恢复某条历史时，该条在同一事务里删除（它已成为当前文本）。索引 `user_id`。
 > **保留策略**：每用户保留最近 `HISTORY_KEEP` 条（`.env`，默认 50；不能在后台修改），超出部分按时间自动清理最旧记录。
-> 文本内容按 UTF-8 编码后不超过 8MB（8388608 字节），`ClipboardUpdate` 按字节数校验。列类型 MEDIUMTEXT 容量 16MB（迁移 `3f1c2a9d7b4e`）；应用层上限必须小于 Nginx 的 `client_max_body_size`（10m），否则超限请求在 Nginx 就被 413 拒绝。
+> 文本内容按 UTF-8 编码后不超过 4MB（4194304 字节），`ClipboardUpdate` 按字节数校验。列类型 MEDIUMTEXT 容量 16MB（迁移 `3f1c2a9d7b4e`）；请求体是 JSON，换行、制表符、引号、反斜杠转义后占 2 字节，所以应用层上限的 2 倍必须小于 Nginx 的 `client_max_body_size`（10m），否则超限请求在 Nginx 就被 413 拒绝，用户看不到后端的中文提示。
 
 ### 5.5 texts — 文本栏目
 
@@ -200,7 +200,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | id | BIGINT PK | |
 | user_id | BIGINT FK→users | 归属用户，查询按此过滤 |
 | title | VARCHAR(100) | 标题，可为空字符串（入库前去掉首尾空白） |
-| content | MEDIUMTEXT | 文本内容，上限与云剪切板相同（8MB） |
+| content | MEDIUMTEXT | 文本内容，上限与云剪切板相同（4MB） |
 | version | INT | 每次保存加 1，用于保存冲突检测 |
 | access_code / access_expires_at | VARCHAR(32) NULL / DATETIME NULL | 快速访问码与过期时间（见 5.8） |
 | created_at / updated_at | DATETIME | 创建 / 最后保存时间 |
@@ -272,7 +272,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 > **外键无级联**：所有外键都没有 `ON DELETE CASCADE`。删除用户时由 `DELETE /api/admin/users/{id}` 按依赖顺序显式删除上传会话、文件、文本栏目、历史、当前文本（访问码挂在这些内容上，随之删除），处理其创建/使用过的邀请码，再删用户与磁盘目录。邀请码规则：该用户**使用过**的码保留记录、`used_by` 置空（`used_at` 保留，码仍不可复用）；该用户**创建的未使用**码直接删除；该用户创建的**已使用**码保留作审计，`created_by` 转记到执行删除的超管名下（`created_by` 为 NOT NULL，不改模型）。该用户创建的批次：码被删光的批次删除，还剩已使用码的批次同样转记到执行删除的超管名下，备注保留。删除前锁住被删用户行，与 `upload/init` 串行化，避免新建会话的 tmp 目录成为孤儿；磁盘清理失败只记日志，由定时清理的孤儿扫描兜底。
 
-> **时间约定**：所有 DATETIME 列存 naive UTC；数据库会话时区固定 `+00:00`，代码统一用 `utcnow()`。
+> **时间约定**：所有 DATETIME 列存 naive UTC，精度到秒（列是 `DATETIME(0)`，`utcnow()` 与入库的过期时间都先截掉小数秒，接口响应与之后读到的一致）；数据库会话时区固定 `+00:00`，代码统一用 `utcnow()`。
 
 ---
 
@@ -280,7 +280,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 除注册、登录、快速访问外，`/api/*` 都需 `Authorization: Bearer <token>`（登录凭证）。快速访问接口 `/api/access/*` 用快速访问凭证（见 6.5），两种凭证互不通用。缺少或无效 token 返回 401，用户被禁用返回 403 并带响应头 `X-Auth-Error: disabled`（前端据此与普通「权限不足」的 403 区分并登出）。健康检查为 `GET /`。
 
-限流（slowapi，按客户端 IP，进程内存计数）：注册 5 次/分钟、登录 10 次/分钟、快速访问换取凭证 `POST /api/access/login` 30 次/分钟、其余 `/api/access/*` 每个接口 120 次/分钟。快速访问另有按用户名的输错锁定（第 8 节）。
+限流（slowapi，按客户端 IP，进程内存计数）：注册 5 次/分钟、登录 10 次/分钟、快速访问换取凭证 `POST /api/access/login` 30 次/分钟、其余 `/api/access/*` 每个接口 120 次/分钟；超限返回 429 与中文 `detail`「操作过于频繁，请稍后再试」。快速访问另有按用户名的输错锁定（第 8 节）。
 
 ### 6.1 认证 `api/auth.py`
 
@@ -298,10 +298,10 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | PUT | /api/clipboard | 登录 | 更新当前文本 `{content, base_version?}`（upsert），旧内容入历史，广播；`base_version` 与当前版本不一致返回 409，省略则直接覆盖 |
 | GET | /api/clipboard/history | 登录 | 列出自己的全部文本历史版本（不分页，最多 `HISTORY_KEEP` 条）；不超过 64KB 的条目带全文 `content`，更长的 `content` 为 null、只给开头 `preview`，`size` 为 UTF-8 字节数 |
 | GET | /api/clipboard/history/{id} | 归属 | 读取某条历史的全文（他人的与不存在的统一 404） |
-| POST | /api/clipboard/history/{id}/restore | 归属 | 把某历史版本恢复为当前文本：该条历史随之删除，当前内容非空且与之不同时另存为一条新历史；广播 |
-| DELETE | /api/clipboard/history/{id} | 归属 | 删除某条历史版本，广播 |
+| POST | /api/clipboard/history/{id}/restore | 归属 | 把某历史版本恢复为当前文本：该条历史随之删除，当前内容非空且与之不同时另存为一条新历史；广播。读出内容后这条历史被另一台设备删除或恢复掉时返回 404，不写入当前文本 |
+| DELETE | /api/clipboard/history/{id} | 归属 | 删除某条历史版本，广播；同时被另一个请求删除时，后到的返回 404 |
 
-> 前端：点击历史条目只把内容填回编辑框（不保存，长条目先按 id 取全文）；「恢复」按钮调 restore，「删除」按钮调 delete。文本内容按 UTF-8 字节数校验，上限 8MB（8388608 字节）。
+> 前端：点击历史条目只把内容填回编辑框（不保存，长条目先按 id 取全文）；「恢复」按钮调 restore，「删除」按钮调 delete。文本内容按 UTF-8 字节数校验，上限 4MB（4194304 字节）。
 
 ### 6.3 文本栏目 `api/texts.py`
 
@@ -310,8 +310,8 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | GET | /api/texts | 登录 | 列出自己的全部文本 `{items, total, max_texts}`；不超过 64KB 的文本带全文 `content`，更长的 `content` 为 null，只给开头 200 字 `preview` 与字节数 `size` |
 | POST | /api/texts | 登录 | 新建 `{title?, content?}`；已有 200 段返回 400；广播 `texts_changed` |
 | GET | /api/texts/{id} | 归属 | 读取全文；他人文本与不存在统一 404 |
-| PUT | /api/texts/{id} | 归属 | 保存 `{title?, content?, base_version?}`：省略的字段保持原值；版本不一致返回 409；广播 `texts_changed` |
-| DELETE | /api/texts/{id} | 归属 | 删除（访问码随之消失），广播 `texts_changed`；带访问码的另广播 `access_codes_changed` |
+| PUT | /api/texts/{id} | 归属 | 保存 `{title?, content?, base_version?}`：省略的字段保持原值；版本不一致返回 409；标题与内容都没有变化时原样返回当前文本，不加版本号、不广播；有变化时广播 `texts_changed` |
+| DELETE | /api/texts/{id} | 归属 | 删除（访问码随之消失），广播 `texts_changed`；带访问码的另广播 `access_codes_changed`；同时被另一个请求删除时，后到的返回 404 |
 
 ### 6.4 文件 `api/files.py`
 
@@ -320,10 +320,10 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | GET | /api/files | 登录 | 列出自己的文件（含 `access_code`、`access_expires_at`），并返回 `used_bytes`、`reserved_bytes`、`quota_bytes`（前端配额按 已用 + 上传中 计算） |
 | POST | /api/files/upload/init | 登录 | 初始化分片上传 `{original_name, total_size, chunk_size}`，返回 `{upload_id, total_chunks, chunk_size}`（分片大小以返回值为准）；超过单文件上限或配额不足 413，分片数过多 400，进行中的会话过多 429 |
 | POST | /api/files/upload/chunk | 登录 | 上传单个分片，multipart `{upload_id, chunk_index, chunk_data}`；分片过大 413、过小 400 |
-| POST | /api/files/upload/complete | 登录 | 合并分片 `{upload_id}`，写记录，广播 `file_added`；流程与失败处理见第 10 节 |
+| POST | /api/files/upload/complete | 登录 | 合并分片 `{upload_id}`，写记录，广播 `file_added`；合并期间上传被取消或被清理时返回 404、不入库；流程与失败处理见第 10 节 |
 | DELETE | /api/files/upload/{upload_id} | 归属 | 取消进行中的上传：删会话（立即释放配额）+ 清理 tmp；他人会话与不存在统一 404，正在合并返回 409 |
 | GET | /api/files/{id}/download | 归属或 superadmin | 流式下载；无权限与不存在统一返回 404 |
-| DELETE | /api/files/{id} | 归属 | 删文件记录（访问码随之消失）+ 磁盘，广播（superadmin 也不能删他人文件） |
+| DELETE | /api/files/{id} | 归属 | 删文件记录（访问码随之消失）+ 磁盘，广播（superadmin 也不能删他人文件）；同时被另一个请求删除时，后到的返回 404 |
 
 ### 6.5 快速访问码 `api/access.py`
 
@@ -361,7 +361,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | PATCH | /api/admin/invite-batches/{id} | admin+ | 修改批次备注 `{note}`（空字符串为清空，校验同上）；码已全部用掉的批次也能改；批次不存在 404；返回该批次 |
 | DELETE | /api/admin/invite-batches/{id} | admin+ | 删除批次里所有未使用的码（含已过期未使用的），已使用的保留；批次里不剩码时批次一起删除；行锁与注册互斥；返回 `{deleted, batch_deleted}`；批次不存在 404 |
 | PATCH | /api/admin/invite-codes/expiry | admin+ | 批量修改有效期 `{ids, expires_at}`（`ids` 1–500 个，`expires_at` 为 null 表示永久有效，校验同上）；只能改未使用的码（已过期未使用的可续期）；任何一个 id 不存在返回 404、已使用返回 409，整批不改；行锁与注册互斥；返回 `{updated, expires_at}` |
-| DELETE | /api/admin/invite-codes/{id} | admin+ | 删除单个未使用的邀请码；已使用的保留作审计记录，返回 409；所属批次删空时一起删除 |
+| DELETE | /api/admin/invite-codes/{id} | admin+ | 删除单个未使用的邀请码；已使用的保留作审计记录，返回 409；所属批次删空时一起删除。加行锁，与注册互斥：注册正在用这个码时，等注册提交后再判断，不会删掉刚用掉的码 |
 | GET | /api/admin/files | admin+ | 全站文件**元数据**，分页（无下载入口） |
 | GET | /api/admin/settings | admin+ | 读取系统设置 `{default_quota_bytes, registration_enabled, show_github_link}` |
 | PATCH | /api/admin/settings | admin+ | 修改上述设置，字段都可选，只改传入的（默认配额 0 到 1TB） |
@@ -528,12 +528,12 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
                  upload_id、无法取消的会话；提交失败时删掉刚建的目录）
               → 返回 {upload_id, total_chunks, chunk_size}（以服务端返回为准）
 2. chunk×N  → POST /api/files/upload/chunk  multipart {upload_id, chunk_index, chunk_data}
-              校验归属、会话未过期、chunk_index < total_chunks
+              校验归属、会话未过期（先于分片编号检查）、chunk_index < total_chunks
               每片大小必须等于期望值：非最后一片 = chunk_size，最后一片 = 剩余字节；超出 413，不足 400
               线程池中写 tmp/{upload_id}/{index}.<随机>.part，完成后原子替换为 {index}
               失败可重传该片（断点续传）；同一片并发重传不会互相截断
 3. complete → POST /api/files/upload/complete  JSON {upload_id}
-              同一 upload_id 并发 complete 返回 409；会话过期返回 404
+              同一 upload_id 并发 complete 返回 409；会话过期返回 404；合并期间上传被取消或被清理（会话行已不在）时放弃本次合并、删除合并结果并返回 404
               校验分片 0..N-1 齐全 → 先提交结束事务（合并耗时长，期间不占着数据库连接）
               → 线程池中按序流式合并到 storage/{user_id}/{uuid}
               实际大小必须等于 total_size → 按实际大小再校验配额
@@ -737,7 +737,7 @@ CodeProject/
 
 - `proxy_pass` 用变量 + `resolver 127.0.0.11`：backend 容器重建后 IP 会变，Nginx 运行时重新解析。
 - `location /ws` 需 `Upgrade`/`Connection` 头支持 WebSocket。
-- `client_max_body_size` 略大于单个分片大小（`CHUNK_SIZE` 默认 5MB，Nginx 限 10MB），同时大于剪贴板文本上限（8MB，云剪切板与文本栏目相同；请求体含 JSON 外壳与转义，需要留余量）。
+- `client_max_body_size` 略大于单个分片大小（`CHUNK_SIZE` 默认 5MB，Nginx 限 10MB），同时大于剪贴板文本上限转义后的最大体积（上限 4MB，云剪切板与文本栏目相同；请求体含 JSON 外壳，换行、引号等转义后最多翻倍，需要留余量）。
 - `/api` 反代加超时设置适配上传；`Host` 用 `$http_host`（保留端口）。
 - 前端页面（含快速访问页 `/quick`）是 SPA 路由，由 `try_files` 回落到 `index.html`。
 - 静态页面由 Nginx 加 `X-Frame-Options`、`X-Content-Type-Options`、`Referrer-Policy`；`index.html` 不缓存，带哈希的 `/assets/` 长期缓存；`/api` 的安全头由后端下发。

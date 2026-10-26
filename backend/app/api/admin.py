@@ -68,7 +68,7 @@ from ..core.quick_access import CODED_MODELS
 from ..core.invite_code import generate_invite_code
 from ..core.deploy_info import STARTED_AT, current_build, current_deployment
 from .clipboard import to_clipboard_response, history_list_query, rows_to_history_list, to_history_item
-from .texts import summary_query, rows_to_summaries, to_text_response, MAX_TEXTS_PER_USER, NOT_FOUND_DETAIL
+from .texts import summary_query, rows_to_summaries, to_text_response, MAX_TEXTS_PER_USER
 
 logger = logging.getLogger(__name__)
 
@@ -685,11 +685,14 @@ async def delete_invite_code(
     """
     删除单个未使用的邀请码；批次里不剩码时批次一起删除
 
+    行锁与注册时的 FOR UPDATE 互斥：注册正在用这个码时，等它提交后再判断「是否已使用」，
+    不会把刚被用掉的码删掉（已使用的码要保留作审计记录）。
+
     权限：admin + superadmin
     """
-    # 查询邀请码
+    # 查询邀请码（加锁读，读到的是最新状态）
     result = await db.execute(
-        select(InviteCode).where(InviteCode.id == invite_code_id)
+        select(InviteCode).where(InviteCode.id == invite_code_id).with_for_update()
     )
     invite_code = result.scalar_one_or_none()
 
@@ -962,7 +965,7 @@ async def get_user_text(
     result = await db.execute(select(Text).where(Text.id == text_id, Text.user_id == user_id))
     text = result.scalar_one_or_none()
     if text is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=NOT_FOUND_DETAIL)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文本不存在")
     return to_text_response(text)
 
 

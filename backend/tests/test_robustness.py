@@ -194,5 +194,17 @@ def test_clipboard_limit_is_below_nginx_body_limit():
         pytest.skip("没有部署目录（如在镜像内运行）")
     match = re.search(r"^client_max_body_size\s+(\d+)m;", conf.read_text(encoding="utf-8"), re.M)
     assert match, "nginx-common.conf 里没找到 client_max_body_size"
-    # 超过 Nginx 上限的请求到不了后端；请求体还含 JSON 外壳与转义，文本上限必须明显更小
-    assert MAX_CONTENT_BYTES < int(match.group(1)) * 1024 * 1024
+    # 超过 Nginx 上限的请求到不了后端（用户只看到 Nginx 的英文 413 页）。请求体是 JSON：
+    # 换行、制表符、引号、反斜杠转义后占 2 字节，所以上限的 2 倍加上 JSON 外壳也要小于 Nginx 的上限
+    assert MAX_CONTENT_BYTES * 2 + 1024 < int(match.group(1)) * 1024 * 1024
+
+
+def test_escape_heavy_text_at_the_limit_fits_in_one_request(client, make_user):
+    """全是换行的文本在上限处：JSON 里每个换行占 2 字节，请求体约 8MB，仍低于 Nginx 的 10MB"""
+    user = make_user()
+    body = "\n" * MAX_CONTENT_BYTES
+    resp = client.put("/api/clipboard", json={"content": body}, headers=user.headers)
+    assert resp.status_code == 200
+    assert len(resp.request.content) < 10 * 1024 * 1024
+    too_big = client.put("/api/clipboard", json={"content": body + "x"}, headers=user.headers)
+    assert too_big.status_code == 422 and "4MB" in too_big.text

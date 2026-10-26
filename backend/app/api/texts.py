@@ -25,7 +25,7 @@ CONFLICT_DETAIL = "内容已在别处更新，请先载入最新内容"
 def summary_query(*conditions):
     """
     列表查询：在数据库里算字节数与开头，长文本不把全文读进内存。
-    OCTET_LENGTH 按字节计（与 8MB 上限的口径一致），LEFT 按字符截取。
+    OCTET_LENGTH 按字节计（与 4MB 上限的口径一致），LEFT 按字符截取。
     """
     size = func.octet_length(Text.content)
     return (
@@ -77,7 +77,7 @@ async def write_text(
 
     安全红线：按 (id, user_id) 定位，只能改属主自己的文本；require_code 为快速访问时的访问码，
     加锁读取时一并校验文本仍挂着这个码且未过期，否则按不存在处理。
-    base_version 与当前版本不一致返回 409，不覆盖别处的修改。
+    base_version 与当前版本不一致返回 409，不覆盖别处的修改；标题与内容都没有变化时原样返回，不加版本号也不广播。
     """
     # 先结束鉴权读视图（MySQL 默认 REPEATABLE READ），加锁读到的才是最新版本
     await db.commit()
@@ -93,10 +93,17 @@ async def write_text(
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=CONFLICT_DETAIL)
 
-    if data.title is not None:
-        text.title = data.title
-    if data.content is not None:
-        text.content = data.content
+    new_title = text.title if data.title is None else data.title
+    new_content = text.content if data.content is None else data.content
+    if new_title == text.title and new_content == text.content:
+        # 什么都没变：不加版本号、不刷新时间、不广播，别处带着旧版本号保存时不会被误判为冲突。
+        # 先生成响应再回滚（回滚会让对象过期，之后不能再读属性）
+        unchanged = to_text_response(text)
+        await db.rollback()
+        return unchanged
+
+    text.title = new_title
+    text.content = new_content
     text.version += 1
     text.updated_at = utcnow()
     await db.commit()
@@ -190,7 +197,11 @@ async def delete_text(
     if text is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=NOT_FOUND_DETAIL)
 
-    await db.execute(delete(Text).where(Text.id == text_id, Text.user_id == current_user.id))
+    deleted = await db.execute(delete(Text).where(Text.id == text_id, Text.user_id == current_user.id))
+    if deleted.rowcount == 0:
+        # 同时有另一个请求先删除了这条文本：不重复广播
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=NOT_FOUND_DETAIL)
     await db.commit()
 
     if text.access_code:

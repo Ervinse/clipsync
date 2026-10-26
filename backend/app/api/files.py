@@ -44,6 +44,9 @@ router = APIRouter()
 
 _READ_BLOCK = 64 * 1024
 
+# 上传会话找不到（不存在、他人的、已被取消 / 清理）统一用这句，不区分原因
+SESSION_GONE_DETAIL = "上传会话不存在或无权访问"
+
 # 单个上传的分片总数上限：chunk_size 过小会产生海量小文件与超大列表，拖垮事件循环
 MAX_TOTAL_CHUNKS = 10_000
 
@@ -54,7 +57,7 @@ _completing: set[str] = set()
 def _require_valid_upload_id(upload_id: str) -> None:
     """格式不对（含大写写法）的 upload_id 一律按会话不存在处理，不进入查库与磁盘操作"""
     if not is_valid_upload_id(upload_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或无权访问")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SESSION_GONE_DETAIL)
 
 
 def _delete_own_session(upload_id: str, user_id: int):
@@ -235,7 +238,9 @@ async def init_upload(
     # 加锁前先 commit：MySQL 默认 REPEATABLE READ，get_current_user 的鉴权读已固定本事务读视图，
     # 若不先结束该视图，加锁后的 count / sum 仍读旧快照，锁形同虚设；commit 开启新读视图（expire_on_commit=False，current_user 仍可用）。
     await db.commit()
-    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+    # 配额取加锁后读到的值：鉴权时读到的 current_user.quota_bytes 可能已被管理员同时调低
+    result = await db.execute(select(User.quota_bytes).where(User.id == current_user.id).with_for_update())
+    quota_bytes = result.scalar_one()
 
     result = await db.execute(
         select(func.count()).select_from(UploadSession).where(UploadSession.user_id == current_user.id)
@@ -247,7 +252,7 @@ async def init_upload(
         )
 
     reserved = await _reserved_bytes(db, current_user.id)
-    if reserved + data.total_size > current_user.quota_bytes:
+    if reserved + data.total_size > quota_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="存储配额不足",
@@ -302,7 +307,7 @@ async def cancel_upload(
         )
     )
     if result.rowcount == 0:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或无权访问")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SESSION_GONE_DETAIL)
     await db.commit()
 
     await run_in_threadpool(cleanup_upload_temp, upload_id)
@@ -334,7 +339,14 @@ async def upload_chunk(
     )
     session = result.scalar_one_or_none()
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或无权访问")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SESSION_GONE_DETAIL)
+
+    # 会话过期：不再接收分片，顺带清理（先于分片编号检查，过期的会话一律按已过期处理）
+    if session.created_at < utcnow() - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS):
+        await db.execute(_delete_own_session(upload_id, current_user.id))
+        await db.commit()
+        await run_in_threadpool(cleanup_upload_temp, upload_id)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话已过期")
 
     if chunk_index >= session.total_chunks:
         raise HTTPException(
@@ -342,17 +354,10 @@ async def upload_chunk(
             detail=f"分片索引超出范围（最大 {session.total_chunks - 1}）",
         )
 
-    # 会话过期：不再接收分片，顺带清理
-    if session.created_at < utcnow() - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS):
-        await db.execute(_delete_own_session(upload_id, current_user.id))
-        await db.commit()
-        await run_in_threadpool(cleanup_upload_temp, upload_id)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话已过期")
-
     # 临时目录由 init 创建；不存在说明会话已被清理，不能用 ensure_* 重建（否则留下孤儿目录）
     temp_dir = get_upload_temp_dir(upload_id)
     if not await run_in_threadpool(temp_dir.is_dir):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或无权访问")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SESSION_GONE_DETAIL)
 
     # 每个分片的期望大小：非最后一片等于 chunk_size，最后一片为剩余字节数
     if chunk_index < session.total_chunks - 1:
@@ -369,7 +374,7 @@ async def upload_chunk(
     try:
         written = await run_in_threadpool(_save_chunk, chunk_data.file, partial_path, expected_size)
     except FileNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或已结束")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SESSION_GONE_DETAIL)
     if written < 0:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -387,13 +392,13 @@ async def upload_chunk(
         await run_in_threadpool(partial_path.replace, chunk_path)
     except FileNotFoundError:
         await run_in_threadpool(partial_path.unlink, missing_ok=True)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或已结束")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SESSION_GONE_DETAIL)
 
     try:
         received_count = await run_in_threadpool(_count_chunks, temp_dir)
     except FileNotFoundError:
         # 分片落盘后临时目录被并发的 cancel / complete / 过期清理 rmtree 掉：会话已结束
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或已结束")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SESSION_GONE_DETAIL)
     # 显式 UPDATE + 校验 rowcount：重传已存在的分片时 received_chunks 可能不变，
     # 靠 ORM 脏检查则不会发出 UPDATE，无法察觉会话已被并发删除。显式 UPDATE 的
     # rowcount==0 才能可靠判定「会话行已不存在」（MySQL 方言启用 FOUND_ROWS，
@@ -410,7 +415,7 @@ async def upload_chunk(
         # 写分片期间会话被 complete / 过期清理 / 删除用户删掉了
         await db.rollback()
         await run_in_threadpool(cleanup_upload_temp, upload_id)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或已结束")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SESSION_GONE_DETAIL)
     await db.commit()
 
     return {
@@ -456,7 +461,7 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
     )
     session = result.scalar_one_or_none()
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或无权访问")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SESSION_GONE_DETAIL)
 
     # 会话过期：拒绝合并并清理
     if session.created_at < utcnow() - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS):
@@ -508,10 +513,21 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
             await _abort("文件实际大小与声明不符")
 
         reserved = await _reserved_bytes(db, current_user.id, exclude_upload_id=data.upload_id)
-        if reserved + actual_size > current_user.quota_bytes:
+        # 配额取此刻库里的值：鉴权时读到的 current_user.quota_bytes 可能已被管理员调低
+        quota_bytes = (await db.execute(select(User.quota_bytes).where(User.id == current_user.id))).scalar_one()
+        if reserved + actual_size > quota_bytes:
             await _abort("存储配额不足")
 
         mime_type, _ = mimetypes.guess_type(session.original_name)
+
+        # 先删会话行并检查影响行数：合并期间上传被取消或被定时清理删掉时，rowcount 为 0，
+        # 放弃本次合并。否则会出现用户收到「取消成功」、文件却入了库的两头都成功
+        deleted = await db.execute(_delete_own_session(data.upload_id, current_user.id))
+        if deleted.rowcount == 0:
+            await db.rollback()
+            await run_in_threadpool(final_path.unlink, missing_ok=True)
+            await run_in_threadpool(cleanup_upload_temp, data.upload_id)
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话已取消或已过期")
 
         file_record = File(
             user_id=current_user.id,
@@ -522,7 +538,6 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
             created_at=utcnow(),
         )
         db.add(file_record)
-        await db.execute(_delete_own_session(data.upload_id, current_user.id))
         await db.commit()
     except Exception:
         # 合并之后、提交完成之前的失败（数据库死锁、连接断开、用户被并发删除）：
@@ -569,7 +584,8 @@ async def list_files(
     result = await db.execute(
         select(File)
         .where(File.user_id == current_user.id)
-        .order_by(File.created_at.desc())
+        # created_at 精度只到秒，加 id 保证同一秒上传的文件顺序稳定
+        .order_by(File.created_at.desc(), File.id.desc())
     )
     files = result.scalars().all()
 
@@ -614,7 +630,7 @@ async def download_file(
 
     if file_record is None or not (is_owner or is_superadmin):
         # 不存在与无权限统一 404，不暴露他人文件 ID 是否存在
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在或无权访问")
 
     if not is_owner:
         # superadmin 下载他人文件：记一条日志，便于事后追溯
@@ -646,7 +662,11 @@ async def delete_file_endpoint(
     if not file_record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在或无权访问")
 
-    await db.execute(sql_delete(File).where(File.id == file_id, File.user_id == current_user.id))
+    deleted = await db.execute(sql_delete(File).where(File.id == file_id, File.user_id == current_user.id))
+    if deleted.rowcount == 0:
+        # 同时有另一个删除请求先提交了：磁盘文件由它删除，这里不重复处理也不重复广播
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在或无权访问")
     await db.commit()
 
     # 记录已删除：磁盘删除失败（如 Windows 下文件正被下载占用）只记日志，不影响响应与广播

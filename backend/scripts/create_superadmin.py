@@ -14,7 +14,7 @@ from sqlalchemy import select
 from app.database import AsyncSessionLocal, engine
 from app.models import User, UserRole
 from app.core.security import hash_password
-from app.config import settings
+from app.core.app_settings import get_default_quota_bytes
 from app.schemas.user import USERNAME_PATTERN
 
 
@@ -81,12 +81,12 @@ async def create_superadmin():
             print("[X] Passwords do not match.")
             return
 
-        # 创建超级管理员
+        # 创建超级管理员；配额与注册一致，取后台「新用户默认配额」
         superadmin = User(
             username=username,
             password_hash=hash_password(password),
             role=UserRole.SUPERADMIN,
-            quota_bytes=settings.DEFAULT_QUOTA_BYTES,
+            quota_bytes=await get_default_quota_bytes(db),
             is_active=True,
         )
 

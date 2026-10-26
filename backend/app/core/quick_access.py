@@ -4,6 +4,7 @@
 完整访问码为「用户名@访问码」。凭完整访问码换取 2 小时的快速访问凭证（JWT，typ=qa），
 该凭证只能用于 /api/access/* 与 /ws，不能当登录凭证用（get_user_id_from_payload 拒绝带 typ 的 token）。
 """
+import logging
 import re
 import time
 from collections import OrderedDict
@@ -18,6 +19,8 @@ from ..models import User, Clipboard, Text, File
 from .security import create_access_token
 from .timeutil import utcnow
 from .ws_manager import manager
+
+logger = logging.getLogger(__name__)
 
 # 访问码：4–32 位字母、数字与 _ - .，不区分大小写（统一按小写存储与比较）
 ACCESS_CODE_PATTERN = re.compile(r"^[a-z0-9_.\-]{4,32}$")
@@ -196,10 +199,16 @@ async def notify_quick_viewers(owner_id: int, codes: Iterable[str | None]) -> No
     属主的内容有变化时通知相关的快速访问页（只发信号，不带内容）。
     codes 是受影响的访问码（变化前后的码都要传）；访问码下已经没有有效内容时，
     直接断开这些连接（1008），页面据此提示访问码已失效。没有在线的快速访问页时不查库。
+
+    调用方此时数据已经提交：通知中途失败（如查库时连接断开）只记日志，不向外抛，
+    否则接口会返回 500，客户端以为没保存，带原版本号重试还会收到 409。
     """
-    affected = {c for c in codes if c} & manager.quick_codes(owner_id)
-    if not affected:
-        return
-    async with AsyncSessionLocal() as db:
-        alive = {c for c in affected if await quick_access_is_valid(db, owner_id, c)}
-    await manager.notify_quick(owner_id, alive=alive, dead=affected - alive)
+    try:
+        affected = {c for c in codes if c} & manager.quick_codes(owner_id)
+        if not affected:
+            return
+        async with AsyncSessionLocal() as db:
+            alive = {c for c in affected if await quick_access_is_valid(db, owner_id, c)}
+        await manager.notify_quick(owner_id, alive=alive, dead=affected - alive)
+    except Exception:
+        logger.exception("通知快速访问页失败 owner=%s", owner_id)
