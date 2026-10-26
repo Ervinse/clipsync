@@ -71,10 +71,14 @@ async def _authenticate(websocket: WebSocket) -> _Peer | None:
     return _Peer(user_id=owner_id, quick_code=code, expires_at=float(payload["exp"]))
 
 
-async def _quick_still_valid(peer: _Peer) -> bool:
-    if time.time() >= peer.expires_at:
-        return False
+async def _still_valid(peer: _Peer) -> bool:
+    """连接是否仍然有效：登录连接要求用户存在且未禁用；快速访问连接要求凭证未到期、访问码下仍有内容"""
     async with AsyncSessionLocal() as db:
+        if peer.quick_code is None:
+            result = await db.execute(select(User.is_active).where(User.id == peer.user_id))
+            return bool(result.scalar_one_or_none())
+        if time.time() >= peer.expires_at:
+            return False
         return await quick_access_is_valid(db, peer.user_id, peer.quick_code)
 
 
@@ -100,6 +104,11 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.register_quick(peer.user_id, peer.quick_code, websocket)
 
     try:
+        # 安全红线：握手校验到登记连接之间有空档，禁用 / 删除用户的断开动作可能恰好落在这段时间里、
+        # 看不到这条连接。登记之后再确认一次，不通过就断开
+        if not await _still_valid(peer):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
         while True:
             data = await websocket.receive_text()
             if len(data) > _MAX_MESSAGE_BYTES:
@@ -110,7 +119,7 @@ async def websocket_endpoint(websocket: WebSocket):
             except ValueError:
                 continue
             if isinstance(message, dict) and message.get("type") == "ping":
-                if peer.quick_code is not None and not await _quick_still_valid(peer):
+                if peer.quick_code is not None and not await _still_valid(peer):
                     await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                     break
                 await websocket.send_text('{"type":"pong"}')

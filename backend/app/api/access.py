@@ -257,8 +257,9 @@ async def quick_login(
 
     安全红线：
     - 用户名不存在 / 访问码不对 / 已过期 / 属主被禁用，一律返回同样的 404，不暴露是哪一种
-    - 同一用户连续输错 10 次锁定 15 分钟（不存在的用户名同样计数），锁定期间输对也不放行；
-      计数按查到的用户 id 归并，用户名的大小写、重音等不同写法共用同一个计数
+    - 同一用户 15 分钟内累计输错 10 次锁定 15 分钟（不存在的用户名同样计数），锁定期间输对也不放行；
+      计数按查到的用户 id 归并，用户名的大小写、重音等不同写法共用同一个计数；
+      输对不清零，知道某个有效访问码的人不能借此绕过锁定去猜别的码
     """
     parsed = parse_full_code(data.full_code)
     if parsed is None:
@@ -269,17 +270,21 @@ async def quick_login(
     owner = result.scalar_one_or_none()
     lock_id = lock_key(owner.id if owner else None, username)
 
-    if failures.is_locked(lock_id):
+    # 安全红线：先计数再比对。锁定检查与计数在同一步同步完成，之后回库比对访问码的 await 期间，
+    # 并发进来的请求看到的已经是计入这一次的次数，不能趁比对未完成时多猜几次
+    if not failures.begin_attempt(lock_id):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"尝试次数过多，请 {LOCK_SECONDS // 60} 分钟后再试",
         )
 
-    if owner is None or not owner.is_active or not await code_is_active(db, owner.id, code):
-        failures.record_failure(lock_id)
+    # 用户名不存在、被禁用、码不对三种失败都查满同样次数的数据库（id 0 不属于任何用户），
+    # 耗时上看不出用户名是否存在
+    code_ok = await code_is_active(db, owner.id if owner else 0, code)
+    if owner is None or not owner.is_active or not code_ok:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=INVALID_DETAIL)
 
-    failures.reset(lock_id)
+    failures.confirm_success(lock_id)  # 只退还这一次，之前累计的失败保留
     return QuickLoginResponse(
         access_token=create_quick_token(owner.id, code),
         owner_username=owner.username,

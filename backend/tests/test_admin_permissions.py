@@ -165,7 +165,9 @@ def test_non_superadmin_cannot_read_content(client, make_user, role):
     viewer, victim = make_user(role), make_user()
     text_id = new_text(client, victim, content="SECRET")["id"]
     _set_clipboard(client, victim, "SECRET")
-    for path in ["clipboard", "clipboard/history", "texts", f"texts/{text_id}"]:
+    _set_clipboard(client, victim, "SECRET-V2")
+    history_id = client.get("/api/clipboard/history", headers=victim.headers).json()["items"][0]["id"]
+    for path in ["clipboard", "clipboard/history", f"clipboard/history/{history_id}", "texts", f"texts/{text_id}"]:
         resp = client.get(f"/api/admin/users/{victim.id}/{path}", headers=viewer.headers)
         assert resp.status_code == 403, path
         assert "SECRET" not in resp.text
@@ -180,3 +182,50 @@ def test_content_view_is_read_only(client, make_user):
     assert client.put(f"/api/admin/users/{user.id}/texts/{text_id}", json={"content": "x"}, headers=h).status_code == 405
     assert client.delete(f"/api/admin/users/{user.id}/texts/{text_id}", headers=h).status_code == 405
     assert client.get(f"/api/texts/{text_id}", headers=user.headers).json()["content"] == "keep"
+
+
+def test_unknown_user_is_404_for_admin_actions(client, make_user):
+    admin = make_user(UserRole.ADMIN)
+    assert client.patch("/api/admin/users/999999/quota", json={"quota_bytes": 1}, headers=admin.headers).status_code == 404
+    assert client.patch("/api/admin/users/999999/status", json={"is_active": False}, headers=admin.headers).status_code == 404
+    assert client.get("/api/admin/users/999999", headers=admin.headers).status_code == 404
+    superadmin = make_user(UserRole.SUPERADMIN)
+    assert client.delete("/api/admin/users/999999", headers=superadmin.headers).status_code == 404
+
+
+def test_admin_cannot_change_own_status(client, make_user):
+    admin = make_user(UserRole.ADMIN)
+    resp = client.patch(f"/api/admin/users/{admin.id}/status", json={"is_active": False}, headers=admin.headers)
+    assert resp.status_code == 400
+    assert client.get("/api/auth/me", headers=admin.headers).status_code == 200
+
+
+@pytest.mark.parametrize("role", ["superadmin", "root", ""])
+def test_role_change_rejects_values_other_than_user_and_admin(client, make_user, role):
+    superadmin, user = make_user(UserRole.SUPERADMIN), make_user()
+    resp = client.patch(f"/api/admin/users/{user.id}/role", json={"role": role}, headers=superadmin.headers)
+    assert resp.status_code == 422
+    assert client.get("/api/admin/stats", headers=user.headers).status_code == 403
+
+
+def test_disabled_user_cannot_log_in(client, make_user):
+    user = make_user(active=False)
+    resp = client.post("/api/auth/login", json={"username": user.username, "password": "password123"})
+    assert resp.status_code == 403
+
+
+def test_superadmin_clipboard_and_history_views_are_audited(client, make_user, caplog):
+    """超管查看他人剪切板与历史各写一条日志，只记操作者、对象和内容类别，不记正文"""
+    superadmin, user = make_user(UserRole.SUPERADMIN), make_user()
+    _set_clipboard(client, user, "AUDIT-PRIVATE-1")
+    _set_clipboard(client, user, "AUDIT-PRIVATE-2")
+    history_id = client.get("/api/clipboard/history", headers=user.headers).json()["items"][0]["id"]
+    caplog.clear()
+    client.get(f"/api/admin/users/{user.id}/clipboard", headers=superadmin.headers)
+    client.get(f"/api/admin/users/{user.id}/clipboard/history", headers=superadmin.headers)
+    client.get(f"/api/admin/users/{user.id}/clipboard/history/{history_id}", headers=superadmin.headers)
+    messages = [r.getMessage() for r in caplog.records]
+    prefix = f"超管查看用户内容 operator={superadmin.id} target={user.id}"
+    for what in ("what=clipboard", "what=clipboard_history", f"what=clipboard_history:{history_id}"):
+        assert any(m.startswith(prefix) and m.endswith(what) for m in messages), what
+    assert not any("AUDIT-PRIVATE" in m for m in messages)

@@ -213,7 +213,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 |------|------|------|
 | id | BIGINT PK | |
 | user_id | BIGINT FK→users | 归属用户，查询按此过滤 |
-| original_name | VARCHAR(255) | 原始文件名（入库前去掉控制字符与路径分隔符） |
+| original_name | VARCHAR(255) | 原始文件名（入库前去掉控制字符、路径分隔符，以及方向控制符、零宽字符等不可见的格式字符；emoji 与波斯语等文字用的零宽连接符 / 非连接符保留） |
 | stored_name | VARCHAR(255) | 磁盘存储名（UUID，防冲突/穿越；存储层强制校验为 UUID） |
 | size | BIGINT | 字节数 |
 | mime_type | VARCHAR(128) | MIME 类型 |
@@ -383,7 +383,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 维护两张表：`dict[user_id, set[WebSocket]]` 存登录终端的连接（同一用户多终端在线时集合里有多条）；`dict[属主 user_id, dict[WebSocket, 访问码]]` 存快速访问页的连接。
 
 - **连接**：`/ws`，token 经子协议 `Sec-WebSocket-Protocol: clipsync.v1, bearer.<JWT>` 传递（不放 URL，避免进 access log）→ 校验签名、过期、用户存在且未禁用 → 服务端只回选 `clipsync.v1` → 加入集合。
-- **握手被拒**：token 无效、用户不存在或被禁用时，服务端在 accept 之前关闭连接，浏览器只能看到 **1006**（与服务器不可达无法区分）。
+- **握手被拒**：token 无效、用户不存在或被禁用时，服务端在 accept 之前关闭连接，浏览器只能看到 **1006**（与服务器不可达无法区分）。连接登记之后服务端再确认一次用户仍启用（快速访问连接确认访问码仍有效），不通过就以 1008 断开，这样握手校验与登记之间恰好发生的禁用 / 删除也不会留下连接。
 - **快速访问连接**：用快速访问凭证连接，握手时同样校验访问码有效；只接收 `access_items_changed`（该访问码下的内容有变化），不接收属主的其他推送。访问码被清除 / 修改或其下内容删光时服务端以 1008 断开；不经过接口的变化（定时清理清掉过期码、凭证到期）在下一次心跳时发现并断开。
 - **踢下线**：已连接的用户被禁用或删除时，服务端以 **1008** 主动关闭其全部连接（含凭其访问码进入的快速访问页）；每个连接最多等 5 秒，网络卡住的终端不会拖住禁用 / 删除请求。
 - **单进程**：连接表与限流计数都在进程内存中，后端必须单 worker 运行。
@@ -459,7 +459,7 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 ### 安全考量
 
 - 访问码由用户自定，不校验复杂度（太复杂就不「快速」了），只校验长度与字符。防猜测靠两层：
-  - **按用户锁定**：同一用户连续输错 10 次，暂停其快速访问 15 分钟（锁定期间输对也不放行）；输对一次清零。数据库比较用户名时忽略大小写、重音和零宽字符，计数按查到的用户归并，换一种写法不能重新计数。不存在的用户名按小写用户名计数，响应一致。账号密码登录不受影响。代价是别人故意输错可以让某个用户名的快速访问暂时不可用。计数在进程内存中，后端重启后清零。
+  - **按用户锁定**：同一用户 15 分钟内累计输错 10 次，暂停其快速访问 15 分钟（锁定期间输对也不放行）。每次尝试先计数、再比对访问码，并发的猜测不能在比对完成前多猜几次；输对只退还这一次，不会清零已累计的失败，所以知道某个有效访问码的人也不能靠「输错几次、输对一次」循环绕过锁定。数据库比较用户名时忽略大小写、重音和零宽字符，计数按查到的用户归并，换一种写法不能重新计数。不存在的用户名按小写用户名计数，并同样回库比对一遍，响应与耗时都与存在的用户名一致。记录最多保留 10000 条，满了先淘汰最久没动静的未锁定记录。账号密码登录不受影响。代价是别人故意输错可以让某个用户名的快速访问暂时不可用。计数在进程内存中，后端重启后清零。
   - **按 IP 限流**：换取凭证 30 次/分钟/IP；持有凭证后的读写、下载接口每个 120 次/分钟/IP。
 - 快速访问凭证与登录凭证互不通用，见 6.5。
 - 免登录接口同样防路径穿越（文件按 file_id 查库拿 stored_name），所有查询都限定「属主 + 访问码」。
@@ -590,7 +590,7 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 |----|------|
 | 传输加密 | HTTP（测试 / 可信内网）与 HTTPS（正式使用）可切换，HTTP 下全部内容明文传输（第 11、17 节）。 |
 | 密码存储 | bcrypt 哈希，绝不存明文，不在日志/响应回显。 |
-| 认证 | JWT，必须带 `exp`（默认 7 天），只允许 HS 系列算法；`JWT_SECRET` 少于 32 位或为示例值时后端拒绝启动；每次请求回库校验用户存在且未禁用。 |
+| 认证 | JWT，必须带 `exp`（默认 7 天），只允许 HS 系列算法；`JWT_SECRET` 少于 32 位、不同字符少于 10 种或为示例值时后端拒绝启动；每次请求回库校验用户存在且未禁用。 |
 | 角色权限 | 三级角色后端强制校验；admin 看不到文件/文本内容、只能管理普通用户，仅 superadmin 可读他人内容（只读、记日志）与任免管理员。 |
 | 操作日志 | `main.py` 启动时调用 `core/logging_setup.py`，`app` 下各模块的 INFO 及以上日志输出到标准错误（只配置 `app` 这一支，不改第三方库的日志级别）。审计记录「超管查看用户内容」「超管下载用户文件」只含操作者 id、对象用户 id 与内容类别或文件 id，不含内容本身；另有「登记新部署」与磁盘清理失败等记录。Docker 部署用 `docker compose logs backend` 查看。 |
 | 登录爆破 | 注册、登录、快速访问接口限流（数值见第 6 节开头）；登录在用户不存在时也执行一次 bcrypt，防时序枚举。限流按真实客户端 IP，依赖 uvicorn `--proxy-headers` 信任反代传来的 `X-Forwarded-For`。 |
@@ -599,7 +599,7 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 | 路径穿越 | 磁盘名用 UUID，绝不用用户文件名拼路径。 |
 | 访问码 | 用户自定、不校验复杂度；按用户名输错锁定 + 按 IP 限流 + 可设过期 + 可随时清除且立即生效；快速访问凭证与登录凭证互不通用；前端提示用户妥善保管（第 8 节）。 |
 | 上传限制 | Nginx `client_max_body_size`；后端校验单文件上限、单分片字节数、并发会话数与配额。 |
-| 响应头 | 下载用 RFC 6266 编码的 `Content-Disposition`，防头注入；全局下发 `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`（接口由后端下发，静态页由 Nginx 下发）；`HSTS_ENABLED=true` 时后端另下发 `Strict-Transport-Security: max-age=31536000; includeSubDomains`；Nginx `server_tokens off` 不暴露版本号。 |
+| 响应头 | 下载一律以 `application/octet-stream` + `attachment` 下发（不按文件扩展名推断类型，上传的 `.html`、`.svg` 不会被浏览器当页面解析），`Content-Disposition` 按 RFC 6266 编码，防头注入；全局下发 `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`（接口由后端下发，静态页由 Nginx 下发）；`HSTS_ENABLED=true` 时后端另下发 `Strict-Transport-Security: max-age=31536000; includeSubDomains`；Nginx `server_tokens off` 不暴露版本号。 |
 | WebSocket | token 走子协议头不进 URL；禁用/删除用户时主动断开其连接；快速访问连接只收相关信号，访问码失效即断开。 |
 | 错误信息 | 不把底层异常细节（路径等）返回客户端。 |
 | 邀请码 | 一次性、可过期、仅管理员生成；12 位去易混字符（约 7.9×10^17 种组合），注册接口限流。 |
@@ -793,7 +793,7 @@ pip install -r requirements-dev.txt   # 运行依赖 + 测试依赖（生产镜�
 
 cp .env.example .env                 # Windows 的 cmd 用 copy
 # 编辑 .env：填写 DB_* 连接信息；JWT_SECRET 用 `openssl rand -hex 32` 生成
-# JWT_SECRET 少于 32 位或含示例占位片段（如 change_this、your_）时后端拒绝启动
+# JWT_SECRET 少于 32 位、不同字符少于 10 种或含示例占位片段（如 change_this、your_）时后端拒绝启动
 
 alembic upgrade head                 # 建表
 python -m scripts.create_superadmin  # 创建第一个超级管理员（交互式）
@@ -856,7 +856,7 @@ pytest tests/test_auth.py::test_name    # 单个
 |------|------|------|
 | `DB_HOST` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | MySQL 连接 | 必填 |
 | `DB_PORT` | MySQL 端口 | 3306 |
-| `JWT_SECRET` | JWT 签名密钥，至少 32 位且不含示例占位片段 | 必填 |
+| `JWT_SECRET` | JWT 签名密钥，至少 32 位、不同字符不少于 10 种且不含示例占位片段 | 必填 |
 | `JWT_ALGORITHM` | 仅允许 HS256 / HS384 / HS512 | HS256 |
 | `JWT_EXPIRE_MINUTES` | 令牌有效期 | 10080（7 天） |
 | `HSTS_ENABLED` | 是否下发 HSTS（仅 HTTPS 下开启） | false |

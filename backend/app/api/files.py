@@ -57,6 +57,14 @@ def _require_valid_upload_id(upload_id: str) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话不存在或无权访问")
 
 
+def _delete_own_session(upload_id: str, user_id: int):
+    """删除上传会话的语句。安全红线：删除条件同样带 user_id，不依赖前面的归属查询"""
+    return sql_delete(UploadSession).where(
+        UploadSession.upload_id == upload_id,
+        UploadSession.user_id == user_id,
+    )
+
+
 async def _reserved_bytes(db: AsyncSession, user_id: int, exclude_upload_id: str | None = None) -> int:
     """
     已占用配额 = 已落盘文件 + 进行中的上传会话声明大小。
@@ -162,7 +170,9 @@ async def stream_file_response(file_record: File, missing_detail: str = "文件�
 
     return StreamingResponse(
         _iter_handle(f),
-        media_type=file_record.mime_type,
+        # 安全红线：用户可以上传 .html / .svg，下载一律按二进制流下发，不按扩展名推断的 mime_type
+        # （mime_type 只在列表里显示），浏览器不会把它当页面解析
+        media_type="application/octet-stream",
         headers={
             # 安全红线：文件名来自用户，按 RFC 6266 编码，杜绝头注入
             "Content-Disposition": content_disposition(file_record.original_name),
@@ -211,7 +221,12 @@ async def init_upload(
     )
     expired_ids = [row[0] for row in result.all()]
     if expired_ids:
-        await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id.in_(expired_ids)))
+        await db.execute(
+            sql_delete(UploadSession).where(
+                UploadSession.upload_id.in_(expired_ids),
+                UploadSession.user_id == current_user.id,  # 安全红线：删除条件同样带归属
+            )
+        )
         await db.commit()
         for expired_id in expired_ids:
             await run_in_threadpool(cleanup_upload_temp, expired_id)
@@ -329,7 +344,7 @@ async def upload_chunk(
 
     # 会话过期：不再接收分片，顺带清理
     if session.created_at < utcnow() - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS):
-        await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == upload_id))
+        await db.execute(_delete_own_session(upload_id, current_user.id))
         await db.commit()
         await run_in_threadpool(cleanup_upload_temp, upload_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话已过期")
@@ -445,7 +460,7 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
 
     # 会话过期：拒绝合并并清理
     if session.created_at < utcnow() - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS):
-        await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id))
+        await db.execute(_delete_own_session(data.upload_id, current_user.id))
         await db.commit()
         await run_in_threadpool(cleanup_upload_temp, data.upload_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话已过期")
@@ -476,7 +491,7 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
         logger.exception("合并分片失败 upload_id=%s", data.upload_id)
         await run_in_threadpool(final_path.unlink, missing_ok=True)
         await run_in_threadpool(cleanup_upload_temp, data.upload_id)
-        await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id))
+        await db.execute(_delete_own_session(data.upload_id, current_user.id))
         await db.commit()
         # 安全红线：不把底层异常细节（路径等）回传客户端
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="文件合并失败")
@@ -484,7 +499,7 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
     async def _abort(detail: str):
         await run_in_threadpool(final_path.unlink, missing_ok=True)
         await run_in_threadpool(cleanup_upload_temp, data.upload_id)
-        await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id))
+        await db.execute(_delete_own_session(data.upload_id, current_user.id))
         await db.commit()
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=detail)
 
@@ -507,7 +522,7 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
             created_at=utcnow(),
         )
         db.add(file_record)
-        await db.execute(sql_delete(UploadSession).where(UploadSession.upload_id == data.upload_id))
+        await db.execute(_delete_own_session(data.upload_id, current_user.id))
         await db.commit()
     except Exception:
         # 合并之后、提交完成之前的失败（数据库死锁、连接断开、用户被并发删除）：
@@ -631,7 +646,7 @@ async def delete_file_endpoint(
     if not file_record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在或无权访问")
 
-    await db.execute(sql_delete(File).where(File.id == file_id))
+    await db.execute(sql_delete(File).where(File.id == file_id, File.user_id == current_user.id))
     await db.commit()
 
     # 记录已删除：磁盘删除失败（如 Windows 下文件正被下载占用）只记日志，不影响响应与广播
