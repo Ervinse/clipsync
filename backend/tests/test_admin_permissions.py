@@ -2,15 +2,7 @@
 import pytest
 
 from app.models import UserRole
-from tests.helpers import new_text
-
-
-def _ws(client, token):
-    return client.websocket_connect("/ws", subprotocols=["clipsync.v1", f"bearer.{token}"])
-
-
-def _set_clipboard(client, user, text):
-    assert client.put("/api/clipboard", json={"content": text}, headers=user.headers).status_code == 200
+from tests.helpers import new_text, ws_connect, set_clipboard
 
 
 # ---------- admin 管理普通用户 ----------
@@ -75,7 +67,7 @@ def test_superadmin_promotes_and_demotes(client, make_user):
 
 def test_role_change_notifies_target(client, make_user):
     superadmin, user = make_user(UserRole.SUPERADMIN), make_user()
-    with _ws(client, user.token) as ws:
+    with ws_connect(client, user.token) as ws:
         resp = client.patch(f"/api/admin/users/{user.id}/role", json={"role": "admin"}, headers=superadmin.headers)
         assert resp.status_code == 200
         assert ws.receive_json() == {"type": "role_updated", "data": {"role": "admin"}}
@@ -113,8 +105,8 @@ def test_role_change_unknown_user_is_404(client, make_user):
 
 def test_superadmin_reads_clipboard_and_history(client, make_user):
     superadmin, user = make_user(UserRole.SUPERADMIN), make_user()
-    _set_clipboard(client, user, "v1")
-    _set_clipboard(client, user, "v2")
+    set_clipboard(client, user, "v1")
+    set_clipboard(client, user, "v2")
 
     current = client.get(f"/api/admin/users/{user.id}/clipboard", headers=superadmin.headers)
     assert current.status_code == 200 and current.json()["content"] == "v2"
@@ -145,8 +137,8 @@ def test_content_ids_are_scoped_to_the_given_user(client, make_user):
     """历史 / 文本 id 必须属于路径里的用户：拿 A 的 id 配 B 的路径一律 404"""
     superadmin, alice, bob = make_user(UserRole.SUPERADMIN), make_user(), make_user()
     text_id = new_text(client, alice)["id"]
-    _set_clipboard(client, alice, "v1")
-    _set_clipboard(client, alice, "v2")
+    set_clipboard(client, alice, "v1")
+    set_clipboard(client, alice, "v2")
     history_id = client.get("/api/clipboard/history", headers=alice.headers).json()["items"][0]["id"]
 
     h = superadmin.headers
@@ -164,8 +156,8 @@ def test_content_of_unknown_user_is_404(client, make_user):
 def test_non_superadmin_cannot_read_content(client, make_user, role):
     viewer, victim = make_user(role), make_user()
     text_id = new_text(client, victim, content="SECRET")["id"]
-    _set_clipboard(client, victim, "SECRET")
-    _set_clipboard(client, victim, "SECRET-V2")
+    set_clipboard(client, victim, "SECRET")
+    set_clipboard(client, victim, "SECRET-V2")
     history_id = client.get("/api/clipboard/history", headers=victim.headers).json()["items"][0]["id"]
     for path in ["clipboard", "clipboard/history", f"clipboard/history/{history_id}", "texts", f"texts/{text_id}"]:
         resp = client.get(f"/api/admin/users/{victim.id}/{path}", headers=viewer.headers)
@@ -217,8 +209,8 @@ def test_disabled_user_cannot_log_in(client, make_user):
 def test_superadmin_clipboard_and_history_views_are_audited(client, make_user, caplog):
     """超管查看他人剪切板与历史各写一条日志，只记操作者、对象和内容类别，不记正文"""
     superadmin, user = make_user(UserRole.SUPERADMIN), make_user()
-    _set_clipboard(client, user, "AUDIT-PRIVATE-1")
-    _set_clipboard(client, user, "AUDIT-PRIVATE-2")
+    set_clipboard(client, user, "AUDIT-PRIVATE-1")
+    set_clipboard(client, user, "AUDIT-PRIVATE-2")
     history_id = client.get("/api/clipboard/history", headers=user.headers).json()["items"][0]["id"]
     caplog.clear()
     client.get(f"/api/admin/users/{user.id}/clipboard", headers=superadmin.headers)

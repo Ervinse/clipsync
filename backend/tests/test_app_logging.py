@@ -4,7 +4,7 @@ import logging
 from app.core.deploy_info import BuildInfo, record_deployment
 from app.core.logging_setup import APP_LOGGER_NAME, setup_app_logging
 from app.models import UserRole
-from helpers import new_text, upload
+from tests.helpers import new_text, upload
 
 
 def _app_messages(caplog):

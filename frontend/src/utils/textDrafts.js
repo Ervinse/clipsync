@@ -16,10 +16,15 @@ import { reactive } from 'vue'
 import toast from './toast'
 import { askConflict } from './conflict'
 
+/** 草稿是否有未保存的修改（还没载入全文的不算）；TextEditorCard 的状态栏也用它 */
+export function isDraftDirty(d) {
+  return !!d && d.loaded && (d.title !== d.syncedTitle || d.content !== d.syncedContent)
+}
+
 export function createTextDrafts({ fetchFull, saveItem, onSaved }) {
   const drafts = reactive({})
 
-  const isDirty = (d) => !!d && d.loaded && (d.title !== d.syncedTitle || d.content !== d.syncedContent)
+  const isDirty = isDraftDirty
 
   const hasDirty = () => Object.values(drafts).some(isDirty)
 

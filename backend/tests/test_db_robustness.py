@@ -6,31 +6,14 @@ from datetime import datetime, timedelta
 
 import pymysql
 import pytest
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.timeutil import to_naive_utc, utcnow
-from app.models import UploadSession, User, UserRole
+from app.models import UploadSession, UserRole
 from scripts import cleanup_expired
-from tests.helpers import STORAGE_ROOT, add_invite, new_text, upload
-
-
-def _init(client, user, total_size=100):
-    return client.post(
-        "/api/files/upload/init",
-        json={"original_name": "f.bin", "total_size": total_size, "chunk_size": 1024},
-        headers=user.headers,
-    )
-
-
-def _put_chunk(client, user, upload_id, data=b"x" * 100):
-    return client.post(
-        "/api/files/upload/chunk",
-        data={"upload_id": upload_id, "chunk_index": "0"},
-        files={"chunk_data": ("blob", data)},
-        headers=user.headers,
-    )
+from tests.helpers import STORAGE_ROOT, add_invite, new_text, upload, init_upload, post_chunk
 
 
 async def _count_sessions(session):
@@ -49,8 +32,8 @@ def _sync_connection():
 
 def test_complete_db_error_after_merge_removes_merged_file_and_allows_retry(client, make_user, db, monkeypatch):
     user = make_user()
-    upload_id = _init(client, user).json()["upload_id"]
-    assert _put_chunk(client, user, upload_id).status_code == 200
+    upload_id = init_upload(client, user, 100).json()["upload_id"]
+    assert post_chunk(client, user, upload_id, 0, b"x" * 100).status_code == 200
 
     async def boom(*args, **kwargs):
         raise RuntimeError("simulated: deadlock / lost connection")
@@ -82,11 +65,11 @@ def test_init_mkdir_failure_leaves_no_session_row(client, make_user, db, monkeyp
     monkeypatch.setattr("app.api.files.ensure_upload_temp_dir", boom)
     for _ in range(settings.MAX_UPLOAD_SESSIONS_PER_USER + 1):
         with pytest.raises(OSError):
-            _init(client, user)
+            init_upload(client, user, 100)
     assert db(_count_sessions) == 0
 
     monkeypatch.undo()
-    assert _init(client, user).status_code == 200
+    assert init_upload(client, user, 100).status_code == 200
 
 
 def test_init_commit_failure_removes_temp_dir(client, make_user, db, monkeypatch):
@@ -105,7 +88,7 @@ def test_init_commit_failure_removes_temp_dir(client, make_user, db, monkeypatch
 
     monkeypatch.setattr(AsyncSession, "commit", commit_fails_once_dir_exists)
     with pytest.raises(RuntimeError):
-        _init(client, user)
+        init_upload(client, user, 100)
     monkeypatch.undo()
 
     assert seen["dir_existed_at_failure"], "没有走到「目录已建好、提交失败」这一步，测试没有意义"
@@ -154,7 +137,7 @@ def test_upload_init_judges_quota_read_after_taking_the_lock(client, make_user):
     resp = _race_with_row_lock(
         "SELECT id FROM users WHERE id = %s FOR UPDATE", (user.id,),
         "UPDATE users SET quota_bytes = 5 WHERE id = %s", (user.id,),
-        lambda: _init(client, user, total_size=100),
+        lambda: init_upload(client, user, 100),
     )
     assert resp.status_code == 413
 

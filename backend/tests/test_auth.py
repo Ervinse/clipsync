@@ -4,10 +4,9 @@ from jose import jwt
 from pydantic import ValidationError
 
 from app.config import Settings, settings
-from app.models import User, UserRole
+from app.models import UserRole
 from app.core.timeutil import utcnow
 from datetime import timedelta
-from sqlalchemy import select
 from tests.helpers import add_invite
 
 

@@ -27,6 +27,9 @@ ACCESS_CODE_PATTERN = re.compile(r"^[a-z0-9_.\-]{4,32}$")
 ACCESS_CODE_RULE = "访问码为 4–32 位，只能包含字母、数字和 _ - ."
 MAX_EXPIRES_HOURS = 8760  # 访问码最长有效期：1 年
 
+# 快速访问时内容已被删除、或不再挂着这个访问码：两种情况提示相同，不暴露是哪一种
+CONTENT_GONE_DETAIL = "内容不存在或访问码已失效"
+
 QUICK_TOKEN_TYPE = "qa"
 QUICK_TOKEN_MINUTES = 120  # 快速访问凭证有效期：2 小时
 

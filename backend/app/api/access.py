@@ -5,7 +5,7 @@
 进入后能看到该码下的全部内容：文本可查看与修改，文件可下载；不能新建、删除、上传，也不能改访问码。
 """
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -46,8 +46,9 @@ from ..core.quick_access import (
     failures,
     lock_key,
     notify_quick_viewers,
+    CONTENT_GONE_DETAIL,
 )
-from ..core.timeutil import utcnow, to_naive_utc
+from ..core.timeutil import utcnow, parse_future_expiry
 from ..core.ws_manager import manager
 from ..rate_limit import limiter
 from .clipboard import write_clipboard, to_clipboard_response
@@ -66,21 +67,14 @@ QUICK_RATE = "120/minute"
 LABEL_CHARS = 30  # 总览里没有标题的文本取内容开头作为名称
 
 INVALID_DETAIL = "访问码无效或已失效"
-CONTENT_GONE_DETAIL = "内容不存在或访问码已失效"
 
 
 def _check_expires(value: Optional[datetime]) -> Optional[datetime]:
-    """过期时间转为 naive UTC，并校验晚于当前时间、不超过 1 年后"""
+    """过期时间转为 naive UTC，并校验晚于当前时间、最长 1 年（前端同样校验）"""
     try:
-        expires_at = to_naive_utc(value)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="过期时间超出有效范围")
-    if expires_at is not None and expires_at <= utcnow():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="过期时间必须晚于当前时间")
-    # 最长有效期 1 年（前端同样校验）；留 1 分钟余量，避免前端按 8760 小时计算后因时钟误差被拒
-    if expires_at is not None and expires_at > utcnow() + timedelta(hours=MAX_EXPIRES_HOURS, minutes=1):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"有效期最长 {MAX_EXPIRES_HOURS} 小时")
-    return expires_at
+        return parse_future_expiry(value, max_hours=MAX_EXPIRES_HOURS)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 def _text_label(title: str, head: str) -> str:

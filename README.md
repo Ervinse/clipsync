@@ -667,7 +667,8 @@ CodeProject/
     │   │   ├── utils/
     │   │   │   ├── websocket.js    # WS 客户端（协议自适应、重连、心跳）
     │   │   │   ├── clipboard.js    # 复制到剪贴板（HTTP 下降级为 execCommand）
-    │   │   │   ├── format.js       # 文件大小、UTC 时间解析与格式化、相对时间
+    │   │   │   ├── format.js       # 文件大小、UTC 时间解析与格式化、相对时间、下载进度文字、UTF-8 字节数、MB 与字节互换
+    │   │   │   ├── editor.js       # 编辑框共用：保存快捷键判断与提示、放弃未保存修改的确认
     │   │   │   ├── toast.js        # 轻提示
     │   │   │   ├── dialog.js       # 确认 / 输入 / 手动复制 / 多选一对话框
     │   │   │   ├── conflict.js     # 保存冲突时的选择对话框
@@ -675,7 +676,7 @@ CodeProject/
     │   │   │   ├── accessCode.js   # 访问码规则与过期判断
     │   │   │   ├── theme.js        # 主题（跟随系统 / 浅色 / 深色，记在本浏览器）
     │   │   │   ├── glass.js        # 玻璃质感（液态折射的启用判断、悬停高光跟随鼠标）
-    │   │   │   └── download.js     # Blob 交给浏览器保存
+    │   │   │   └── download.js     # Blob 交给浏览器保存、带进度的下载（文件页、管理后台、快速访问页共用）
     │   │   ├── components/       # AuthLayout / BrandMark / ThemeToggle / ToastHost / DialogHost / TextEditorCard / AccessCodeButton / AccessCodeDialog / LoadingSkeleton / UserContentDialog
     │   │   └── views/
     │   │       ├── Login.vue / Register.vue

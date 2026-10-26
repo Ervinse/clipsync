@@ -5,7 +5,7 @@ import { defineStore } from 'pinia'
 import api from '../api'
 import ws from '../utils/websocket'
 import { useUserStore } from './user'
-import { saveBlob } from '../utils/download'
+import { downloadWithProgress } from '../utils/download'
 
 export const useFilesStore = defineStore('files', {
   state: () => ({
@@ -233,20 +233,7 @@ export const useFilesStore = defineStore('files', {
      * 下载文件
      */
     async downloadFile(file) {
-      // 同一个文件下载中不重复发起：大文件要等整个下完才会弹出保存，期间用户容易反复点
-      if (this.downloads[file.id]) return
-      this.downloads[file.id] = { loaded: 0, total: file.size || 0 }
-      try {
-        const blob = await api.files.download(file.id, (event) => {
-          const current = this.downloads[file.id]
-          if (!current) return
-          current.loaded = event.loaded
-          current.total = event.total || file.size || 0
-        })
-        saveBlob(blob, file.original_name)
-      } finally {
-        delete this.downloads[file.id]
-      }
+      await downloadWithProgress(this.downloads, file, (onProgress) => api.files.download(file.id, onProgress))
     },
   },
 })

@@ -19,6 +19,7 @@ INLINE_CONTENT_BYTES = 64 * 1024
 PREVIEW_CHARS = 200
 
 NOT_FOUND_DETAIL = "文本不存在或无权访问"
+# 保存冲突（409）的提示，云剪切板与文本栏目共用
 CONFLICT_DETAIL = "内容已在别处更新，请先载入最新内容"
 
 

@@ -36,6 +36,31 @@ export function formatRelative(value) {
   return formatDateTime(value, '-', false)
 }
 
+/** 下载进度文字：下载中 N%；不知道总大小时只写「下载中…」；没在下载时返回 idleText */
+export function formatDownloadProgress(state, idleText = '') {
+  if (!state) return idleText
+  return state.total > 0
+    ? `下载中 ${Math.min(100, Math.round((state.loaded / state.total) * 100))}%`
+    : '下载中…'
+}
+
+/** 字符串按 UTF-8 编码后的字节数（后端按字节限长，如密码 72 字节） */
+export function utf8Bytes(value) {
+  return new TextEncoder().encode(value).length
+}
+
+const MB = 1024 * 1024
+
+/** 字节换算成整数 MB（配额输入框按 MB 填写） */
+export function bytesToMB(bytes) {
+  return Math.round(bytes / MB)
+}
+
+/** MB 换算成字节 */
+export function mbToBytes(mb) {
+  return mb * MB
+}
+
 /** 字节数格式化；非法值、0、负数都显示 0 B */
 export function formatSize(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'

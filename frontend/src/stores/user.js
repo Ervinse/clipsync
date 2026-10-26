@@ -83,16 +83,10 @@ export const useUserStore = defineStore('user', {
     },
 
     /**
-     * 注册
+     * 注册（注册成功后由页面跳到登录页，不在这里登录）
      */
-    async register(data) {
-      try {
-        const result = await api.auth.register(data)
-        return result
-      } catch (error) {
-        console.error('注册失败:', error)
-        throw error
-      }
+    register(data) {
+      return api.auth.register(data)
     },
 
     /**

@@ -3,22 +3,14 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.clipboard import ClipboardUpdate, MAX_CONTENT_BYTES
-from tests.helpers import upload, STORAGE_ROOT
-
-
-def _init(client, user, total_size=2048, chunk_size=1024):
-    return client.post(
-        "/api/files/upload/init",
-        json={"original_name": "a.bin", "total_size": total_size, "chunk_size": chunk_size},
-        headers=user.headers,
-    )
+from tests.helpers import upload, STORAGE_ROOT, init_upload
 
 
 # ---------- 取消上传 + reserved_bytes ----------
 
 def test_cancel_other_users_upload_returns_404(client, make_user):
     alice, bob = make_user(), make_user()
-    uid = _init(client, alice).json()["upload_id"]
+    uid = init_upload(client, alice, 2048).json()["upload_id"]
     assert client.delete(f"/api/files/upload/{uid}", headers=bob.headers).status_code == 404
     # alice 的会话不受影响，仍可取消
     assert client.delete(f"/api/files/upload/{uid}", headers=alice.headers).status_code == 204
@@ -26,23 +18,23 @@ def test_cancel_other_users_upload_returns_404(client, make_user):
 
 def test_cancel_releases_quota_and_allows_init(client, make_user):
     user = make_user(quota=3000)
-    resp = _init(client, user, total_size=2500)
+    resp = init_upload(client, user, 2500)
     assert resp.status_code == 200
     uid = resp.json()["upload_id"]
 
     # 会话占着 2500 字节，再开一个会超配
-    assert _init(client, user, total_size=2500).status_code == 413
+    assert init_upload(client, user, 2500).status_code == 413
     assert client.get("/api/auth/me", headers=user.headers).json()["reserved_bytes"] == 2500
     assert client.get("/api/files", headers=user.headers).json()["reserved_bytes"] == 2500
 
     assert client.delete(f"/api/files/upload/{uid}", headers=user.headers).status_code == 204
     assert client.get("/api/auth/me", headers=user.headers).json()["reserved_bytes"] == 0
-    assert _init(client, user, total_size=2500).status_code == 200
+    assert init_upload(client, user, 2500).status_code == 200
 
 
 def test_cancel_removes_temp_dir(client, make_user):
     user = make_user()
-    uid = _init(client, user).json()["upload_id"]
+    uid = init_upload(client, user, 2048).json()["upload_id"]
     assert (STORAGE_ROOT / "tmp" / uid).is_dir()
     client.delete(f"/api/files/upload/{uid}", headers=user.headers)
     assert not (STORAGE_ROOT / "tmp" / uid).exists()

@@ -128,25 +128,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   margin-top: var(--space-5);
 }
 
-.input-with-suffix {
-  position: relative;
-  display: block;
-}
-
-.input-with-suffix .input {
-  padding-right: 48px;
-}
-
-.input-suffix {
-  position: absolute;
-  right: var(--space-3);
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: var(--text-sm);
-  color: var(--color-text-tertiary);
-  pointer-events: none;
-}
-
 .copy-area {
   height: auto;
   padding: var(--space-2) var(--space-3);

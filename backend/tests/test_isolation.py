@@ -2,16 +2,12 @@
 import pytest
 
 from app.models import UserRole
-from tests.helpers import upload, set_code, new_text
-
-
-def _set_clipboard(client, user, text):
-    assert client.put("/api/clipboard", json={"content": text}, headers=user.headers).status_code == 200
+from tests.helpers import upload, set_code, new_text, set_clipboard
 
 
 def test_clipboard_isolated_between_users(client, make_user):
     alice, bob = make_user(), make_user()
-    _set_clipboard(client, alice, "alice secret")
+    set_clipboard(client, alice, "alice secret")
     assert client.get("/api/clipboard", headers=bob.headers).json()["content"] == ""
 
 
@@ -19,9 +15,9 @@ def test_clipboard_accepts_text_larger_than_64kb(client, make_user):
     # content 列为 MEDIUMTEXT：超过 TEXT 上限（64KB）的文本也要能完整存取，归档到历史时同样不截断
     user = make_user()
     big = "x" * (70 * 1024)
-    _set_clipboard(client, user, big)
+    set_clipboard(client, user, big)
     assert client.get("/api/clipboard", headers=user.headers).json()["content"] == big
-    _set_clipboard(client, user, "next")
+    set_clipboard(client, user, "next")
     # 归档后完整保存：列表里超过 64KB 的内容只给开头，全文按 id 取
     [item] = client.get("/api/clipboard/history", headers=user.headers).json()["items"]
     assert item["content"] is None and item["size"] == len(big) and item["preview"] == "x" * 200
@@ -30,8 +26,8 @@ def test_clipboard_accepts_text_larger_than_64kb(client, make_user):
 
 def test_history_ids_of_other_user_are_not_accessible(client, make_user):
     alice, bob = make_user(), make_user()
-    _set_clipboard(client, alice, "v1")
-    _set_clipboard(client, alice, "v2")
+    set_clipboard(client, alice, "v1")
+    set_clipboard(client, alice, "v2")
     history_id = client.get("/api/clipboard/history", headers=alice.headers).json()["items"][0]["id"]
 
     assert client.get("/api/clipboard/history", headers=bob.headers).json()["total"] == 0
@@ -89,7 +85,7 @@ def test_admin_file_listing_is_metadata_only(client, make_user):
 def test_admin_user_detail_has_no_clipboard_content(client, make_user):
     victim = make_user()
     admin = make_user(UserRole.ADMIN)
-    _set_clipboard(client, victim, "PRIVATE-TEXT")
+    set_clipboard(client, victim, "PRIVATE-TEXT")
     resp = client.get(f"/api/admin/users/{victim.id}", headers=admin.headers)
     assert resp.status_code == 200
     assert "PRIVATE-TEXT" not in resp.text
@@ -124,7 +120,7 @@ def test_admin_cannot_call_superadmin_endpoints(client, make_user, method, path,
 
 def test_admin_user_list_has_no_content_or_password_hash(client, make_user):
     admin, victim = make_user(UserRole.ADMIN), make_user()
-    _set_clipboard(client, victim, "PRIVATE-TEXT")
+    set_clipboard(client, victim, "PRIVATE-TEXT")
     new_text(client, victim, "PRIVATE-NOTE")
     resp = client.get("/api/admin/users", headers=admin.headers)
     assert resp.status_code == 200
@@ -144,8 +140,8 @@ def test_others_cannot_read_write_or_delete_content_by_id(client, make_user, rol
     """超管对他人内容只有只读入口（/api/admin/...）；经本人接口按 id 读、改、删、恢复一律 404，内容不变"""
     owner, other = make_user(), make_user(role)
     text = new_text(client, owner, "OWNER-TEXT")
-    _set_clipboard(client, owner, "v1")
-    _set_clipboard(client, owner, "v2")
+    set_clipboard(client, owner, "v1")
+    set_clipboard(client, owner, "v2")
     history_id = client.get("/api/clipboard/history", headers=owner.headers).json()["items"][0]["id"]
     file_id = upload(client, owner, b"file-body").json()["id"]
     h = other.headers

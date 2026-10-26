@@ -91,7 +91,8 @@ src/
 ├── utils/          # 工具函数
 │   ├── websocket.js # WebSocket 管理器
 │   ├── clipboard.js # 复制到剪贴板（HTTP 下降级为 execCommand）；copyText 带成功提示，失败时弹手动复制对话框
-│   ├── format.js    # 文件大小、UTC 时间解析（parseUtc）与格式化、相对时间（formatRelative）
+│   ├── format.js    # 文件大小、UTC 时间解析（parseUtc）与格式化、相对时间（formatRelative）、下载进度文字、UTF-8 字节数、MB 与字节互换
+│   ├── editor.js    # 编辑框共用：保存快捷键（isSaveShortcut、SAVE_KEY_HINT）、放弃未保存修改的确认（confirmDiscardChanges）
 │   ├── toast.js     # 轻提示：toast.success / error / info
 │   ├── dialog.js    # 对话框：confirmDialog / promptDialog / copyDialog / choiceDialog
 │   ├── conflict.js  # 保存冲突（409）时的选择对话框
@@ -99,7 +100,7 @@ src/
 │   ├── accessCode.js # 访问码规则与过期判断（与后端一致）；导出全站共用的 30 秒时钟 clock，过期判断读它
 │   ├── theme.js     # 主题：读写本浏览器的选择，设置 <html data-theme>
 │   ├── glass.js     # 玻璃质感：判断能否启用液态折射（<html class="liquid-glass">），悬停高光跟随鼠标
-│   └── download.js  # 把下载得到的 Blob 交给浏览器保存
+│   └── download.js  # 把下载得到的 Blob 交给浏览器保存；downloadWithProgress 带进度下载（文件页、管理后台、快速访问页共用）
 ├── App.vue         # 根组件（路由视图 + 提示与对话框宿主 + 液态折射的 SVG 滤镜，设置图标默认尺寸）
 ├── style.css       # 设计变量与全局组件样式（按钮、输入框、表格、弹窗等）
 └── main.js         # 入口文件（引入 Inter 字体、全局样式、主题与玻璃质感；先恢复登录状态再挂载路由，监听跨标签页 token 变化；

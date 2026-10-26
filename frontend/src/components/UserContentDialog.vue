@@ -63,7 +63,6 @@ const counts = computed(() => ({
   texts: texts.value.length,
 }))
 
-const formatTime = (value) => formatDateTime(value, '-', true)
 const textTitle = (text) => text.title || '无标题'
 
 // 列表里长内容（超过 64KB）只有开头，点开时再取全文
@@ -138,7 +137,7 @@ const openDetail = async (meta, inlineContent, fetchFull) => {
               <ChevronLeft :size="14" />
               返回列表
             </button>
-            <span class="detail-meta">{{ detail.title }} · {{ formatTime(detail.time) }}</span>
+            <span class="detail-meta">{{ detail.title }} · {{ formatDateTime(detail.time) }}</span>
           </div>
           <div v-if="detailLoading" class="state" role="status">
             <LoaderCircle class="spin" />
@@ -168,7 +167,7 @@ const openDetail = async (meta, inlineContent, fetchFull) => {
           <template v-if="section === 'clipboard'">
             <p v-if="!clipboard?.version" class="empty-line">还没有保存过云剪切板内容</p>
             <template v-else>
-              <span class="detail-meta">更新于 {{ formatTime(clipboard.updated_at) }}</span>
+              <span class="detail-meta">更新于 {{ formatDateTime(clipboard.updated_at) }}</span>
               <pre class="content-box">{{ clipboard.content || '（空）' }}</pre>
             </template>
           </template>
@@ -180,7 +179,7 @@ const openDetail = async (meta, inlineContent, fetchFull) => {
               <li v-for="item in history" :key="item.id">
                 <button type="button" class="item" @click="openHistory(item)">
                   <span class="item-preview">{{ item.preview || '（空）' }}</span>
-                  <span class="item-meta">{{ formatTime(item.created_at) }} · {{ formatSize(item.size) }}</span>
+                  <span class="item-meta">{{ formatDateTime(item.created_at) }} · {{ formatSize(item.size) }}</span>
                 </button>
               </li>
             </ul>
@@ -194,7 +193,7 @@ const openDetail = async (meta, inlineContent, fetchFull) => {
                 <button type="button" class="item" @click="openText(item)">
                   <span class="item-title">{{ textTitle(item) }}</span>
                   <span class="item-preview">{{ item.preview || '（空）' }}</span>
-                  <span class="item-meta">更新于 {{ formatTime(item.updated_at) }} · {{ formatSize(item.size) }}</span>
+                  <span class="item-meta">更新于 {{ formatDateTime(item.updated_at) }} · {{ formatSize(item.size) }}</span>
                 </button>
               </li>
             </ul>

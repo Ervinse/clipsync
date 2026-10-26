@@ -9,7 +9,8 @@ import {
 import { useAdminStore, useUserStore, useFilesStore } from '../stores'
 import UserContentDialog from '../components/UserContentDialog.vue'
 import { PAGE_SIZE } from '../stores/admin'
-import { formatDateTime, formatSize, parseUtc } from '../utils/format'
+import { formatDateTime, formatSize, formatDownloadProgress, parseUtc, bytesToMB, mbToBytes } from '../utils/format'
+import { isExpired } from '../utils/accessCode'
 import { copyText } from '../utils/clipboard'
 import toast from '../utils/toast'
 import { confirmDialog, promptDialog, dialogState } from '../utils/dialog'
@@ -103,7 +104,7 @@ const syncSettingsForm = () => {
   settingsForm.value = {
     registration_enabled: s.registration_enabled,
     show_github_link: s.show_github_link,
-    default_quota_mb: Math.round(s.default_quota_bytes / 1024 / 1024),
+    default_quota_mb: bytesToMB(s.default_quota_bytes),
   }
 }
 
@@ -125,7 +126,7 @@ const handleSaveSettings = async () => {
     await adminStore.updateSettings({
       registration_enabled: settingsForm.value.registration_enabled,
       show_github_link: settingsForm.value.show_github_link,
-      default_quota_bytes: quotaMB * 1024 * 1024,
+      default_quota_bytes: mbToBytes(quotaMB),
     })
     syncSettingsForm()
     // 侧栏的 GitHub 链接开关随 /auth/me 下发：重取一次，改完立刻在本页侧栏生效（失败不影响保存结果）
@@ -258,8 +259,7 @@ const copyCreatedMessage = () => {
 // 邀请码状态：used_at 非空即已用过（使用者被删除后 used_by 会置空）；未用过再看是否过期
 const inviteStatus = (invite) => {
   if (invite.used_at || invite.used_by) return 'used'
-  const expires = parseUtc(invite.expires_at)
-  if (expires && expires.getTime() <= Date.now()) return 'expired'
+  if (isExpired(invite.expires_at)) return 'expired'
   return 'available'
 }
 const INVITE_STATUS = {
@@ -544,7 +544,7 @@ const handleUpdateQuota = async (user) => {
     title: `修改「${user.username}」的配额`,
     message: `当前已使用 ${formatSize(user.used_bytes || 0)}。`,
     label: '新配额',
-    defaultValue: Math.round(user.quota_bytes / 1024 / 1024),
+    defaultValue: bytesToMB(user.quota_bytes),
     inputType: 'number',
     suffix: 'MB',
     confirmText: '保存',
@@ -558,7 +558,7 @@ const handleUpdateQuota = async (user) => {
   }
 
   try {
-    await adminStore.updateUserQuota(user.id, quotaMB * 1024 * 1024)
+    await adminStore.updateUserQuota(user.id, mbToBytes(quotaMB))
     toast.success('配额已更新')
   } catch (error) {
     toast.error('更新失败：' + error.message)
@@ -609,13 +609,7 @@ const handleAdminDownload = async (file) => {
     toast.error('下载失败：' + (error.message || '未知错误'))
   }
 }
-const downloadProgressText = (file) => {
-  const state = filesStore.downloads[file.id]
-  if (!state) return '下载'
-  return state.total > 0
-    ? `下载中 ${Math.min(100, Math.round((state.loaded / state.total) * 100))}%`
-    : '下载中…'
-}
+const downloadProgressText = (file) => formatDownloadProgress(filesStore.downloads[file.id], '下载')
 
 const handleDeleteUser = async (user) => {
   if (!canDeleteUser(user)) {
@@ -1163,7 +1157,8 @@ const handleEditDeployNote = async (record) => {
           <label class="switch">
             <input
               v-model="settingsForm.registration_enabled"
-              type="checkbox"              aria-label="开放注册"
+              type="checkbox"
+              aria-label="开放注册"
             />
             <span class="switch-track"></span>
           </label>
@@ -1177,7 +1172,8 @@ const handleEditDeployNote = async (record) => {
           <label class="switch">
             <input
               v-model="settingsForm.show_github_link"
-              type="checkbox"              aria-label="显示 GitHub 链接"
+              type="checkbox"
+              aria-label="显示 GitHub 链接"
             />
             <span class="switch-track"></span>
           </label>
@@ -1194,7 +1190,8 @@ const handleEditDeployNote = async (record) => {
               v-model.number="settingsForm.default_quota_mb"
               class="input"
               type="number"
-              min="0"            />
+              min="0"
+            />
             <span class="input-suffix">MB</span>
           </span>
         </div>
@@ -1925,25 +1922,6 @@ const handleEditDeployNote = async (record) => {
   font-size: var(--text-base);
   font-weight: 600;
   color: var(--color-text);
-}
-
-.input-with-suffix {
-  position: relative;
-  display: block;
-}
-
-.input-with-suffix .input {
-  padding-right: 48px;
-}
-
-.input-suffix {
-  position: absolute;
-  right: var(--space-3);
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: var(--text-sm);
-  color: var(--color-text-tertiary);
-  pointer-events: none;
 }
 
 @media (max-width: 1024px) {

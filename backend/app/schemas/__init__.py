@@ -22,7 +22,6 @@ from .text import (
 from .file import (
     UploadInitRequest,
     UploadInitResponse,
-    UploadChunkRequest,
     UploadCompleteRequest,
     FileResponse,
     FileListResponse,
@@ -81,7 +80,6 @@ __all__ = [
     "TextListResponse",
     "UploadInitRequest",
     "UploadInitResponse",
-    "UploadChunkRequest",
     "UploadCompleteRequest",
     "FileResponse",
     "FileListResponse",

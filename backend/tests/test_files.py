@@ -5,24 +5,7 @@ import pytest
 
 from app.config import settings
 from app.core import storage
-from tests.helpers import upload, STORAGE_ROOT
-
-
-def _init(client, user, total_size, chunk_size=1024, name="f.bin"):
-    return client.post(
-        "/api/files/upload/init",
-        json={"original_name": name, "total_size": total_size, "chunk_size": chunk_size},
-        headers=user.headers,
-    )
-
-
-def _chunk(client, user, upload_id, index, data):
-    return client.post(
-        "/api/files/upload/chunk",
-        data={"upload_id": upload_id, "chunk_index": str(index)},
-        files={"chunk_data": ("blob", data)},
-        headers=user.headers,
-    )
+from tests.helpers import upload, STORAGE_ROOT, init_upload, post_chunk
 
 
 def test_upload_roundtrip_stores_under_uuid(client, make_user):
@@ -45,48 +28,48 @@ def test_storage_rejects_non_uuid_names(bad):
 
 def test_cannot_write_into_other_users_upload(client, make_user):
     alice, bob = make_user(), make_user()
-    upload_id = _init(client, alice, 100).json()["upload_id"]
-    assert _chunk(client, bob, upload_id, 0, b"x" * 10).status_code == 404
+    upload_id = init_upload(client, alice, 100).json()["upload_id"]
+    assert post_chunk(client, bob, upload_id, 0, b"x" * 10).status_code == 404
     assert client.post("/api/files/upload/complete", json={"upload_id": upload_id}, headers=bob.headers).status_code == 404
 
 
 def test_forged_upload_id_rejected(client, make_user):
     user = make_user()
     forged = ("../" * 12)[:36]
-    assert _chunk(client, user, forged, 0, b"x").status_code == 404
+    assert post_chunk(client, user, forged, 0, b"x").status_code == 404
 
 
 def test_chunk_index_out_of_range(client, make_user):
     user = make_user()
-    upload_id = _init(client, user, 100, chunk_size=100).json()["upload_id"]
-    assert _chunk(client, user, upload_id, 1, b"x").status_code == 400
-    assert _chunk(client, user, upload_id, -1, b"x").status_code == 422
+    upload_id = init_upload(client, user, 100, chunk_size=100).json()["upload_id"]
+    assert post_chunk(client, user, upload_id, 1, b"x").status_code == 400
+    assert post_chunk(client, user, upload_id, -1, b"x").status_code == 422
 
 
 def test_oversized_chunk_rejected(client, make_user):
     user = make_user()
-    upload_id = _init(client, user, 100, chunk_size=10).json()["upload_id"]
-    assert _chunk(client, user, upload_id, 0, b"x" * 50).status_code == 413
+    upload_id = init_upload(client, user, 100, chunk_size=10).json()["upload_id"]
+    assert post_chunk(client, user, upload_id, 0, b"x" * 50).status_code == 413
     assert not any((STORAGE_ROOT / "tmp" / upload_id).iterdir())
 
 
 def test_chunk_size_is_capped_by_server(client, make_user):
     user = make_user(quota=10 * settings.CHUNK_SIZE)
-    info = _init(client, user, 3 * settings.CHUNK_SIZE, chunk_size=100 * settings.CHUNK_SIZE).json()
+    info = init_upload(client, user, 3 * settings.CHUNK_SIZE, chunk_size=100 * settings.CHUNK_SIZE).json()
     assert info["chunk_size"] == settings.CHUNK_SIZE
 
 
 def test_declared_size_mismatch_rejected(client, make_user):
     user = make_user()
-    upload_id = _init(client, user, 20, chunk_size=10).json()["upload_id"]
-    assert _chunk(client, user, upload_id, 0, b"x" * 10).status_code == 200
+    upload_id = init_upload(client, user, 20, chunk_size=10).json()["upload_id"]
+    assert post_chunk(client, user, upload_id, 0, b"x" * 10).status_code == 200
     # 分片大小按索引校验：最后一片应为 10 字节，5 字节当场拒绝，不落盘
-    assert _chunk(client, user, upload_id, 1, b"x" * 5).status_code == 400
+    assert post_chunk(client, user, upload_id, 1, b"x" * 5).status_code == 400
     resp = client.post("/api/files/upload/complete", json={"upload_id": upload_id}, headers=user.headers)
     assert resp.status_code == 400
     assert client.get("/api/files", headers=user.headers).json()["total"] == 0
     # 重传正确大小的分片后可以正常完成
-    assert _chunk(client, user, upload_id, 1, b"x" * 10).status_code == 200
+    assert post_chunk(client, user, upload_id, 1, b"x" * 10).status_code == 200
     resp = client.post("/api/files/upload/complete", json={"upload_id": upload_id}, headers=user.headers)
     assert resp.status_code == 200
     assert resp.json()["size"] == 20
@@ -94,21 +77,21 @@ def test_declared_size_mismatch_rejected(client, make_user):
 
 def test_pending_uploads_count_toward_quota(client, make_user):
     user = make_user(quota=2000)
-    assert _init(client, user, 1500).status_code == 200
+    assert init_upload(client, user, 1500).status_code == 200
     # 第一个会话未完成，但已占用配额
-    assert _init(client, user, 1000).status_code == 413
+    assert init_upload(client, user, 1000).status_code == 413
 
 
 def test_upload_session_count_limited(client, make_user):
     user = make_user()
     for _ in range(settings.MAX_UPLOAD_SESSIONS_PER_USER):
-        assert _init(client, user, 10).status_code == 200
-    assert _init(client, user, 10).status_code == 429
+        assert init_upload(client, user, 10).status_code == 200
+    assert init_upload(client, user, 10).status_code == 429
 
 
 def test_quota_enforced(client, make_user):
     user = make_user(quota=100)
-    assert _init(client, user, 101).status_code == 413
+    assert init_upload(client, user, 101).status_code == 413
 
 
 def test_content_disposition_header_injection(client, make_user):
