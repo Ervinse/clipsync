@@ -81,6 +81,7 @@ async def write_clipboard(
     写入当前文本：归档旧内容 + upsert + 清理超额历史 + 广播。登录编辑与快速访问共用。
 
     base_version：读取时的版本号；与当前版本不一致返回 409（内容已在别处被改过），None 表示直接覆盖。
+    内容与当前相同（且不是恢复历史）时原样返回当前文本，不加版本号、不归档、不广播。
     consumed_history_id：restore 时传入，被恢复的那条历史在同一事务里删除，避免重复。
     require_code：快速访问写入时传入，加锁后再确认剪切板仍挂着这个访问码且未过期，否则 404。
     """
@@ -109,6 +110,19 @@ async def write_clipboard(
     if base_version is not None and base_version != current_version:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=CONFLICT_DETAIL)
+
+    if consumed_history_id is None and old_clipboard is not None and old_clipboard.content == content:
+        # 内容没变：不加版本号、不刷新时间、不广播（与文本栏目一致），别处带着当前版本号保存时不会被误判为冲突。
+        # 先生成响应再回滚（回滚会让对象过期，之后不能再读属性）
+        unchanged = ClipboardResponse(
+            content=old_clipboard.content,
+            updated_at=old_clipboard.updated_at,
+            version=old_clipboard.version,
+            access_code=old_clipboard.access_code,
+            access_expires_at=old_clipboard.access_expires_at,
+        )
+        await db.rollback()
+        return unchanged
 
     if consumed_history_id is not None:
         consumed = await db.execute(

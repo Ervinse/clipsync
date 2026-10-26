@@ -1,9 +1,11 @@
 /**
  * 多段文本的编辑草稿：文本栏目页（Texts.vue）与快速访问页（QuickAccess.vue）共用。
  *
- * 每段文本一份草稿 { title, content, syncedTitle, syncedContent, version, loaded, loading, saving, remoteChanged }：
+ * 每段文本一份草稿 { title, content, syncedTitle, syncedContent, version, loaded, loading, saving, remoteChanged, newerVersion }：
  * - 列表里较长的文本没有全文（content 为 null），loaded 为 false，要先 loadFull 才能编辑
- * - 列表刷新时，没有未保存修改的草稿跟着更新；有未保存修改的只标记 remoteChanged，不覆盖正在输入的内容
+ * - 列表刷新时，没有未保存修改的草稿跟着更新；有未保存修改的只标记 remoteChanged，不覆盖正在输入的内容；
+ *   取全文的请求期间用户开始编辑的，同样只标记 remoteChanged
+ * - 保存期间列表刷新到了比自己更新的版本（newerVersion），保存响应到达后标记 remoteChanged、不覆盖列表
  * - 保存带上草稿的版本号，内容已在别处改过（409）时让用户选择载入最新内容或仍然覆盖
  *
  * fetchFull(key) → { title, content, version }
@@ -31,13 +33,21 @@ export function createTextDrafts({ fetchFull, saveItem, onSaved }) {
     d.remoteChanged = false
   }
 
-  async function loadFull(key) {
+  /**
+   * 取全文并更新草稿。请求期间用户已经在编辑（草稿有未保存的修改）时不覆盖，只标记「已在别处更新」；
+   * force：用户明确选了「载入最新内容」（保存冲突后），不管有没有未保存的修改都覆盖
+   */
+  async function loadFull(key, { force = false } = {}) {
     const d = drafts[key]
     if (!d || d.loading) return false
     d.loading = true
     try {
       const data = await fetchFull(key)
-      if (drafts[key]) apply(drafts[key], data)
+      const current = drafts[key]
+      if (current) {
+        if (!force && isDirty(current)) current.remoteChanged = true
+        else apply(current, data)
+      }
       return true
     } catch (error) {
       toast.error('载入失败：' + error.message)
@@ -66,11 +76,17 @@ export function createTextDrafts({ fetchFull, saveItem, onSaved }) {
           loading: false,
           saving: false,
           remoteChanged: false,
+          newerVersion: 0,
         }
         continue
       }
-      // 版本没变，或正在保存（保存结果会带回新版本）：不动草稿
-      if (item.version === d.version || d.saving) continue
+      // 正在保存（保存结果会带回新版本）：不动草稿，但记下期间看到的最高版本号，
+      // 保存响应到达时若比自己的版本新，说明别处在这期间又改过
+      if (d.saving) {
+        if (item.version !== d.version) d.newerVersion = Math.max(d.newerVersion, item.version)
+        continue
+      }
+      if (item.version === d.version) continue
       if (isDirty(d)) {
         d.remoteChanged = true
       } else if (item.content !== null && item.content !== undefined) {
@@ -102,6 +118,7 @@ export function createTextDrafts({ fetchFull, saveItem, onSaved }) {
     const d = drafts[key]
     if (!d || d.saving || !d.loaded) return false
     d.saving = true
+    d.newerVersion = 0
     // 保存的是点击时的内容：请求期间继续输入的字不在其中，保存后仍算未保存
     const title = d.title
     const content = d.content
@@ -115,8 +132,11 @@ export function createTextDrafts({ fetchFull, saveItem, onSaved }) {
       // 后端会去掉标题首尾空白：没有继续改过的标题直接用后端的结果
       if (current.title === title) current.title = current.syncedTitle
       current.version = result.version
-      current.remoteChanged = false
-      onSaved?.(key, result)
+      // 保存期间列表已经刷新到更新的版本（别处在这之后又改过）：不用旧结果覆盖列表，
+      // 标记「已在别处更新」，下次保存会走冲突处理
+      const superseded = current.newerVersion > result.version
+      current.remoteChanged = superseded
+      if (!superseded) onSaved?.(key, result)
       toast.success('已保存')
       return true
     } catch (error) {
@@ -129,7 +149,7 @@ export function createTextDrafts({ fetchFull, saveItem, onSaved }) {
     if (conflict) {
       const choice = await askConflict()
       if (choice === 'overwrite') return save(key, { overwrite: true })
-      if (choice === 'load') await loadFull(key)
+      if (choice === 'load') await loadFull(key, { force: true })
     }
     return false
   }

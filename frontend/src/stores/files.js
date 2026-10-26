@@ -46,10 +46,14 @@ export const useFilesStore = defineStore('files', {
      * silent：WS 推送触发的后台刷新不切 isLoading，避免列表闪成加载状态
      */
     async fetchFiles({ silent = false } = {}) {
+      // 请求序号：期间又发出了更新的请求（或本地刚删除了文件）时，这次的结果（成功或失败）都作废，
+      // 「加载中」由最新的一次收尾；否则晚到的旧列表会让刚删除的文件短暂回到列表里
+      const seq = (this._seq = (this._seq || 0) + 1)
       try {
         if (!silent) this.isLoading = true
         // 后端返回 { items, total, used_bytes, quota_bytes }
         const data = await api.files.list()
+        if (seq !== this._seq) return
         this.files = data?.items || []
         this.loadError = ''
         // 同步配额到用户状态：侧栏与文件页都读 userStore.quota，上传/删除后需要刷新
@@ -61,10 +65,11 @@ export const useFilesStore = defineStore('files', {
         }
       } catch (error) {
         console.error('获取文件列表失败:', error)
+        if (seq !== this._seq) return
         if (!silent) this.loadError = error?.message || '加载失败'
         throw error
       } finally {
-        if (!silent) this.isLoading = false
+        if (seq === this._seq) this.isLoading = false
       }
     },
 
@@ -80,6 +85,13 @@ export const useFilesStore = defineStore('files', {
         throw { message: '已有文件正在上传，请等待完成' }
       }
       this.isUploading = true
+      // 本次上传的运行标记：退出登录时置为 cancelled（见 abortUploads），循环据此停下，
+      // 不再带着已清掉的 token 发请求，也不碰已被重置的 store
+      const run = { cancelled: false }
+      this._run = run
+      const ensureActive = () => {
+        if (run.cancelled) throw { message: '上传已取消', cancelled: true }
+      }
       let uploadId = null
       try {
         // 1. 初始化上传（分片大小以服务端确认的 chunk_size 为准）
@@ -89,6 +101,7 @@ export const useFilesStore = defineStore('files', {
           chunk_size: 1024 * 1024, // 期望 1MB，服务端会按上限裁剪
         })
         uploadId = initData.upload_id
+        ensureActive()
         const CHUNK_SIZE = initData.chunk_size
         const totalChunks = initData.total_chunks
 
@@ -107,6 +120,7 @@ export const useFilesStore = defineStore('files', {
           const chunk = file.slice(start, end)
 
           await api.files.uploadChunk(uploadId, i, chunk)
+          ensureActive()
 
           // 更新进度
           this.uploadProgress[uploadId].current = i + 1
@@ -118,6 +132,8 @@ export const useFilesStore = defineStore('files', {
         // 3. 完成上传（服务端正在合并：此后页面被关闭也不再发取消，见文件末尾的 pagehide 处理）
         this.uploadProgress[uploadId].completing = true
         const result = await api.files.completeUpload(uploadId)
+        // 合并期间退出了登录：文件已入库，但没有 token 可用，不刷新列表
+        if (run.cancelled) return result
 
         // 文件已入库：刷新列表失败不能算上传失败（否则会取消会话并提示失败，用户重试得到重复文件）。
         // 失败时列表由随后到达的 file_added 推送或手动刷新补上
@@ -126,6 +142,8 @@ export const useFilesStore = defineStore('files', {
         return result
       } catch (error) {
         console.error('文件上传失败:', error)
+        // 退出登录导致的中断：会话已在退出前取消（或没有 token 可用），不再发请求
+        if (run.cancelled) throw error
         // 中途失败：取消会话，立即释放其占用的配额；取消本身失败（如会话已不存在）忽略
         if (uploadId) {
           await api.files.cancelUpload(uploadId).catch(() => {})
@@ -135,8 +153,29 @@ export const useFilesStore = defineStore('files', {
       } finally {
         // 成功或失败都清除进度，避免失败后进度条残留
         if (uploadId) delete this.uploadProgress[uploadId]
-        this.isUploading = false
+        // 只收尾自己这一次：退出登录后重新登录开始的新上传不能被旧循环的 finally 重置
+        if (this._run === run) {
+          this._run = null
+          this.isUploading = false
+        }
       }
+    },
+
+    /** 停止进行中的上传循环（退出登录时调用）；不发请求，会话的取消见 cancelActiveUploads */
+    abortUploads() {
+      if (this._run) this._run.cancelled = true
+    },
+
+    /**
+     * 退出登录前调用（此时 token 还在）：取消进行中的上传会话，立即释放配额，并停止上传循环。
+     * 已进入「完成上传」阶段的不取消：服务端可能正在合并，取消会让这个文件丢失
+     */
+    async cancelActiveUploads() {
+      const ids = Object.entries(this.uploadProgress)
+        .filter(([, progress]) => !progress.completing)
+        .map(([id]) => id)
+      this.abortUploads()
+      await Promise.all(ids.map((id) => api.files.cancelUpload(id).catch(() => {})))
     },
 
     /** 设置访问码后就地更新列表项，不必等推送 */
@@ -151,6 +190,7 @@ export const useFilesStore = defineStore('files', {
     async deleteFile(fileId) {
       try {
         await api.files.delete(fileId)
+        this._seq = (this._seq || 0) + 1 // 删除之前发出的列表请求作废
         this.files = this.files.filter(f => f.id !== fileId)
       } catch (error) {
         console.error('删除文件失败:', error)

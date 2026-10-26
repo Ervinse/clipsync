@@ -222,13 +222,6 @@ const handleClear = async () => {
 </template>
 
 <style scoped>
-.header-with-close {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
 .modal-desc {
   word-break: break-all;
 }

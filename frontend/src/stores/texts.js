@@ -26,21 +26,22 @@ export const useTextsStore = defineStore('texts', {
 
   actions: {
     async fetchTexts({ silent = false } = {}) {
+      // 请求序号：期间又发出了更新的请求时，这次的结果（成功或失败）都作废，「加载中」由最新的一次收尾
       const seq = (this._seq = (this._seq || 0) + 1)
       try {
         if (!silent) this.isLoading = true
         const data = await api.texts.list()
-        // 期间又发出了更新的请求：丢弃这次过期结果
         if (seq !== this._seq) return
         this.texts = data?.items || []
         this.maxTexts = data?.max_texts || this.maxTexts
         this.loadError = ''
       } catch (error) {
         console.error('获取文本列表失败:', error)
+        if (seq !== this._seq) return
         if (!silent) this.loadError = error?.message || '加载失败'
         throw error
       } finally {
-        if (!silent) this.isLoading = false
+        if (seq === this._seq) this.isLoading = false
       }
     },
 

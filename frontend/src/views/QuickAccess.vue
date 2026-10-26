@@ -12,7 +12,7 @@ import { useQuickStore } from '../stores'
 import { quickWs } from '../stores/quick'
 import { createTextDrafts } from '../utils/textDrafts'
 import { formatSize, formatDateTime } from '../utils/format'
-import { copyToClipboard } from '../utils/clipboard'
+import { copyText } from '../utils/clipboard'
 import { saveBlob } from '../utils/download'
 import { confirmDialog } from '../utils/dialog'
 import toast from '../utils/toast'
@@ -134,10 +134,7 @@ const handleExit = async () => {
   router.push('/login')
 }
 
-const copyDraft = async (key) => {
-  if (await copyToClipboard(drafts[key]?.content || '')) toast.success('已复制')
-  else toast.error('复制失败，请手动选中文本复制')
-}
+const copyDraft = (key) => copyText(drafts[key]?.content || '', '已复制')
 
 // 下载：以 blob 方式取回（要带快速访问凭证），期间显示进度
 const downloads = ref({})
@@ -214,7 +211,7 @@ const handleDownload = async (file) => {
             :draft="drafts[CLIP]"
             :preview="items.clipboard.preview"
             :size="items.clipboard.size"
-            :updated-at="items.clipboard.updated_at"
+            :updated-at="items.clipboard.version ? items.clipboard.updated_at : ''"
             heading="云剪切板"
             :readonly="lost"
             @save="save(CLIP)"

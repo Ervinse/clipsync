@@ -10,9 +10,9 @@ import { useAdminStore, useUserStore, useFilesStore } from '../stores'
 import UserContentDialog from '../components/UserContentDialog.vue'
 import { PAGE_SIZE } from '../stores/admin'
 import { formatDateTime, formatSize, parseUtc } from '../utils/format'
-import { copyToClipboard } from '../utils/clipboard'
+import { copyText } from '../utils/clipboard'
 import toast from '../utils/toast'
-import { confirmDialog, promptDialog, copyDialog, dialogState } from '../utils/dialog'
+import { confirmDialog, promptDialog, dialogState } from '../utils/dialog'
 
 // 访问权限由路由守卫（meta.requiresAdmin）拦截，后端接口再做最终校验
 const adminStore = useAdminStore()
@@ -246,15 +246,6 @@ const buildInviteMessage = (invites) => {
   ].join('\n')
 }
 
-// 复制成功提示；HTTP 部署下 navigator.clipboard 不可用时降级为手动复制对话框
-const copyText = async (text, successMessage) => {
-  if (await copyToClipboard(text)) {
-    toast.success(successMessage)
-  } else {
-    copyDialog({ value: text })
-  }
-}
-
 const copyCreatedCodes = () => {
   const invites = createdBatch.value?.codes || []
   copyText(invites.map((invite) => invite.code).join('\n'), `已复制 ${invites.length} 个邀请码`)
@@ -428,7 +419,7 @@ const handleEditInviteExpiry = async (ids) => {
 const handleDeleteInvite = async (id) => {
   const ok = await confirmDialog({
     title: '删除这个邀请码？',
-    message: '删除后该邀请码无法再用于注册。',
+    message: '这个邀请码将被永久删除，无法找回，也无法再用于注册。',
     confirmText: '删除',
     danger: true,
   })
@@ -436,6 +427,7 @@ const handleDeleteInvite = async (id) => {
 
   try {
     await adminStore.deleteInviteCode(id)
+    toast.success('邀请码已删除')
   } catch (error) {
     toast.error('删除失败：' + error.message)
   }
@@ -495,8 +487,8 @@ const handleDeleteUnusedInBatch = async (batch) => {
   const ok = await confirmDialog({
     title: `删除这批里 ${count} 个未使用的邀请码？`,
     message: keepsUsed
-      ? `删除后这些邀请码无法再用于注册。已使用的 ${batch.stats.used} 个保留，这批记录和备注也保留。`
-      : '删除后这些邀请码无法再用于注册，这批记录也会一起删除。',
+      ? `这些邀请码将被永久删除，无法找回，也无法再用于注册。已使用的 ${batch.stats.used} 个保留，这批记录和备注也保留。`
+      : '这些邀请码将被永久删除，无法找回，也无法再用于注册，这批记录也会一起删除。',
     confirmText: '删除',
     danger: true,
   })
@@ -1933,13 +1925,6 @@ const handleEditDeployNote = async (record) => {
   font-size: var(--text-base);
   font-weight: 600;
   color: var(--color-text);
-}
-
-.header-with-close {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
 }
 
 .input-with-suffix {

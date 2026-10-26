@@ -21,18 +21,22 @@ export const useAccessStore = defineStore('access', {
      * 是否已过期随时间变化，由页面按当前时间计算，这里只存后端返回的原始数据
      */
     async fetchOverview({ silent = false } = {}) {
+      // 请求序号：期间又发出了更新的请求时，这次的结果（成功或失败）都作废，「加载中」由最新的一次收尾
+      const seq = (this._seq = (this._seq || 0) + 1)
       try {
         if (!silent) this.isLoading = true
         const data = await api.access.overview()
+        if (seq !== this._seq) return
         this.groups = data?.groups || []
         this.username = data?.username || ''
         this.loadError = ''
       } catch (error) {
         console.error('获取访问码失败:', error)
+        if (seq !== this._seq) return
         if (!silent) this.loadError = error?.message || '加载失败'
         throw error
       } finally {
-        if (!silent) this.isLoading = false
+        if (seq === this._seq) this.isLoading = false
       }
     },
 

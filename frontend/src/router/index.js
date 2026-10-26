@@ -77,18 +77,25 @@ const router = createRouter({
 // 服务器升级后，已打开的旧页面里记的按需加载文件名（带内容哈希）在服务器上已经不存在，
 // 点菜单时会加载失败、页面没反应。遇到这种错误刷新一次拿到新版本；
 // 10 秒内已经刷新过就不再刷，避免服务器真的连不上时陷入刷新循环。
-const CHUNK_ERROR = /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i
+// 页面自带的样式文件会先于脚本预加载，旧文件名 404 时抛出的是 "Unable to preload CSS for ..."，同样要匹配。
+const CHUNK_ERROR = /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|Unable to preload CSS/i
 const RELOAD_KEY = 'chunk_reload_at'
 router.onError((error, to) => {
   if (!CHUNK_ERROR.test(String(error?.message || error))) return
   let last = 0
   try {
     last = Number(sessionStorage.getItem(RELOAD_KEY)) || 0
-    sessionStorage.setItem(RELOAD_KEY, String(Date.now()))
   } catch {
     // 隐私模式下 sessionStorage 可能不可用，按没刷新过处理
   }
-  if (Date.now() - last > 10000) window.location.assign(to?.fullPath || '/')
+  // 10 秒内刚刷新过就放弃，也不更新时间：保护窗口不会被连续出现的错误一直往后推
+  if (Date.now() - last <= 10000) return
+  try {
+    sessionStorage.setItem(RELOAD_KEY, String(Date.now()))
+  } catch {
+    // 同上
+  }
+  window.location.assign(to?.fullPath || '/')
 })
 
 // 路由守卫

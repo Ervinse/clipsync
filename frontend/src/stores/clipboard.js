@@ -40,15 +40,19 @@ export const useClipboardStore = defineStore('clipboard', {
      * 获取当前剪贴板内容
      */
     async fetchCurrent() {
+      // 与推送触发的静默刷新共用序号：期间又发出了更新的请求或本地已保存时，这次的结果（成功或失败）都作废
+      const seq = this._bumpSeq()
       try {
         this.isLoading = true
-        this._bumpSeq()
-        this._apply(await api.clipboard.get())
+        const data = await api.clipboard.get()
+        if (seq !== this._refreshSeq) return
+        this._apply(data)
       } catch (error) {
         console.error('获取剪贴板内容失败:', error)
+        if (seq !== this._refreshSeq) return
         throw error
       } finally {
-        this.isLoading = false
+        if (seq === this._refreshSeq) this.isLoading = false
       }
     },
 
@@ -127,6 +131,9 @@ export const useClipboardStore = defineStore('clipboard', {
           if (this.historyVisible) await this.fetchHistory()
         } catch {
           // 静默刷新失败不打扰用户，下次推送或手动刷新会再同步
+        } finally {
+          // 它可能顶替了还在进行的 fetchCurrent（后者的结果已作废，不再收尾「加载中」），由最新的这一次收尾
+          if (seq === this._refreshSeq) this.isLoading = false
         }
       }
       ws.on('clipboard_updated', this._onClipboardUpdated)

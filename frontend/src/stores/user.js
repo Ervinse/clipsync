@@ -122,6 +122,8 @@ export const useUserStore = defineStore('user', {
       localStorage.removeItem('access_token')
       ws.disconnect()
 
+      // 上传循环不能带着已清掉的 token 继续发请求，也不能去碰马上被重置的 store
+      useFilesStore().abortUploads()
       for (const store of [useClipboardStore(), useTextsStore(), useFilesStore(), useAccessStore(), useAdminStore()]) {
         store.cleanupWebSocket?.()
         store.$reset()

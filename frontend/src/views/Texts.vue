@@ -34,7 +34,11 @@ const { drafts, isDirty, hasDirty, sync, loadFull, save, forget } = createTextDr
 
 watch(
   () => textsStore.texts,
-  (list) => sync(list.map((t) => ({ key: t.id, ...t }))),
+  (list) => {
+    // 已登出时各 store 被重置，列表变空不代表文本被删除（退出登录前用户已确认放弃未保存的修改）
+    if (!userStore.isLoggedIn) return
+    sync(list.map((t) => ({ key: t.id, ...t })))
+  },
   { deep: true, immediate: true },
 )
 
@@ -98,13 +102,14 @@ const labelOf = (item) => item.title || (item.preview || '').trim().slice(0, 30)
 const handleDelete = async (item) => {
   const ok = await confirmDialog({
     title: '删除这段文本？',
-    message: `「${labelOf(item)}」将被永久删除${item.access_code ? `，它的访问码 ${item.access_code} 也会一并清除` : ''}。`,
+    message: `「${labelOf(item)}」将被永久删除，无法找回${item.access_code ? `，它的访问码 ${item.access_code} 也会一并清除` : ''}。`,
     confirmText: '删除',
     danger: true,
   })
   if (!ok) return
   try {
     await textsStore.deleteText(item.id, () => forget(item.id))
+    toast.success('文本已删除')
   } catch (error) {
     toast.error('删除失败：' + error.message)
   }
@@ -150,7 +155,7 @@ const onCodeSaved = (result) => {
 
     <div v-else-if="textsStore.loadError" class="empty" role="alert">
       <span class="empty-icon"><TriangleAlert :size="20" /></span>
-      <p class="empty-title">文本加载失败</p>
+      <p class="empty-title">加载失败</p>
       <p class="empty-text">{{ textsStore.loadError }}</p>
       <button class="btn btn-secondary" @click="loadTexts">
         <RotateCw />

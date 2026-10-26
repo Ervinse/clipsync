@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
-import { History, Save, LoaderCircle, RotateCcw, Trash2, X, Inbox } from '@lucide/vue'
+import { History, Save, LoaderCircle, RotateCcw, RotateCw, Trash2, X, Inbox, TriangleAlert } from '@lucide/vue'
 import { useClipboardStore, useUserStore } from '../stores'
 import { formatRelative, formatSize } from '../utils/format'
 import toast from '../utils/toast'
@@ -21,17 +21,41 @@ const baseVersion = ref(0)
 const isSaving = ref(false)
 const showCodeDialog = ref(false)
 const showHistory = ref(false)
+// 首次加载失败的原因：此时编辑框是空的，不能让用户把它当成「剪切板是空的」去保存（会覆盖真实内容）
+const loadError = ref('')
 
 const isDirty = computed(() => textContent.value !== syncedText.value)
 
-// 其他终端更新后 store.currentText 变化：本地没有未保存编辑时才同步到编辑框，避免覆盖正在输入的内容
+// 快捷键提示：苹果设备用 ⌘，其余用 Ctrl（按键处理两者都认）
+const saveKeyHint = /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent) ? '⌘ + S' : 'Ctrl + S'
+
+// 本页自己整体替换编辑框内容（恢复历史、载入最新内容）期间，store 的变化是自己造成的，不算「别处更新」
+let selfUpdating = 0
+const runSelfUpdate = async (fn) => {
+  selfUpdating++
+  try {
+    return await fn()
+  } finally {
+    selfUpdating--
+  }
+}
+
+// 其他终端更新后 store 的文本或版本号变化：本地没有未保存编辑时才同步到编辑框（版本号也同步，
+// 保存时才不会拿旧版本号被误判为冲突），避免覆盖正在输入的内容。
 // 有未保存编辑时只提示「已在别处更新」，保存时由冲突检测让用户选择。
 // 自己保存时 store 也会更新（此时 isSaving 仍为 true），不算别处的更新
-watch(() => clipboardStore.currentText, (value) => {
+watch(() => [clipboardStore.currentText, clipboardStore.version], ([value, version]) => {
+  // 已登出时各 store 被重置，这个变化不是别处的更新（退出登录前用户已经确认放弃修改）
+  if (!userStore.isLoggedIn) return
+  if (selfUpdating > 0) return
+  loadError.value = ''
   if (textContent.value === syncedText.value) {
     textContent.value = value
-    baseVersion.value = clipboardStore.version
-  } else if (!isSaving.value && value !== syncedText.value && value !== textContent.value) {
+    baseVersion.value = version
+  } else if (value === syncedText.value || value === textContent.value) {
+    // 服务端内容与编辑所基于的内容、或与正在输入的内容一致：没有真正的冲突，版本号跟上，保存时不会误报 409
+    baseVersion.value = version
+  } else if (!isSaving.value) {
     toast.info('这段内容已在别处更新，保存时会提示你选择')
   }
   syncedText.value = value
@@ -66,18 +90,23 @@ const onBeforeUnload = (event) => {
   event.returnValue = ''
 }
 
-onMounted(async () => {
-  window.addEventListener('beforeunload', onBeforeUnload)
-  // 先注册监听再拉数据，拉取期间的推送也不会漏掉
-  clipboardStore.setupWebSocket()
+const loadClipboard = async () => {
+  loadError.value = ''
   try {
     await clipboardStore.fetchCurrent()
     textContent.value = clipboardStore.currentText
     syncedText.value = clipboardStore.currentText
     baseVersion.value = clipboardStore.version
   } catch (error) {
-    toast.error('获取剪贴板失败：' + error.message)
+    loadError.value = error?.message || '加载失败'
   }
+}
+
+onMounted(() => {
+  window.addEventListener('beforeunload', onBeforeUnload)
+  // 先注册监听再拉数据，拉取期间的推送也不会漏掉
+  clipboardStore.setupWebSocket()
+  return loadClipboard()
 })
 
 onUnmounted(() => {
@@ -91,7 +120,7 @@ onUnmounted(() => {
 const handleSave = async ({ overwrite = false } = {}) => {
   try {
     isSaving.value = true
-    // 保存的是点击时的内容：请求期间继续输入的字不在其中，不能被标成「已同步」，
+    // 保存的是点击时的内容：请求期间继续输入的字不在其中，不能被标成「已保存」，
     // 否则之后其他终端的更新会把这几个字无提示地覆盖掉
     const saved = textContent.value
     const data = await clipboardStore.updateText(saved, overwrite ? null : baseVersion.value)
@@ -116,10 +145,12 @@ const resolveConflict = async () => {
     await handleSave({ overwrite: true })
   } else if (choice === 'load') {
     try {
-      await clipboardStore.fetchCurrent()
-      textContent.value = clipboardStore.currentText
-      syncedText.value = clipboardStore.currentText
-      baseVersion.value = clipboardStore.version
+      await runSelfUpdate(async () => {
+        await clipboardStore.fetchCurrent()
+        textContent.value = clipboardStore.currentText
+        syncedText.value = clipboardStore.currentText
+        baseVersion.value = clipboardStore.version
+      })
       toast.info('已载入最新内容')
     } catch (error) {
       toast.error('载入失败：' + error.message)
@@ -155,7 +186,7 @@ const toggleHistory = async () => {
     try {
       await clipboardStore.fetchHistory()
     } catch (error) {
-      toast.error('获取历史失败：' + error.message)
+      toast.error('加载失败：' + error.message)
     }
   }
 }
@@ -182,17 +213,28 @@ const historySize = (item) =>
 
 // 恢复为当前文本：直接保存并同步到其他终端
 const handleRestore = async (item) => {
-  const ok = await confirmDialog({
-    title: '恢复这条历史？',
-    message: '它会成为当前文本并同步到所有设备，现在的文本会归档到历史。',
-    confirmText: '恢复',
-  })
+  // 编辑框里没保存的字不在服务器上，也不会进历史：恢复会把它们覆盖掉，要明确告诉用户
+  const ok = await confirmDialog(isDirty.value
+    ? {
+        title: '恢复这条历史并放弃未保存的修改？',
+        message: '编辑框里没保存的修改会丢失，也不会进入历史。这条历史会成为当前文本并同步到所有设备，已保存的当前文本会归档到历史。',
+        confirmText: '恢复并放弃修改',
+        cancelText: '继续编辑',
+        danger: true,
+      }
+    : {
+        title: '恢复这条历史？',
+        message: '它会成为当前文本并同步到所有设备，现在的文本会归档到历史。',
+        confirmText: '恢复',
+      })
   if (!ok) return
   try {
-    const restored = await clipboardStore.restoreHistory(item.id)
-    textContent.value = restored
-    syncedText.value = restored
-    baseVersion.value = clipboardStore.version
+    await runSelfUpdate(async () => {
+      const restored = await clipboardStore.restoreHistory(item.id)
+      textContent.value = restored
+      syncedText.value = restored
+      baseVersion.value = clipboardStore.version
+    })
     toast.success('已恢复为当前文本')
   } catch (error) {
     toast.error('恢复失败：' + error.message)
@@ -202,13 +244,14 @@ const handleRestore = async (item) => {
 const handleDeleteHistory = async (item) => {
   const ok = await confirmDialog({
     title: '删除这条历史记录？',
-    message: '删除后无法找回。',
+    message: '这条历史记录将被永久删除，无法找回。',
     confirmText: '删除',
     danger: true,
   })
   if (!ok) return
   try {
     await clipboardStore.deleteHistory(item.id)
+    toast.success('历史记录已删除')
   } catch (error) {
     toast.error('删除失败：' + error.message)
   }
@@ -235,7 +278,7 @@ const formatDate = formatRelative
           <History />
           {{ showHistory ? '收起历史' : '历史记录' }}
         </button>
-        <button class="btn btn-primary" :disabled="isSaving" @click="handleSave()">
+        <button class="btn btn-primary" :disabled="isSaving || !!loadError" @click="handleSave()">
           <LoaderCircle v-if="isSaving" class="spin" />
           <Save v-else />
           {{ isSaving ? '保存中…' : '保存' }}
@@ -244,7 +287,20 @@ const formatDate = formatRelative
     </div>
 
     <div class="workspace" :class="{ 'with-history': showHistory }">
-      <section class="editor card">
+      <!-- 首次加载失败：不显示空编辑框（会被误当成「剪切板是空的」），保存也禁用 -->
+      <section v-if="loadError" class="editor card">
+        <div class="empty load-error" role="alert">
+          <span class="empty-icon"><TriangleAlert :size="20" /></span>
+          <p class="empty-title">加载失败</p>
+          <p class="empty-text">{{ loadError }}</p>
+          <button class="btn btn-secondary" @click="loadClipboard">
+            <RotateCw />
+            重试
+          </button>
+        </div>
+      </section>
+
+      <section v-else class="editor card">
         <textarea
           v-model="textContent"
           class="editor-input"
@@ -256,11 +312,11 @@ const formatDate = formatRelative
         <div class="editor-footer">
           <span class="sync-state" :class="{ dirty: isDirty }">
             <span class="dot" aria-hidden="true"></span>
-            {{ isDirty ? '有未保存的修改' : '已同步' }}
+            {{ isDirty ? '有未保存的修改' : '已保存' }}
           </span>
           <span class="editor-meta">
             {{ textContent.length.toLocaleString() }} 字符
-            <span class="kbd-hint">· Ctrl + S 保存</span>
+            <span class="kbd-hint">· {{ saveKeyHint }} 保存</span>
           </span>
         </div>
       </section>
@@ -275,7 +331,7 @@ const formatDate = formatRelative
 
         <div v-if="clipboardStore.history.length === 0" class="history-empty">
           <Inbox :size="20" />
-          <span>暂无历史记录</span>
+          <span>还没有历史记录</span>
         </div>
 
         <ul v-else class="history-list">
@@ -319,7 +375,7 @@ const formatDate = formatRelative
   background: var(--color-bg-muted);
 }
 
-/* 整页正好占满窗口高度：编辑框填满页头以下的空间，底部状态栏（已同步 / 字符数）始终在窗口内。
+/* 整页正好占满窗口高度：编辑框填满页头以下的空间，底部状态栏（已保存 / 字符数）始终在窗口内。
    窗口矮于 min-height 时不再压缩，改为整页滚动；dvh 不含手机浏览器地址栏，旧浏览器回落到 vh */
 .clipboard-page {
   display: flex;
@@ -372,6 +428,11 @@ const formatDate = formatRelative
 
 .editor-input:focus {
   outline: none;
+}
+
+.load-error {
+  flex: 1;
+  justify-content: center;
 }
 
 .editor-input::placeholder {

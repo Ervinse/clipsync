@@ -21,6 +21,46 @@ def _ws(client, token):
 
 # ---------- 文本：没有变化的保存不加版本号、不广播 ----------
 
+def test_saving_unchanged_clipboard_keeps_version_and_does_not_broadcast(client, make_user):
+    """云剪切板保存相同内容：不加版本号、不归档、不广播，别处带当前版本号保存不会被误报冲突"""
+    user = make_user()
+    first = client.put("/api/clipboard", json={"content": "same"}, headers=user.headers).json()
+    assert first["version"] == 1
+    with _ws(client, user.token) as ws:
+        for body in ({"content": "same"}, {"content": "same", "base_version": 1}):
+            resp = client.put("/api/clipboard", json=body, headers=user.headers)
+            assert resp.status_code == 200 and resp.json()["version"] == 1 and resp.json()["content"] == "same"
+            assert resp.json()["updated_at"] == first["updated_at"]
+        changed = client.put("/api/clipboard", json={"content": "other", "base_version": 1}, headers=user.headers)
+        assert changed.json()["version"] == 2
+        # 前面两次没有广播：第一条收到的就是真正修改的那次
+        assert ws.receive_json()["type"] == "clipboard_updated"
+    history = client.get("/api/clipboard/history", headers=user.headers).json()["items"]
+    assert [h["content"] for h in history] == ["same"]
+
+
+def test_unchanged_clipboard_save_still_checks_version(client, make_user):
+    user = make_user()
+    client.put("/api/clipboard", json={"content": "a"}, headers=user.headers)
+    client.put("/api/clipboard", json={"content": "b"}, headers=user.headers)
+    stale = client.put("/api/clipboard", json={"content": "b", "base_version": 1}, headers=user.headers)
+    assert stale.status_code == 409
+
+
+def test_restore_of_same_content_still_consumes_the_history_entry(client, make_user):
+    """恢复历史时内容与当前相同：历史条目照常被消耗，不能因为「内容没变」而留着"""
+    user = make_user()
+    client.put("/api/clipboard", json={"content": "a"}, headers=user.headers)
+    client.put("/api/clipboard", json={"content": "b"}, headers=user.headers)
+    client.put("/api/clipboard", json={"content": "a"}, headers=user.headers)
+    [newest, oldest] = client.get("/api/clipboard/history", headers=user.headers).json()["items"]
+    assert (newest["content"], oldest["content"]) == ("b", "a")
+    resp = client.post(f"/api/clipboard/history/{oldest['id']}/restore", headers=user.headers)
+    assert resp.status_code == 200 and resp.json()["content"] == "a"
+    remaining = client.get("/api/clipboard/history", headers=user.headers).json()["items"]
+    assert [h["content"] for h in remaining] == ["b"]
+
+
 def test_saving_unchanged_text_keeps_version_and_does_not_broadcast(client, make_user):
     user = make_user()
     text = new_text(client, user, "正文", title="标题")
