@@ -48,7 +48,8 @@ $DeployFiles = @(
 )
 $Apps = @("clipsync-backend", "clipsync-frontend")
 # SemVer：主.次.修订，可带预发布后缀（如 -alpha.1）
-$VersionPattern = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+$PreId = '(0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)'
+$VersionPattern = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-' + $PreId + '(\.' + $PreId + ')*)?$'
 # Windows 10 1803 起自带的 bsdtar，不依赖 Git Bash 等第三方 tar
 $Tar = Join-Path $env:SystemRoot "System32\tar.exe"
 $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
@@ -119,6 +120,7 @@ function Compress-Gzip {
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Push-Location $ProjectRoot
 $Work = Join-Path ([System.IO.Path]::GetTempPath()) ("clipsync-publish-" + [guid]::NewGuid().ToString("N"))
+$Stage = $null
 
 try {
     Write-Step "检查要发布的版本"
@@ -138,6 +140,10 @@ try {
     $FullCommit = Get-NativeValue git @("rev-parse", "--verify", "$GitTag^{commit}")
     if (-not $FullCommit) {
         throw "找不到 Git 标签 $GitTag：先在要发布的提交上建标签（git tag -a $GitTag <提交号> -m `"说明`"），git tag -l 可列出已有标签"
+    }
+    # 轻量标签也能解析出提交，但规范要求附注标签（带说明和打标签的人）
+    if ((Get-NativeValue git @("cat-file", "-t", "refs/tags/$GitTag")) -ne "tag") {
+        throw "Git 标签 $GitTag 是轻量标签：本项目的版本标签必须是附注标签（git tag -a）；已有标签不要移动，先问清楚再处理"
     }
     $Commit = $FullCommit.Substring(0, 12)
     $Subject = Get-NativeValue git @("log", "-1", "--format=%s", $FullCommit)
@@ -217,7 +223,10 @@ try {
         $images += @("${app}:$Version", "${app}:$Commit")
     }
     $images += $Mysql
-    $Stage = Join-Path $Work "out"
+    # 产物先放在 release\ 下的临时目录，全部成功后在同一目录内改名：不跨盘移动（PowerShell 5.1 跨盘移动目录会失败），
+    # 也不会在中途失败时丢掉已有的发布文件
+    New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
+    $Stage = Join-Path $ReleaseDir (".partial-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $Stage | Out-Null
 
     Write-Step "导出镜像并压缩（需要几分钟）"
@@ -262,9 +271,15 @@ try {
     [System.IO.File]::WriteAllText($envPath, $envText, $Utf8NoBom)
     # VERSION：在 build-release.ps1 的字段上增加 version= 与 published=；
     # latest=no 表示这个发布包里的镜像不带 latest 标签，built= 取镜像的构建时间
-    $created = Get-NativeValue docker @("image", "inspect", "--format", "{{.Created}}", "clipsync-backend:$Commit")
-    # Docker 的时间带 9 位小数秒，.NET 最多解析 7 位，去掉小数部分再解析
-    $built = ([DateTimeOffset]::Parse(($created -replace '\.\d+', ''))).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz")
+    # built= 与测试包的 VERSION、镜像里的 BUILD_INFO 是同一个时间：build-release.ps1 把它写进了镜像的 created 标签。
+    # 更早构建的镜像没有这个标签，退回用镜像创建时间换算成同样的 UTC 格式
+    $backendLabels = (Get-NativeValue docker @("image", "inspect", "--format", "{{json .Config.Labels}}", "clipsync-backend:$Commit")) | ConvertFrom-Json
+    $built = $backendLabels.'org.opencontainers.image.created'
+    if (-not $built) {
+        $created = Get-NativeValue docker @("image", "inspect", "--format", "{{.Created}}", "clipsync-backend:$Commit")
+        # Docker 的时间带 9 位小数秒，.NET 最多解析 7 位，去掉小数部分再解析
+        $built = ([DateTimeOffset]::Parse(($created -replace '\.\d+', ''))).UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [System.Globalization.CultureInfo]::InvariantCulture)
+    }
     $versionText = @(
         "version=$Version",
         "commit=$Commit",
@@ -287,11 +302,11 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $Stage "SHA256SUMS"), (($sums -join "`n") + "`n"), $Utf8NoBom)
 
     # 全部生成成功后才替换 release\<版本号>\，中途失败不会留下不完整的发布文件
-    New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
     if (Test-Path $OutDir) {
         Remove-Item -Recurse -Force $OutDir
     }
-    Move-Item -LiteralPath $Stage -Destination $OutDir
+    Rename-Item -LiteralPath $Stage -NewName $Version
+    $Stage = $null
 
     Write-Host ""
     Write-Host "完成：版本 $Version，提交 $Commit（没有重新构建镜像）" -ForegroundColor Green
@@ -317,4 +332,5 @@ try {
 } finally {
     Pop-Location
     Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
+    if ($Stage) { Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue }
 }

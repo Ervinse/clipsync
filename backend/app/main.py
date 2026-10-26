@@ -81,6 +81,9 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
+    if request.url.path.startswith("/api"):
+        # 接口响应不是页面：不允许加载任何资源、不允许被嵌入。/docs 等开发用的页面需要内联脚本，不加
+        response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
     if settings.HSTS_ENABLED:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response

@@ -29,6 +29,8 @@ function Test-Docker {
 if (-not (Test-Path $Python)) { Fail "找不到 backend\.venv，请先按 README 第 16 节创建后端虚拟环境" }
 if (-not (Test-Path (Join-Path $Backend '.env'))) { Fail "找不到 backend\.env，请先按 README 第 16 节创建" }
 if (-not (Test-Path (Join-Path $Frontend 'node_modules'))) { Fail "找不到 frontend\node_modules，请先在 frontend 目录运行 npm install" }
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Fail "找不到 node 命令，请先安装 Node.js（见 README 第 16 节）" }
+if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) { Fail "找不到 npm 命令，请先安装 Node.js（见 README 第 16 节）" }
 
 # 1. Docker
 Write-Host '[1/5] 检查 Docker ...'
@@ -48,7 +50,11 @@ Write-Host '      Docker 已就绪'
 Write-Host "[2/5] 启动数据库容器 $DbContainer ..."
 $state = docker inspect -f '{{.State.Status}}' $DbContainer 2>$null
 if ($LASTEXITCODE -ne 0) { Fail "找不到容器 $DbContainer，请先按 README 第 16 节「创建数据库」创建" }
-if ($state -ne 'running') { docker start $DbContainer | Out-Null }
+if ($state -ne 'running') {
+    # 容器起不来（如宿主机端口被占用）时立刻报出 Docker 给的原因，不要等 60 秒后只说「数据库没有就绪」
+    $startOutput = (docker start $DbContainer 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { Fail "数据库容器 $DbContainer 启动失败：$startOutput" }
+}
 # mysqladmin ping 在服务可连接时返回 0（无需密码），等它就绪再迁移
 $deadline = (Get-Date).AddSeconds(60)
 while ($true) {
@@ -76,7 +82,7 @@ if (Test-Port 8000) {
 } else {
     Start-Process powershell -WorkingDirectory $Backend -ArgumentList @(
         '-NoExit', '-ExecutionPolicy', 'Bypass', '-Command',
-        "`$Host.UI.RawUI.WindowTitle = 'ClipSync backend'; & '.\.venv\Scripts\python.exe' -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000"
+        "`$Host.UI.RawUI.WindowTitle = 'ClipSync backend'; & '.\.venv\Scripts\python.exe' -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --ws-max-size 4096"
     )
 }
 

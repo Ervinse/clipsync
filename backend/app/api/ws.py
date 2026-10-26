@@ -30,7 +30,9 @@ router = APIRouter()
 
 WS_PROTOCOL = "clipsync.v1"
 _TOKEN_PREFIX = "bearer."
-_MAX_MESSAGE_BYTES = 1024  # 客户端只会发心跳，超长消息直接断开
+# 客户端只会发心跳，超过这个字符数的消息直接断开。单帧的字节数另由 uvicorn 的 --ws-max-size 4096 限制，
+# 超大的帧在收完之前就被拒绝，这里只处理已经收到的消息
+_MAX_MESSAGE_CHARS = 1024
 
 
 @dataclass
@@ -114,7 +116,7 @@ async def websocket_endpoint(websocket: WebSocket):
             return
         while True:
             data = await websocket.receive_text()
-            if len(data) > _MAX_MESSAGE_BYTES:
+            if len(data) > _MAX_MESSAGE_CHARS:
                 await websocket.close(code=status.WS_1009_MESSAGE_TOO_BIG)
                 break
             try:

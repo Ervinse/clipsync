@@ -96,9 +96,10 @@ services:
     volumes:
       - storage_data:/app/storage
     # 不对宿主机暴露 8000，只经前端容器的 Nginx 访问
-    # 单 worker（WebSocket 与限流依赖进程内存）；只信任本 compose 子网发来的 X-Forwarded-For。
+    # 单 worker（WebSocket 与限流依赖进程内存）；只信任本 compose 子网发来的 X-Forwarded-For；
+    # WebSocket 单帧最大 4096 字节（客户端只发心跳，超大的帧在服务端缓冲之前就被拒绝）。
     # 用数组写法：YAML 折叠写法（>）的引号与换行处理容易出错，可能让代理头参数不生效
-    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips 172.28.0.0/16"]
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips 172.28.0.0/16 --ws-max-size 4096"]
 
   # 前端服务（Nginx：静态页面 + 反代 /api、/ws）
   frontend:
@@ -109,6 +110,10 @@ services:
     networks: [clipsync]
     logging: *default-logging
     security_opt: ["no-new-privileges:true"]
+    # 去掉全部 Linux capability，只加回 Nginx 启动需要的：绑定 80 / 443（NET_BIND_SERVICE）、
+    # 把临时目录交给 worker 用户（CHOWN）、worker 降权运行（SETUID、SETGID）
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, NET_BIND_SERVICE]
     depends_on:
       - backend
     ports:

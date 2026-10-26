@@ -105,7 +105,8 @@ src/
 └── main.js         # 入口文件（引入 Inter 字体、全局样式、主题与玻璃质感；先恢复登录状态再挂载路由，监听跨标签页 token 变化；
                     #   等后端确认登录状态期间，index.html 的「加载中…」占位显示在 #app 里，挂载时被替换）
 public/
-└── favicon.svg     # 网站图标（index.html 引用）
+├── favicon.svg     # 网站图标（index.html 引用）
+└── theme-init.js   # 渲染前设好 data-theme（index.html 引用；外部文件是因为 Nginx 的 CSP 不允许内联脚本）
 ```
 
 ## 功能模块
@@ -280,7 +281,7 @@ server: {
   - 两套颜色变量都在 `style.css`：浅色写在 `:root`，深色写在 `:root[data-theme='dark']`，只覆盖颜色与阴影；新增颜色变量时两套都要写
   - 主题开关（`ThemeToggle.vue`）放在侧栏底部、登录 / 注册页右上角、快速访问页顶栏，三档：跟随系统 / 浅色 / 深色，默认跟随系统
   - 选择存在本浏览器的 `localStorage`（键 `theme`，跟随系统时不存），不随账号同步；其他标签页切换后本页同步，跟随系统时系统深浅色变化立即生效（`utils/theme.js`）
-  - `index.html` 里有一段同样规则的内联脚本，在页面渲染前设好 `data-theme`，深色用户刷新时不会先闪一下白底
+  - `public/theme-init.js`（`index.html` 引用）里有一段同样规则的脚本，在页面渲染前设好 `data-theme`，深色用户刷新时不会先闪一下白底；它是外部文件而不是内联脚本，因为 Nginx 的内容安全策略只允许同源脚本
   - 切换主题时颜色渐变约 0.35 秒：`utils/theme.js` 在切换那一刻给 `<html>` 临时加 `theme-switching`，`style.css` 据此让背景、文字、边框、图标、阴影的颜色过渡，结束后去掉；首次进入页面不渐变，系统开了「减少动态效果」时直接切换
   - 主按钮用近黑色，深色主题下用近白色（`--color-primary`）；强调色靛蓝（`--color-accent`）只用于链接、焦点框、进度条、开关
   - 状态色：成功 / 警示 / 危险各有正文色与浅底色（`--color-success`、`--color-success-subtle` 等）

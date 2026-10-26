@@ -416,7 +416,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | `role_updated` | 超管修改该用户角色 | 布局重取 `/auth/me`，侧栏的管理后台入口随之出现或消失；被取消管理员时正在后台页则转到云剪切板 |
 
 - 页面级监听在挂载时注册、卸载时清理；各页面同时订阅 `open`，连接（重新）建立后补拉一次，断线期间的变更不会漏掉。
-- 心跳：客户端每 30 秒发 `{"type":"ping"}`，服务端回 `{"type":"pong"}`；单条消息超过 1024 个字符时服务端以 1009 断开。心跳只在连接打开时发送，离线时不排队。客户端发出 ping 后 10 秒内没收到任何消息，就认为连接已半断并重建。
+- 心跳：客户端每 30 秒发 `{"type":"ping"}`，服务端回 `{"type":"pong"}`；单条消息超过 1024 个字符时服务端以 1009 断开；uvicorn 以 `--ws-max-size 4096` 限制单帧大小，更大的帧在服务端缓冲之前就被拒绝。心跳只在连接打开时发送，离线时不排队。客户端发出 ping 后 10 秒内没收到任何消息，就认为连接已半断并重建。
 - 前端重连：指数退避（1s、2s、4s…，最长 30s），不限次数；网络恢复（`online`）或页面回到前台时立即重试（已断开的直接重连；看起来仍连着的先探测一次，没有回应就重建）。收到 1008 时停止重连并登出。连接从未打开就关闭（多为握手被拒的 1006）时，前端调一次 `/api/auth/me` 确认会话：401 / 禁用 403 则登出、不再重连，其他情况继续退避重连。登出时主动断开，不会自动重连。
 - 重连只使用本标签页内存中的 token，不读 localStorage；其他标签页换账号改写 localStorage 时，本页整页重载。
 - 快速访问页用单独的 WebSocket 实例（`stores/quick.js` 的 `quickWs`），重连规则相同；收到 1008 时提示访问码已失效。
@@ -599,7 +599,7 @@ const ws = new WebSocket(`${proto}//${location.host}/ws`, ['clipsync.v1', `beare
 | 路径穿越 | 磁盘名用 UUID，绝不用用户文件名拼路径。 |
 | 访问码 | 用户自定、不校验复杂度；按用户名输错锁定 + 按 IP 限流 + 可设过期 + 可随时清除且立即生效；快速访问凭证与登录凭证互不通用；前端提示用户妥善保管（第 8 节）。 |
 | 上传限制 | Nginx `client_max_body_size`；后端校验单文件上限、单分片字节数、并发会话数与配额。 |
-| 响应头 | 下载一律以 `application/octet-stream` + `attachment` 下发（不按文件扩展名推断类型，上传的 `.html`、`.svg` 不会被浏览器当页面解析），`Content-Disposition` 按 RFC 6266 编码，防头注入；全局下发 `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`（接口由后端下发，静态页由 Nginx 下发）；`HSTS_ENABLED=true` 时后端另下发 `Strict-Transport-Security: max-age=31536000; includeSubDomains`；Nginx `server_tokens off` 不暴露版本号。 |
+| 响应头 | 下载一律以 `application/octet-stream` + `attachment` 下发（不按文件扩展名推断类型，上传的 `.html`、`.svg` 不会被浏览器当页面解析），`Content-Disposition` 按 RFC 6266 编码，防头注入；全局下发 `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、`Content-Security-Policy`（接口由后端下发 `default-src 'none'`，静态页由 Nginx 下发同源策略）；`HSTS_ENABLED=true` 时后端另下发 `Strict-Transport-Security: max-age=31536000; includeSubDomains`；Nginx `server_tokens off` 不暴露版本号。 |
 | WebSocket | token 走子协议头不进 URL；禁用/删除用户时主动断开其连接；快速访问连接只收相关信号，访问码失效即断开。 |
 | 错误信息 | 不把底层异常细节（路径等）返回客户端。 |
 | 邀请码 | 一次性、可过期、仅管理员生成；12 位去易混字符（约 7.9×10^17 种组合），注册接口限流。 |
@@ -616,6 +616,7 @@ CodeProject/
     ├── TODO.md                   # 尚未完成的事项
     ├── CLAUDE.md                 # 编码硬约束
     ├── .gitignore
+    ├── .gitattributes            # 换行符规则：sh / conf / yml / Dockerfile 固定 LF，bat 固定 CRLF
     ├── dev-start.bat             # 双击启动开发环境（调用 dev-start.ps1）
     ├── dev-start.ps1             # 启动开发库容器 → 升级表结构 → 后端、前端各开一个窗口 → 打开浏览器
     ├── backend/
@@ -685,7 +686,7 @@ CodeProject/
     │   │       ├── AccessCodes.vue   # 访问码总览
     │   │       ├── Admin.vue         # 管理后台（5 个 tab）
     │   │       └── QuickAccess.vue   # 凭「用户名@访问码」免登录进入 /quick
-    │   ├── public/               # favicon.svg
+    │   ├── public/               # favicon.svg、theme-init.js（渲染前设好主题，外部文件以便 CSP 禁用内联脚本）
     │   ├── index.html
     │   ├── README.md             # 前端说明
     │   ├── package.json / package-lock.json
@@ -723,11 +724,11 @@ CodeProject/
 | 服务 | 镜像 | 说明 |
 |------|------|------|
 | db | `mysql:8.4.x`（版本号固定在 compose 中） | 数据卷 `clipsync_mysql_data`；端口只绑定宿主机 `127.0.0.1`（宿主机端口 `DB_HOST_PORT`，默认 3306），供宿主机与 SSH 隧道查询 |
-| backend | `clipsync-backend`（`Dockerfile.backend`） | 启动时先 `alembic upgrade head`，再以**单 worker** 运行 uvicorn；非 root 用户；数据卷 `clipsync_storage_data` → `/app/storage`；不对宿主机暴露端口 |
-| frontend | `clipsync-frontend`（`Dockerfile.frontend`） | Nginx 托管 Vue 构建产物，反代 `/api`、`/ws` 到 backend；宿主机端口 `HTTP_PORT`（默认 80），HTTPS 时另映射 443 |
+| backend | `clipsync-backend`（`Dockerfile.backend`） | 启动时先 `alembic upgrade head`，再以**单 worker** 运行 uvicorn（WebSocket 单帧上限 4096 字节）；非 root 用户、去掉全部 capability；数据卷 `clipsync_storage_data` → `/app/storage`；不对宿主机暴露端口 |
+| frontend | `clipsync-frontend`（`Dockerfile.frontend`） | Nginx 托管 Vue 构建产物，反代 `/api`、`/ws` 到 backend；宿主机端口 `HTTP_PORT`（默认 80），HTTPS 时另映射 443；去掉全部 Linux capability，只保留 Nginx 启动需要的 `CHOWN`、`SETUID`、`SETGID`、`NET_BIND_SERVICE` |
 
 - **必须单 worker**：WebSocket 连接表与限流计数都在进程内存中，多进程会导致实时同步与限流失效。
-- **真实客户端 IP**：compose 使用固定子网 `172.28.0.0/16`，uvicorn 只信任这个网段发来的 `X-Forwarded-For`；Nginx 用 `$remote_addr` 覆盖该头，客户端自带的值一律丢弃。
+- **真实客户端 IP**：compose 使用固定子网 `172.28.0.0/16`，uvicorn 只信任这个网段发来的 `X-Forwarded-For`（`Dockerfile.backend` 的默认 `CMD` 与 compose 的 `command` 参数一致，单独 `docker run` 镜像时也只信任这个网段）；Nginx 用 `$remote_addr` 覆盖该头，客户端自带的值一律丢弃。
 - **镜像来源**：默认在开发机用 `build-release.ps1` 构建并打包，服务器 `docker load` 导入后启动，不需要联网下载；网络通畅的服务器也可叠加 `docker-compose.build.yml` 从源码构建。backend、frontend 设 `pull_policy: never`，不会从镜像仓库拉取同名镜像。
 - **版本标签**：镜像带 git 提交号标签；只有 master 上的提交额外标 `latest`。测试通过的构建由 `publish-release.ps1` 追加版本号标签（如 `1.0.0-alpha.1`）生成发布包，镜像不重新构建。服务器按 `.env` 的 `CLIPSYNC_TAG` 选用镜像。
 - **版本信息**：`build-release.ps1` 把提交号、分支、构建时间写成后端镜像里的 `/app/BUILD_INFO`；compose 把 `CLIPSYNC_TAG` 作为 `APP_VERSION` 传给 backend。后台「系统信息」显示这两部分，后端启动时据此登记部署记录（第 5.10 节）。服务器源码构建（`docker-compose.build.yml`）不生成 `BUILD_INFO`，提交号、分支、构建时间显示为空。
@@ -740,9 +741,10 @@ CodeProject/
 - `client_max_body_size` 略大于单个分片大小（`CHUNK_SIZE` 默认 5MB，Nginx 限 10MB），同时大于剪贴板文本上限转义后的最大体积（上限 4MB，云剪切板与文本栏目相同；请求体含 JSON 外壳，换行、引号等转义后最多翻倍，需要留余量）。
 - `/api` 反代加超时设置适配上传；`Host` 用 `$http_host`（保留端口）。
 - 前端页面（含快速访问页 `/quick`）是 SPA 路由，由 `try_files` 回落到 `index.html`。
-- 静态页面由 Nginx 加 `X-Frame-Options`、`X-Content-Type-Options`、`Referrer-Policy`；`index.html` 不缓存，带哈希的 `/assets/` 长期缓存；`/api` 的安全头由后端下发。
+- 静态页面由 Nginx 加 `X-Frame-Options`、`X-Content-Type-Options`、`Referrer-Policy` 和 `Content-Security-Policy`（页面、`index.html`、`/assets/`、ACME 验证路径各自的 `add_header` 都重复写，子 location 不继承）；`index.html` 不缓存，带哈希的 `/assets/` 长期缓存；`/api` 的安全头由后端下发。
+- 内容安全策略（`nginx-common.conf` 的 `$csp`）：脚本、字体、接口请求只允许同源，不允许内联脚本（所以主题脚本放在 `public/theme-init.js`）、插件和被别的站点嵌入；`connect-src` 另写 `ws:` `wss:` 以兼容 WebSocket。样式允许内联（Vue 的 `:style` 绑定需要）。
 - `/.well-known/acme-challenge/` 指向挂载的 `acme/` 目录，供 certbot 以 webroot 方式申请与续期证书。
-- HTTPS 配置额外含证书路径、80→443 跳转。**HSTS 只由后端按 `HSTS_ENABLED` 下发**，Nginx 不配置。
+- HTTPS 配置额外含证书路径、80→443 跳转，以及 TLS 1.2 / 1.3 与只含前向保密（ECDHE + AEAD）套件的 `ssl_ciphers`。**HSTS 只由后端按 `HSTS_ENABLED` 下发**，Nginx 不配置。
 
 ---
 
@@ -864,7 +866,7 @@ pytest tests/test_auth.py::test_name    # 单个
 | `STORAGE_DIR` | 文件存储根目录；相对路径按启动后端时的当前目录解析（开发环境在 `backend/` 下启动） | ./storage |
 | `DEFAULT_QUOTA_BYTES` | 系统设置未配置时的新用户默认配额 | 104857600（100MB） |
 | `MAX_FILE_BYTES` | 单文件上限 | 524288000（500MB） |
-| `CHUNK_SIZE` | 单分片上限（客户端请求值会被裁剪到此值） | 5242880（5MB） |
+| `CHUNK_SIZE` | 单分片上限（客户端请求值会被裁剪到此值）；必须在 1 到 8388608（8MB）之间，超出时后端拒绝启动（分片加请求头要小于 Nginx 的 10MB） | 5242880（5MB） |
 | `MAX_UPLOAD_SESSIONS_PER_USER` | 单用户同时进行的上传会话上限 | 5 |
 | `HISTORY_KEEP` | 每用户保留的云剪切板历史条数 | 50 |
 | `UPLOAD_SESSION_TTL_HOURS` | 未完成上传会话的过期时间 | 24 |

@@ -1,6 +1,6 @@
 // 主题：跟随系统 / 浅色 / 深色。选择只存在本浏览器的 localStorage（键 theme，跟随系统时不存），不随账号同步。
 // 实际生效的是 <html data-theme="light|dark">，style.css 按它切换颜色变量。
-// index.html 里有一段同样规则的内联脚本，在页面渲染前先设好 data-theme，深色用户刷新时不会先闪一下白底。
+// public/theme-init.js 里有一段同样规则的脚本（index.html 引用），在页面渲染前先设好 data-theme，深色用户刷新时不会先闪一下白底。
 import { ref } from 'vue'
 
 const STORAGE_KEY = 'theme'
