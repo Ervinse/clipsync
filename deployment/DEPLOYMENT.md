@@ -21,7 +21,7 @@ ClipSync 只支持 Docker Compose 部署：MySQL、后端、前端（Nginx）三
 - backend 每次启动先执行 `alembic upgrade head` 升级表结构，再以**单 worker** 运行 uvicorn。WebSocket 连接表与限流计数都在进程内存中，不能多进程、多实例运行。
 - 数据库端口只绑定宿主机 `127.0.0.1`，外部连不进来，只供宿主机本机和 SSH 隧道查询（第 12 节）。
 - backend、frontend 设了 `pull_policy: never`：镜像只来自 `docker load` 或方式 B 的本地构建，找不到时直接报错，不会去镜像仓库拉同名镜像。
-- 每个容器的日志最多保留 3 个 10MB 的文件。backend 以非 root 用户运行，去掉了全部 Linux capability。
+- 每个容器的日志最多保留 3 个 10MB 的文件。backend 以非 root 用户运行并去掉全部 Linux capability；frontend 去掉全部 capability，只保留 Nginx 启动需要的 `CHOWN`、`SETUID`、`SETGID`、`NET_BIND_SERVICE`。
 
 部署目录里的文件：
 
@@ -35,7 +35,7 @@ ClipSync 只支持 Docker Compose 部署：MySQL、后端、前端（Nginx）三
 | `backup.sh`、`health_check.sh`、`cert.sh` | 备份、健康检查、HTTPS 证书申请与续期 |
 | `clipsync.cron`、`clipsync.logrotate` | 宿主机定时任务与其日志轮转的模板 |
 | `DEPLOYMENT.md` | 本手册 |
-| `VERSION` | 方式 A 的部署包才有：`commit=`、`branch=`、`latest=`（镜像是否带 `latest` 标签）、`built=`；正式版本的发布包另有 `version=`、`published=` |
+| `VERSION` | 方式 A 的部署包才有：`commit=`、`branch=`、`latest=`（镜像是否带 `latest` 标签）、`built=`（构建时间，UTC，与后端镜像里的 `BUILD_INFO` 相同）；正式版本的发布包另有 `version=`、`published=` |
 | `acme/`、`letsencrypt/` | 申请 HTTPS 证书后自动生成：证书验证文件、HTTPS 证书。部署包里没有 |
 
 除 `.env`、`acme/`、`letsencrypt/` 外，这些文件都在部署包里，每次更新部署包时会被覆盖。需要调整的配置都放在 `.env` 里，不要直接修改其他文件。
@@ -244,7 +244,7 @@ vi .env          # 至少修改 CORS_ORIGINS
 | `HSTS_ENABLED` | HTTPS 生效后设为 `true`，HTTP 阶段必须为 `false` | `false` |
 | `DEFAULT_QUOTA_BYTES` | 新用户默认配额（管理后台的设置优先） | 100MB |
 | `MAX_FILE_BYTES` | 单文件上限 | 500MB |
-| `CHUNK_SIZE` | 单个上传分片上限，不能超过 Nginx 的 10MB | 5MB |
+| `CHUNK_SIZE` | 单个上传分片上限，不能超过 8MB（分片加请求头要小于 Nginx 的 10MB），超过时 backend 拒绝启动 | 5MB |
 | `MAX_UPLOAD_SESSIONS_PER_USER` / `UPLOAD_SESSION_TTL_HOURS` | 每用户同时上传数、未完成上传的保留小时数 | `5` / `24` |
 | `HISTORY_KEEP` | 每个用户保留的云剪切板历史条数 | `50` |
 
@@ -563,6 +563,7 @@ docker image prune                        # 删除没有标签的旧镜像层（
 | `pull access denied for clipsync-backend`、`No such image` | 镜像没有导入，或 `CLIPSYNC_TAG` 指向不存在的标签。`docker images clipsync-backend` 查看已有的标签，重新 `docker load` |
 | 部署了测试分支，页面却还是旧版本 | 非 master 的镜像没有 `latest` 标签，要把 `CLIPSYNC_TAG` 改成提交号 |
 | 导入了正式版本的发布包，页面却还是旧版本，或提示找不到镜像 | 发布包里的镜像没有 `latest` 标签，要把 `.env` 的 `CLIPSYNC_TAG` 改成版本号 |
+| backend 反复重启，日志提示 `CHUNK_SIZE 必须在 1 到 8388608` | `.env` 里的 `CHUNK_SIZE` 超过 8MB 或不是正整数，改回默认值 5242880 |
 | backend 反复重启，日志提示 `JWT_SECRET 过弱` | `JWT_SECRET` 少于 32 位、字符过于单一（如整串同一个字符）或含示例占位文字，用 `openssl rand -hex 32` 重新生成 |
 | backend 日志 `Access denied for user` | `.env` 的数据库密码与数据库里实际的账号不一致，常见于数据卷已存在后又修改了密码（第 6.2 节） |
 | db 一直不是 healthy | `docker compose logs db`。磁盘满、数据目录损坏、内存不足都会导致 MySQL 启动失败 |
@@ -572,7 +573,7 @@ docker image prune                        # 删除没有标签的旧镜像层（
 | frontend 反复重启，日志 `cannot load certificate` | 设置了 `COMPOSE_FILE` 启用 HTTPS，但还没有申请证书。先注释掉 `COMPOSE_FILE` 回到 HTTP，申请成功后再启用 |
 | `cert.sh issue` 失败 | 域名没有解析到本服务器、80 端口从公网访问不到，或者 frontend 没有运行。检查 `curl -I http://<域名>/` |
 | 实时同步不工作，页面提示连接断开 | 检查 `nginx-common.conf` 是否为部署包里的版本；修改过 Nginx 配置后要 `docker compose up -d --force-recreate frontend` |
-| 上传文件失败，提示 413 | 单个分片超过 Nginx 的 10MB 上限，检查 `CHUNK_SIZE` 是否被改大 |
+| 上传文件失败，提示 413 | 单个分片超过 Nginx 的 10MB 上限，检查 `CHUNK_SIZE` 是否被改大（超过 8MB 时 backend 会拒绝启动） |
 | 开启了 SELinux 的系统上，frontend 日志里读取 Nginx 配置报 `Permission denied` | Docker 启用了 SELinux 支持（`/etc/docker/daemon.json` 里 `"selinux-enabled": true`）时，挂载的文件需要容器可读的标签：在部署目录执行 `chcon -Rt container_file_t .`，再 `docker compose up -d --force-recreate frontend` |
 | 端口 80 或 3306 被占用 | 修改 `.env` 的 `HTTP_PORT`（同时修改 `CORS_ORIGINS`，加上端口号）或 `DB_HOST_PORT` |
 | `backup.sh` 报 `service "db" is not running` | 容器没有运行，`docker compose up -d` 后重试 |

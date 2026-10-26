@@ -6,6 +6,8 @@ from pydantic_settings import BaseSettings
 
 # 示例 / 占位密钥中常见的片段，命中即视为未替换
 _PLACEHOLDER_MARKERS = ("change_this", "changeme", "change-me", "your_", "secret_key_here", "example")
+# 单个上传分片的上限：Nginx 的 client_max_body_size 是 10MB，留出 multipart 头和余量
+MAX_CHUNK_SIZE = 8 * 1024 * 1024
 # 密钥里至少要有这么多种不同字符；`openssl rand -hex 32` 生成的串几乎必然远超此值，32 个同一字符之类的低熵串过不了
 _MIN_DISTINCT_CHARS = 10
 
@@ -33,7 +35,7 @@ class Settings(BaseSettings):
     STORAGE_DIR: str = "./storage"
     DEFAULT_QUOTA_BYTES: int = 104857600  # 100MB
     MAX_FILE_BYTES: int = 524288000  # 500MB
-    CHUNK_SIZE: int = 5242880  # 5MB，同时是单分片允许的最大字节数
+    CHUNK_SIZE: int = 5242880  # 5MB，同时是单分片允许的最大字节数；不能超过 MAX_CHUNK_SIZE（8MB）
     MAX_UPLOAD_SESSIONS_PER_USER: int = 5  # 单用户同时进行中的上传会话上限
 
     # 其他
@@ -52,6 +54,17 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "JWT_SECRET 过弱或仍是示例值，请用 `openssl rand -hex 32` 生成随机串后写入 .env"
+            )
+        return value
+
+    @field_validator("CHUNK_SIZE")
+    @classmethod
+    def _check_chunk_size(cls, value: int) -> int:
+        # 一个分片就是一个请求体，还要加上 multipart 的头；超过 Nginx 的 client_max_body_size（10MB）会在 Nginx 被 413 拒绝
+        if not 0 < value <= MAX_CHUNK_SIZE:
+            raise ValueError(
+                f"CHUNK_SIZE 必须在 1 到 {MAX_CHUNK_SIZE}（{MAX_CHUNK_SIZE // (1024 * 1024)}MB）字节之间："
+                "分片加上请求头不能超过 Nginx 的 client_max_body_size（10MB）"
             )
         return value
 

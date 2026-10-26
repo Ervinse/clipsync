@@ -126,6 +126,7 @@ function Compress-Gzip {
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Push-Location $ProjectRoot
 $Work = Join-Path ([System.IO.Path]::GetTempPath()) ("clipsync-release-" + [guid]::NewGuid().ToString("N"))
+$PartialDir = $null
 
 try {
     Write-Step "检查要打包的版本"
@@ -149,6 +150,9 @@ try {
     }
     $MainCommit = Get-GitValue @("rev-parse", "--verify", "$MainBranch^{commit}")
     $IsLatest = ($MainCommit -eq $FullCommit)
+    # -Ref 传的是提交号或标签、而它正是 master 的最新提交时，分支记为 master（与 publish-release.ps1 的发布包一致），
+    # 后台「系统信息」显示的分支才不会是一串提交号
+    if ($Ref -ne "HEAD" -and $IsLatest) { $Branch = $MainBranch }
     $dirty = ($Ref -eq "HEAD") -and [bool](Invoke-Native git @("status", "--porcelain"))
 
     Write-Host "  分支：  $Branch"
@@ -218,8 +222,10 @@ try {
         $buildArgs = @(
             "build", "--platform", $Platform,
             "-f", (Join-Path $DockerDir $app.Dockerfile),
-            # health_check.sh 读这个标签，显示服务器上正在运行的是哪个提交
+            # health_check.sh 读 revision 标签，显示服务器上正在运行的是哪个提交；
+            # created 标签记下与 BUILD_INFO、VERSION 相同的构建时间（UTC），publish-release.ps1 据此写发布包的 VERSION
             "--label", "org.opencontainers.image.revision=$Commit",
+            "--label", "org.opencontainers.image.created=$builtUtc",
             "-t", "$($app.Name):$Commit"
         )
         $images += "$($app.Name):$Commit"
@@ -244,10 +250,15 @@ try {
         $images += $image
     }
 
-    # 每个提交一个子目录；正式版本由 publish-release.ps1 输出到 release\<版本号>\
+    # 每个提交一个子目录；正式版本由 publish-release.ps1 输出到 release\<版本号>\。
+    # 先在 release\ 下的临时目录生成，全部成功后再放进 release\<提交号>\：中途失败（磁盘满、Ctrl+C）
+    # 不会留下文件名正常但被截断的包，重跑同一提交失败时也不会把之前完整的包覆盖坏
     $ReleaseDir = Join-Path $ProjectRoot "release\$Commit"
-    New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
+    $PartialDir = Join-Path $ProjectRoot ("release\.partial-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $PartialDir | Out-Null
     $suffix = if ($AppOnly) { "$Commit-app" } else { $Commit }
+    $imagesName = "clipsync-images-$suffix.tar.gz"
+    $deployName = "clipsync-deploy-$Commit.tar.gz"
 
     Write-Step "导出镜像并压缩（需要几分钟）"
     $imagesTar = Join-Path $Work "images.tar"
@@ -262,8 +273,7 @@ try {
         $saveArgs += @("--platform", $Platform)
     }
     Invoke-Native docker ($saveArgs + $images)
-    $imagesOut = Join-Path $ReleaseDir "clipsync-images-$suffix.tar.gz"
-    Compress-Gzip $imagesTar $imagesOut
+    Compress-Gzip $imagesTar (Join-Path $PartialDir $imagesName)
 
     Write-Step "生成部署包"
     $Stage = Join-Path $Work "deploy"
@@ -277,12 +287,19 @@ try {
         "commit=$Commit",
         "branch=$Branch",
         "latest=$(if ($IsLatest) { 'yes' } else { 'no' })",
-        "built=$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss zzz'))"
+        "built=$builtUtc"
     ) -join "`n"
     [System.IO.File]::WriteAllText((Join-Path $Stage "VERSION"), "$versionText`n", $Utf8NoBom)
-    $deployOut = Join-Path $ReleaseDir "clipsync-deploy-$Commit.tar.gz"
     $packNames = @($DeployFiles + @("DEPLOYMENT.md", "VERSION"))
-    Invoke-Native $Tar (@("-czf", $deployOut, "-C", $Stage) + $packNames)
+    Invoke-Native $Tar (@("-czf", (Join-Path $PartialDir $deployName), "-C", $Stage) + $packNames)
+
+    # 两个包都生成成功后才放进 release\<提交号>\
+    New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
+    foreach ($name in @($imagesName, $deployName)) {
+        Move-Item -LiteralPath (Join-Path $PartialDir $name) -Destination (Join-Path $ReleaseDir $name) -Force
+    }
+    $imagesOut = Join-Path $ReleaseDir $imagesName
+    $deployOut = Join-Path $ReleaseDir $deployName
 
     Write-Host ""
     Write-Host "完成：分支 $Branch，提交 $Commit" -ForegroundColor Green
@@ -301,4 +318,5 @@ try {
 } finally {
     Pop-Location
     Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
+    if ($PartialDir) { Remove-Item -Recurse -Force $PartialDir -ErrorAction SilentlyContinue }
 }

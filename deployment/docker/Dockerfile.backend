@@ -25,5 +25,7 @@ USER clipsync
 
 EXPOSE 8000
 
-# 单 worker：WebSocket 与限流依赖进程内存。docker-compose.yml 会用自己的 command 覆盖（先迁移再启动）
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers"]
+# 单 worker：WebSocket 与限流依赖进程内存。docker-compose.yml 会用自己的 command 覆盖（先迁移再启动），
+# 两处的 uvicorn 参数保持一致：只信任 compose 子网（172.28.0.0/16，即前端容器的 Nginx）发来的 X-Forwarded-For，
+# WebSocket 单帧最大 4096 字节（客户端只发心跳，更大的帧在收完之前就被拒绝）
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "172.28.0.0/16", "--ws-max-size", "4096"]

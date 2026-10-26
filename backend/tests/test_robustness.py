@@ -199,6 +199,94 @@ def test_clipboard_limit_is_below_nginx_body_limit():
     assert MAX_CONTENT_BYTES * 2 + 1024 < int(match.group(1)) * 1024 * 1024
 
 
+def test_chunk_size_must_fit_under_nginx_body_limit():
+    """CHUNK_SIZE 填大了，上传会在 Nginx 被 413 拒绝：启动时就报清楚的错"""
+    from pydantic import ValidationError
+    from app.config import MAX_CHUNK_SIZE, Settings
+
+    assert Settings(CHUNK_SIZE=MAX_CHUNK_SIZE).CHUNK_SIZE == MAX_CHUNK_SIZE
+    for bad in (MAX_CHUNK_SIZE + 1, 10 * 1024 * 1024, 0, -1):
+        with pytest.raises(ValidationError, match="CHUNK_SIZE"):
+            Settings(CHUNK_SIZE=bad)
+    conf = Path(__file__).resolve().parents[2] / "deployment" / "docker" / "nginx-common.conf"
+    if conf.exists():
+        match = re.search(r"^client_max_body_size\s+(\d+)m;", conf.read_text(encoding="utf-8"), re.M)
+        assert MAX_CHUNK_SIZE < int(match.group(1)) * 1024 * 1024
+
+
+def test_api_responses_carry_a_restrictive_csp(client, make_user):
+    """接口响应不是页面：不允许加载任何资源、不允许被嵌入（成功与失败的响应都带）"""
+    user = make_user()
+    expected = "default-src 'none'; frame-ancestors 'none'"
+    assert client.get("/api/auth/me", headers=user.headers).headers["content-security-policy"] == expected
+    assert client.get("/api/auth/me").headers["content-security-policy"] == expected
+
+
+# ---------- 部署配置：Nginx 内容安全策略 ----------
+
+DOCKER_DIR = Path(__file__).resolve().parents[2] / "deployment" / "docker"
+
+
+def _nginx_locations():
+    """nginx-common.conf 里每个 location 块：{开头那一行: 块内容}"""
+    conf = DOCKER_DIR / "nginx-common.conf"
+    if not conf.exists():
+        pytest.skip("没有部署目录（如在镜像内运行）")
+    text = conf.read_text(encoding="utf-8")
+    blocks = re.findall(r"^(location [^\n{]+)\{(.*?)^\}", text, re.M | re.S)
+    assert len(blocks) >= 5, "没有解析出 location 块"
+    return {head.strip(): body for head, body in blocks}
+
+
+def test_every_static_location_repeats_all_security_headers():
+    """Nginx 的 add_header 在子 location 里会覆盖外层的、不继承：每个自己写了 add_header 的静态 location 都要写全"""
+    required = ["X-Frame-Options", "X-Content-Type-Options", "Referrer-Policy", "Content-Security-Policy"]
+    checked = 0
+    for head, body in _nginx_locations().items():
+        if "add_header" not in body:
+            continue
+        checked += 1
+        for header in required:
+            assert header in body, f"{head} 缺少 {header}"
+    assert checked >= 4  # /、/index.html、/assets/、ACME 验证路径
+
+
+def test_nginx_csp_blocks_inline_scripts_and_embedding():
+    text = (DOCKER_DIR / "nginx-common.conf").read_text(encoding="utf-8") if DOCKER_DIR.exists() else ""
+    if not text:
+        pytest.skip("没有部署目录（如在镜像内运行）")
+    csp = re.search(r'^set \$csp "([^"]+)";', text, re.M)
+    assert csp, "没有找到 set $csp"
+    policy = csp.group(1)
+    assert "default-src 'self'" in policy and "frame-ancestors 'none'" in policy and "object-src 'none'" in policy
+    script_src = re.search(r"script-src ([^;]+);", policy).group(1)
+    assert script_src.strip() == "'self'", "script-src 不能放行内联脚本"
+    assert "ws:" in policy and "wss:" in policy  # 部分浏览器的 'self' 不含同源 WebSocket
+
+
+def test_index_html_has_no_inline_script():
+    """CSP 的 script-src 'self' 会挡掉内联脚本：index.html 里只能有带 src 的脚本"""
+    index = Path(__file__).resolve().parents[2] / "frontend" / "index.html"
+    if not index.exists():
+        pytest.skip("没有前端目录（如在镜像内运行）")
+    for tag in re.findall(r"<script\b([^>]*)>(.*?)</script>", index.read_text(encoding="utf-8"), re.S):
+        attrs, body = tag
+        assert "src=" in attrs and not body.strip(), f"index.html 有内联脚本：{attrs} {body[:40]}"
+    assert (index.parent / "public" / "theme-init.js").exists()
+
+
+def test_backend_uvicorn_commands_agree_and_limit_ws_frame_size():
+    """Dockerfile 的默认 CMD 与 compose 的 command 对代理头、WebSocket 帧大小的设置一致"""
+    dockerfile = DOCKER_DIR / "Dockerfile.backend"
+    compose = DOCKER_DIR / "docker-compose.yml"
+    if not dockerfile.exists():
+        pytest.skip("没有部署目录（如在镜像内运行）")
+    for name, text in (("Dockerfile.backend", dockerfile.read_text(encoding="utf-8")),
+                       ("docker-compose.yml", compose.read_text(encoding="utf-8"))):
+        assert "--forwarded-allow-ips" in text and "172.28.0.0/16" in text, name
+        assert "--ws-max-size 4096" in text or '"--ws-max-size", "4096"' in text, name
+
+
 def test_escape_heavy_text_at_the_limit_fits_in_one_request(client, make_user):
     """全是换行的文本在上限处：JSON 里每个换行占 2 字节，请求体约 8MB，仍低于 Nginx 的 10MB"""
     user = make_user()

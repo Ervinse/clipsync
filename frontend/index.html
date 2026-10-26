@@ -6,18 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ClipSync - 跨设备剪贴板与文件同步</title>
     <meta name="description" content="跨设备实时同步剪贴板文本和文件" />
-    <!-- 渲染前先按本浏览器保存的主题（跟随系统时看系统深浅色）设好 data-theme，规则与 src/utils/theme.js 一致；
+    <!-- 渲染前先设好 data-theme（脚本见 public/theme-init.js，外部文件以便 CSP 只允许同源脚本）；
          全局样式随脚本加载，在那之前由这里的底色兜底，深色用户刷新时不会先闪一下白底 -->
-    <script>
-      (function () {
-        var mode = 'system'
-        try {
-          mode = localStorage.getItem('theme') || 'system'
-        } catch (e) {}
-        var dark = mode === 'dark' || (mode !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
-        document.documentElement.dataset.theme = dark ? 'dark' : 'light'
-      })()
-    </script>
+    <script src="/theme-init.js"></script>
     <style>
       html[data-theme='dark'] { color-scheme: dark; background: #111113; }
       .boot-loading { display: flex; align-items: center; justify-content: center; min-height: 100vh; font: 14px system-ui, sans-serif; color: #6b6b74; }
