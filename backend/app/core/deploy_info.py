@@ -1,6 +1,7 @@
 """部署信息：镜像构建信息 + 运行的版本号 + 进程启动时间 + 部署记录登记
 
-- 提交号、分支、构建时间：构建镜像时由 Dockerfile.backend 写入 BUILD_INFO 文件，镜像造好后不会再变；
+- 提交号、分支、构建时间：build-release.ps1 打包时写成 BUILD_INFO 文件，随源码复制进镜像（Dockerfile 里只有
+  COPY . .），镜像造好后不会再变；
   正式版本晋级不重新构建，所以版本号不在镜像里
 - 版本号：运行时由 compose 把 .env 的 CLIPSYNC_TAG 传进来（settings.APP_VERSION）
 - 开发环境没有 BUILD_INFO，各项为空

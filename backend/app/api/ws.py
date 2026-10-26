@@ -93,7 +93,7 @@ async def websocket_endpoint(websocket: WebSocket):
     消息格式：
         客户端: {"type": "ping"}  → 服务端: {"type": "pong"}
     推送（只带信号，不带正文）：
-        登录连接：clipboard_updated / texts_changed / file_added / file_deleted / access_codes_changed / quota_updated
+        登录连接：clipboard_updated / texts_changed / file_added / file_deleted / access_codes_changed / quota_updated / role_updated
         快速访问连接：access_items_changed
     """
     peer = await _authenticate(websocket)

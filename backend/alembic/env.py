@@ -17,16 +17,13 @@ sys.path.insert(0, str(backend_path))
 
 from app.database import Base
 from app.config import settings
-from app import models  # noqa: 确保所有模型被导入
+from app import models  # noqa: F401  导入后所有模型才会注册到 Base.metadata
 
-# Alembic Config 对象
 config = context.config
 
-# 配置日志
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# ORM 元数据
 target_metadata = Base.metadata
 
 

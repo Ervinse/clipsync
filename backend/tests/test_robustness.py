@@ -168,7 +168,7 @@ def test_validation_error_does_not_echo_input(client):
     assert "pw-secret-123" not in bad.text
 
 
-# ---------- 剪贴板文本上限 ----------
+# ---------- 云剪切板文本上限 ----------
 
 def test_clipboard_limit_is_below_nginx_body_limit():
     conf = Path(__file__).resolve().parents[2] / "deployment" / "docker" / "nginx-common.conf"

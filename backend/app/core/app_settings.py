@@ -1,4 +1,5 @@
-"""系统设置读取：数据库 settings 表优先，缺省回落 .env 默认值"""
+"""系统设置读取：数据库 settings 表优先；新用户默认配额没配置时回落 .env 的 DEFAULT_QUOTA_BYTES，
+开放注册与显示 GitHub 链接两个开关没配置时视为开启"""
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 

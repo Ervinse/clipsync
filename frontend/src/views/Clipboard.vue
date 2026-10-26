@@ -122,6 +122,7 @@ const handleSave = async ({ overwrite = false } = {}) => {
     toast.success('已保存，并同步到所有设备')
   } catch (error) {
     if (error?.status === 409) {
+      // 冲突对话框里选「仍然覆盖」会再调一次 handleSave：先放开保存状态，才不会被 isSaving 挡回去
       isSaving.value = false
       await resolveConflict()
       return

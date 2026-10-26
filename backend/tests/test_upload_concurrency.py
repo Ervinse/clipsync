@@ -4,7 +4,7 @@
   重传已存在分片（received_chunks 不变）仍返回 200（MySQL 方言 FOUND_ROWS，匹配行数而非改动行数）。
 - 写盘 / 原子替换期间临时目录被并发 rmtree：捕获 FileNotFoundError 统一按会话已结束处理（404）。
 
-剪贴板写入、init_upload、删除用户在 REPEATABLE READ 下「先 commit 结束鉴权读视图再加行锁」的串行化，
+云剪切板写入、init_upload、删除用户在 REPEATABLE READ 下「先 commit 结束鉴权读视图再加行锁」的串行化，
 依赖真实并行连接才能触发竞态，单事件循环的 TestClient 无法复现，由其他端到端用例覆盖正常路径。
 """
 import shutil

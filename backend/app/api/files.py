@@ -483,7 +483,7 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
             detail=f"分片不完整（已收到 {len(received)} / {session.total_chunks}）",
         )
 
-    # 合并是长耗时的线程池操作（最大 500MB）：先结束事务，把数据库连接还回连接池。
+    # 合并是长耗时的线程池操作（单文件最大 MAX_FILE_BYTES，默认 500MB）：先结束事务，把数据库连接还回连接池。
     # 否则合并期间一直占着连接，十几个大文件同时合并就会耗尽连接池（默认 15 个），其他请求等待超时。
     # expire_on_commit=False：提交后 session / current_user 仍可读取；之后的查询在新事务里读到最新数据
     await db.commit()

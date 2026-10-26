@@ -1,4 +1,4 @@
-"""剪贴板相关 Pydantic 模型"""
+"""云剪切板相关 Pydantic 模型"""
 from datetime import datetime
 from typing import Optional
 

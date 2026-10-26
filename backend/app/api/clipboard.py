@@ -1,4 +1,4 @@
-"""剪贴板路由：当前文本 + 历史版本管理"""
+"""云剪切板路由：当前文本 + 历史版本管理"""
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, delete, desc, func, case, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,7 +41,7 @@ async def get_current_clipboard(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    获取当前用户的最新剪贴板文本。
+    获取当前用户的云剪切板当前文本。
 
     安全红线：查询强制按 user_id 过滤。
     """
@@ -58,11 +58,10 @@ async def update_clipboard(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    更新当前剪贴板文本（upsert），旧内容归档到历史，实时广播。
+    更新云剪切板当前文本（upsert），旧内容归档到历史，实时广播。
 
-    安全红线：
-    - 操作强制绑定 user_id
-    - 历史保留策略：超出 HISTORY_KEEP 限制时自动清理最旧记录
+    安全红线：操作强制绑定 user_id。
+    历史保留：超出 HISTORY_KEEP 条时自动清理最旧的记录。
     """
     return await write_clipboard(db, current_user.id, data.content, base_version=data.base_version)
 
@@ -83,7 +82,7 @@ async def write_clipboard(
     consumed_history_id：restore 时传入，被恢复的那条历史在同一事务里删除，避免重复。
     require_code：快速访问写入时传入，加锁后再确认剪切板仍挂着这个访问码且未过期，否则 404。
     """
-    # 0. 锁住用户行，同一用户的剪贴板写操作串行化，防止并发时重复归档、丢失中间版本。
+    # 0. 锁住用户行，同一用户的云剪切板写操作串行化，防止并发时重复归档、丢失中间版本。
     #    不锁 Clipboard 行：首次写入时该行不存在，会退化为 gap lock，两个 INSERT 容易死锁。
     #    加锁前先 commit：MySQL 默认 REPEATABLE READ，鉴权读已固定了本事务的读视图，
     #    若不结束该视图，加锁后的普通 SELECT 仍读旧快照，锁等于白加。commit 开启新读视图。
@@ -328,7 +327,7 @@ async def delete_clipboard_history(
     result = await db.execute(
         select(ClipboardHistory).where(
             ClipboardHistory.id == history_id,
-            ClipboardHistory.user_id == current_user.id,
+            ClipboardHistory.user_id == current_user.id,  # 安全红线：归属校验
         )
     )
     history_item = result.scalar_one_or_none()

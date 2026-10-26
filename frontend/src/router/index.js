@@ -98,7 +98,6 @@ router.onError((error, to) => {
   window.location.assign(to?.fullPath || '/')
 })
 
-// 路由守卫
 router.beforeEach((to, from, next) => {
   const userStore = useUserStore()
 

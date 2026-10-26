@@ -171,7 +171,10 @@ def parse_quick_payload(payload: dict | None) -> tuple[int, str] | None:
 
 
 def valid_code_filter(model, owner_id: int, code: str):
-    """「属于该属主、访问码相同、未过期」的查询条件（过期的码在定时清理前同样视为无效）"""
+    """
+    「属于该属主、访问码相同、未过期」的查询条件（过期的码在定时清理前同样视为无效）。
+    安全红线：快速访问所有查询都必须带这组条件，访问凭证只能碰「属主 + 访问码」下的内容。
+    """
     return (
         model.user_id == owner_id,
         model.access_code == code,

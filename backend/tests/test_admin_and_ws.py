@@ -1,4 +1,4 @@
-"""删除用户的完整清理 + WebSocket 认证与断开"""
+"""删除用户的完整清理（数据、磁盘目录、旧凭证与 WebSocket 失效）、超管不能删除或禁用自己、WebSocket 认证与断开、安全响应头"""
 import pytest
 from sqlalchemy import select, func
 from starlette.websockets import WebSocketDisconnect
@@ -97,7 +97,7 @@ def test_ws_rejects_missing_or_bad_token(client, protocols):
             ws.receive_text()
 
 
-def test_ws_token_in_query_no_longer_accepted(client, make_user):
+def test_ws_token_in_query_rejected(client, make_user):
     user = make_user()
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect(f"/ws?token={user.token}") as ws:

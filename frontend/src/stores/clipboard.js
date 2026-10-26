@@ -24,6 +24,7 @@ export const useClipboardStore = defineStore('clipboard', {
     /**
      * 递增刷新序号：之前发出、尚未返回的静默刷新结果作废，避免旧结果覆盖新内容
      */
+    // 序号挂在 store 实例上、不放进 state：$reset（退出登录）不会清零，旧请求晚到时序号仍对不上，结果照样被丢弃
     _bumpSeq() {
       this._refreshSeq = (this._refreshSeq || 0) + 1
       return this._refreshSeq
@@ -37,7 +38,7 @@ export const useClipboardStore = defineStore('clipboard', {
     },
 
     /**
-     * 获取当前剪贴板内容
+     * 获取云剪切板当前内容
      */
     async fetchCurrent() {
       // 与推送触发的静默刷新共用序号：期间又发出了更新的请求或本地已保存时，这次的结果（成功或失败）都作废
@@ -48,7 +49,7 @@ export const useClipboardStore = defineStore('clipboard', {
         if (seq !== this._refreshSeq) return
         this._apply(data)
       } catch (error) {
-        console.error('获取剪贴板内容失败:', error)
+        console.error('获取云剪切板内容失败:', error)
         if (seq !== this._refreshSeq) return
         throw error
       } finally {
@@ -57,7 +58,7 @@ export const useClipboardStore = defineStore('clipboard', {
     },
 
     /**
-     * 更新剪贴板内容；baseVersion 为编辑开始时的版本号，传 null 表示直接覆盖。
+     * 更新云剪切板内容；baseVersion 为编辑开始时的版本号，传 null 表示直接覆盖。
      * 版本不一致时后端返回 409，错误对象的 status 为 409，由页面让用户选择
      */
     async updateText(content, baseVersion = null) {
@@ -67,7 +68,7 @@ export const useClipboardStore = defineStore('clipboard', {
         this._apply(data)
         return data
       } catch (error) {
-        console.error('更新剪贴板失败:', error)
+        console.error('更新云剪切板失败:', error)
         throw error
       }
     },

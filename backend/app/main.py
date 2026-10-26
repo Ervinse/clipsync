@@ -40,7 +40,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 限流器配置
 app.state.limiter = limiter
 
 
@@ -77,7 +76,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
-    """统一安全响应头；HSTS 仅在 .env 开启时下发（HTTP 部署阶段不能发）"""
+    """统一安全响应头；HSTS 仅在 .env 开启时下发（HTTP 部署时不能发）"""
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
@@ -96,9 +95,8 @@ async def root():
     return {"status": "ok", "service": "ClipSync"}
 
 
-# 挂载路由
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
-app.include_router(clipboard.router, prefix="/api/clipboard", tags=["文本"])
+app.include_router(clipboard.router, prefix="/api/clipboard", tags=["云剪切板"])
 app.include_router(texts.router, prefix="/api/texts", tags=["文本栏目"])
 app.include_router(files.router, prefix="/api/files", tags=["文件"])
 app.include_router(access.router, prefix="/api/access-codes", tags=["访问码管理"])

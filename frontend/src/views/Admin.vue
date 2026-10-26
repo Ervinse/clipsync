@@ -297,7 +297,7 @@ const inviteSearch = ref('')
 // 邀请码比较时去掉短横线和空格、不分大小写，与注册时的输入规则一致
 const compactCode = (value) => value.replace(/[\s-]/g, '').toUpperCase()
 
-// 搜索备注、创建人或邀请码；返回 { batchIds, codeIds }，codeIds 是按邀请码命中的码（用于高亮）
+// 搜索备注、生成人或邀请码；返回 { batchIds, codeIds }，codeIds 是按邀请码命中的码（用于高亮）
 const searchMatches = computed(() => {
   const query = inviteSearch.value.trim().toLowerCase()
   if (!query) return null
@@ -667,7 +667,8 @@ const gotoFilesPage = async (delta) => {
   }
 }
 
-// 后端时间为 naive UTC，formatDateTime 内部按 UTC 解析；空值（如永久有效的邀请码）显示「永久有效」
+// 管理后台各处日期（注册时间、批次时间、邀请码有效期、上传时间）共用：后端时间为 naive UTC，formatDateTime 内部按 UTC 解析；
+// 空值只会出现在邀请码有效期上（永久有效），所以显示「永久有效」
 const formatDate = (value) => formatDateTime(value, '永久有效', false)
 
 const copyInviteCode = (code) => copyText(code, '邀请码已复制')
@@ -908,8 +909,8 @@ const handleEditDeployNote = async (record) => {
               v-model="inviteSearch"
               class="input"
               type="search"
-              placeholder="搜索备注、创建人或邀请码"
-              aria-label="搜索备注、创建人或邀请码"
+              placeholder="搜索备注、生成人或邀请码"
+              aria-label="搜索备注、生成人或邀请码"
             />
           </span>
           <div class="filter-group" role="group" aria-label="按状态筛选">
