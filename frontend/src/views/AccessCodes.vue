@@ -1,13 +1,13 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { KeyRound, Clipboard, StickyNote, File, TriangleAlert, RotateCw, Copy, X } from '@lucide/vue'
 import { useAccessStore } from '../stores'
 import { formatDateTime } from '../utils/format'
-import { isExpired } from '../utils/accessCode'
-import { copyToClipboard } from '../utils/clipboard'
+import { isExpired, clock } from '../utils/accessCode'
+import { copyText } from '../utils/clipboard'
 import toast from '../utils/toast'
-import { confirmDialog, copyDialog } from '../utils/dialog'
+import { confirmDialog } from '../utils/dialog'
 import ws from '../utils/websocket'
 import LoadingSkeleton from '../components/LoadingSkeleton.vue'
 
@@ -20,21 +20,15 @@ const onChanged = () => {
 }
 const EVENTS = ['access_codes_changed', 'texts_changed', 'file_deleted', 'open']
 
-// 「是否过期」随时间变化：页面开着时每 30 秒重算一次
-const now = ref(Date.now())
-let nowTimer = null
-
 const load = () => accessStore.fetchOverview().catch(() => {})
 
 onMounted(() => {
   EVENTS.forEach((event) => ws.on(event, onChanged))
-  nowTimer = setInterval(() => { now.value = Date.now() }, 30000)
   return load()
 })
 
 onUnmounted(() => {
   EVENTS.forEach((event) => ws.off(event, onChanged))
-  clearInterval(nowTimer)
 })
 
 const TYPE_META = {
@@ -45,14 +39,11 @@ const TYPE_META = {
 
 const fullCode = (code) => `${accessStore.username}@${code}`
 
-const expired = (item) => isExpired(item.access_expires_at, now.value)
+// 「是否过期」随时间变化：读全站共用的时钟，页面开着时每 30 秒重算一次
+const expired = (item) => isExpired(item.access_expires_at, clock.value)
 const groupActive = (group) => group.items.some((item) => !expired(item))
 
-const copyFullCode = async (code) => {
-  const value = fullCode(code)
-  if (await copyToClipboard(value)) toast.success('完整访问码已复制')
-  else copyDialog({ value })
-}
+const copyFullCode = (code) => copyText(fullCode(code), '完整访问码已复制')
 
 const itemName = (item) => item.label || TYPE_META[item.target_type].label
 
@@ -92,7 +83,7 @@ const handleClear = async (item) => {
 
     <div v-else-if="accessStore.loadError" class="empty" role="alert">
       <span class="empty-icon"><TriangleAlert :size="20" /></span>
-      <p class="empty-title">访问码加载失败</p>
+      <p class="empty-title">加载失败</p>
       <p class="empty-text">{{ accessStore.loadError }}</p>
       <button class="btn btn-secondary" @click="load">
         <RotateCw />

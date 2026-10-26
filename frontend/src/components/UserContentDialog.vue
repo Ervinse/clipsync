@@ -175,7 +175,7 @@ const openDetail = async (meta, inlineContent, fetchFull) => {
 
           <!-- 剪切板历史 -->
           <template v-else-if="section === 'history'">
-            <p v-if="history.length === 0" class="empty-line">没有历史记录</p>
+            <p v-if="history.length === 0" class="empty-line">还没有历史记录</p>
             <ul v-else class="item-list">
               <li v-for="item in history" :key="item.id">
                 <button type="button" class="item" @click="openHistory(item)">
@@ -188,7 +188,7 @@ const openDetail = async (meta, inlineContent, fetchFull) => {
 
           <!-- 文本栏目 -->
           <template v-else>
-            <p v-if="texts.length === 0" class="empty-line">没有文本</p>
+            <p v-if="texts.length === 0" class="empty-line">还没有文本</p>
             <ul v-else class="item-list">
               <li v-for="item in texts" :key="item.id">
                 <button type="button" class="item" @click="openText(item)">

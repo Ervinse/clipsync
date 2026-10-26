@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Clipboard, StickyNote, Folder, KeyRound, Settings, LogOut, Menu, X } from '@lucide/vue'
-import { useUserStore, useClipboardStore, useTextsStore } from '../stores'
+import { useUserStore, useClipboardStore, useTextsStore, useFilesStore } from '../stores'
 import ws from '../utils/websocket'
 import { formatSize } from '../utils/format'
 import { confirmDialog } from '../utils/dialog'
@@ -17,6 +17,7 @@ const route = useRoute()
 const userStore = useUserStore()
 const clipboardStore = useClipboardStore()
 const textsStore = useTextsStore()
+const filesStore = useFilesStore()
 
 // 侧栏配额在布局级刷新：不管当前在哪个页面，文件增删或管理员改配额后都同步
 // open：连接（重新）建立时补拉，断线期间错过的配额变更不会一直显示旧值
@@ -88,15 +89,19 @@ watch(() => route.path, () => {
 })
 
 const handleLogout = async () => {
-  // 退出前一律先确认，防止误点。云剪切板或文本页有没保存的文字时换成危险提示：
-  // 登出会清掉本页状态，文字无法找回
+  // 退出前一律先确认，防止误点。云剪切板或文本页有没保存的文字、或有文件正在上传时换成危险提示：
+  // 登出会清掉本页状态，文字无法找回，上传会被取消
   const unsaved = clipboardStore.hasUnsavedEdit || textsStore.hasUnsavedEdit
-  const ok = await confirmDialog(unsaved
+  const uploading = filesStore.isUploading
+  const warnings = []
+  if (unsaved) warnings.push('有文本还没有保存，退出后会丢失。')
+  if (uploading) warnings.push('有文件正在上传，退出会取消上传。')
+  const ok = await confirmDialog(warnings.length
     ? {
-        title: '退出登录并放弃未保存的修改？',
-        message: '有文本还没有保存，退出后会丢失。',
+        title: unsaved ? '退出登录并放弃未保存的修改？' : '退出登录并取消上传？',
+        message: warnings.join(''),
         confirmText: '退出登录',
-        cancelText: '继续编辑',
+        cancelText: unsaved ? '继续编辑' : '继续上传',
         danger: true,
       }
     : {
@@ -105,6 +110,8 @@ const handleLogout = async () => {
         confirmText: '退出登录',
       })
   if (!ok) return
+  // 先取消进行中的上传会话（这时 token 还在），立即释放它们占用的配额
+  await filesStore.cancelActiveUploads()
   userStore.logout()
   router.push('/login')
 }

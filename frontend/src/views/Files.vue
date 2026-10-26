@@ -49,7 +49,8 @@ const handleFileChange = async (event) => {
     await filesStore.uploadFile(file)
     toast.success(`「${file.name}」上传完成`)
   } catch (error) {
-    toast.error('上传失败：' + error.message)
+    // 退出登录导致的中断：用户已在退出确认里同意，不再提示
+    if (!error?.cancelled) toast.error('上传失败：' + error.message)
   } finally {
     if (uploadInput.value) {
       uploadInput.value.value = ''
@@ -77,7 +78,7 @@ const downloadText = (file) => {
 const handleDelete = async (file) => {
   const ok = await confirmDialog({
     title: '删除这个文件？',
-    message: `「${file.original_name}」将被永久删除${file.access_code ? `，它的访问码 ${file.access_code} 也会一并清除` : ''}。`,
+    message: `「${file.original_name}」将被永久删除，无法找回${file.access_code ? `，它的访问码 ${file.access_code} 也会一并清除` : ''}。`,
     confirmText: '删除',
     danger: true,
   })
@@ -85,6 +86,7 @@ const handleDelete = async (file) => {
 
   try {
     await filesStore.deleteFile(file.id)
+    toast.success('文件已删除')
   } catch (error) {
     toast.error('删除失败：' + error.message)
   }
@@ -187,7 +189,7 @@ const formatDate = (value) => formatDateTime(value)
 
     <div v-else-if="filesStore.loadError" class="empty" role="alert">
       <span class="empty-icon"><TriangleAlert :size="20" /></span>
-      <p class="empty-title">文件列表加载失败</p>
+      <p class="empty-title">加载失败</p>
       <p class="empty-text">{{ filesStore.loadError }}</p>
       <button class="btn btn-secondary" @click="loadFiles">
         <RotateCw />

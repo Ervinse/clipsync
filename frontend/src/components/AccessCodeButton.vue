@@ -2,7 +2,7 @@
 // 条目上的访问码按钮：已设置时显示访问码，过期时标出；点击打开 AccessCodeDialog
 import { computed } from 'vue'
 import { KeyRound } from '@lucide/vue'
-import { isExpired } from '../utils/accessCode'
+import { isExpired, clock } from '../utils/accessCode'
 
 const props = defineProps({
   code: { type: String, default: null },
@@ -11,7 +11,7 @@ const props = defineProps({
 })
 defineEmits(['click'])
 
-const expired = computed(() => !!props.code && isExpired(props.expiresAt))
+const expired = computed(() => !!props.code && isExpired(props.expiresAt, clock.value))
 const title = computed(() => {
   if (!props.code) return '设置访问码'
   return expired.value ? `访问码 ${props.code} 已过期，点击修改` : `访问码 ${props.code}，点击修改或清除`

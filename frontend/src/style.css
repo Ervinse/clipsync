@@ -998,6 +998,14 @@ a:hover {
   padding: var(--space-5) var(--space-6) 0;
 }
 
+/* 标题在左、关闭按钮在右（带关闭按钮的弹窗共用） */
+.header-with-close {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
 .modal-title {
   font-size: var(--text-lg);
   font-weight: 600;

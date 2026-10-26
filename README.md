@@ -174,7 +174,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | user_id | BIGINT PK / FK→users | 主键即 user_id，保证一人一条「当前文本」 |
 | content | MEDIUMTEXT | 当前文本内容 |
 | updated_at | DATETIME | 最后更新时间 |
-| version | INT | 每次写入内容加 1，用于保存冲突检测（没有记录时接口返回 0） |
+| version | INT | 每次内容变化加 1（保存相同内容不加），用于保存冲突检测（没有记录时接口返回 0） |
 | access_code | VARCHAR(32) NULL | 快速访问码（小写），NULL 表示没有设置（见 5.8） |
 | access_expires_at | DATETIME NULL | 访问码过期时间，NULL 不过期 |
 
@@ -295,7 +295,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
 | GET | /api/clipboard | 登录 | 获取自己的当前文本（含 `version`、`access_code`、`access_expires_at`） |
-| PUT | /api/clipboard | 登录 | 更新当前文本 `{content, base_version?}`（upsert），旧内容入历史，广播；`base_version` 与当前版本不一致返回 409，省略则直接覆盖 |
+| PUT | /api/clipboard | 登录 | 更新当前文本 `{content, base_version?}`（upsert），旧内容入历史，广播；`base_version` 与当前版本不一致返回 409，省略则直接覆盖；内容与当前相同时原样返回，不加版本号、不归档、不广播 |
 | GET | /api/clipboard/history | 登录 | 列出自己的全部文本历史版本（不分页，最多 `HISTORY_KEEP` 条）；不超过 64KB 的条目带全文 `content`，更长的 `content` 为 null、只给开头 `preview`，`size` 为 UTF-8 字节数 |
 | GET | /api/clipboard/history/{id} | 归属 | 读取某条历史的全文（他人的与不存在的统一 404） |
 | POST | /api/clipboard/history/{id}/restore | 归属 | 把某历史版本恢复为当前文本：该条历史随之删除，当前内容非空且与之不同时另存为一条新历史；广播。读出内容后这条历史被另一台设备删除或恢复掉时返回 404，不写入当前文本 |
