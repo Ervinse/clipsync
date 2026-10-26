@@ -41,7 +41,6 @@ async def create_superadmin():
     print("ClipSync - Create Superadmin")
     print("=" * 50)
 
-    # 检查是否已有超级管理员
     async with AsyncSessionLocal() as db:
         existing_superadmin = await find_existing_superadmin(db)
 
@@ -52,7 +51,6 @@ async def create_superadmin():
                 print("Operation cancelled.")
                 return
 
-        # 交互输入
         print("\nEnter superadmin information:")
         username = input("Username (3-64 chars; letters, digits, _ . -): ").strip()
 
@@ -61,7 +59,6 @@ async def create_superadmin():
             print(f"[X] {error}")
             return
 
-        # 检查用户名是否已存在
         result = await db.execute(select(User).where(User.username == username))
         if result.scalar_one_or_none():
             print(f"[X] Username '{username}' already exists.")

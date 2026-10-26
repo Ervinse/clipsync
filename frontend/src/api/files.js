@@ -4,12 +4,10 @@
 import request from './request'
 
 export default {
-  // 初始化上传
   initUpload(data) {
     return request.post('/files/upload/init', data)
   },
 
-  // 上传分片
   uploadChunk(uploadId, chunkIndex, chunkData) {
     const formData = new FormData()
     formData.append('upload_id', uploadId)
@@ -47,7 +45,6 @@ export default {
     })
   },
 
-  // 删除文件
   delete(fileId) {
     return request.delete(`/files/${fileId}`)
   },

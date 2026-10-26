@@ -190,7 +190,7 @@ const handleClear = async () => {
             />
             <span class="input-suffix">小时</span>
           </span>
-          <span class="field-hint">0 表示永久有效，最长 8760 小时（1 年）</span>
+          <span class="field-hint">0 表示永久有效，最长 {{ MAX_EXPIRES_HOURS }} 小时（1 年）</span>
         </div>
 
         <p class="warn-text">知道完整访问码的人无需登录，就能查看和修改这个访问码下的文本、下载其中的文件，请妥善保管。</p>

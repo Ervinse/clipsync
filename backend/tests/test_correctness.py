@@ -54,7 +54,7 @@ def test_complete_releases_lock_after_failure(client, make_user):
     assert init["upload_id"] not in files_api._completing
 
 
-# ---------- 剪贴板历史 ----------
+# ---------- 云剪切板历史 ----------
 
 def test_saving_same_content_does_not_duplicate_history(client, make_user):
     user = make_user()

@@ -1,4 +1,4 @@
-"""管理后台：查询合并（N+1 改写）后的结果正确性、邀请码删除约束"""
+"""管理后台：用户 / 邀请码 / 文件列表与统计的结果正确性、邀请码删除约束"""
 from app.models import UserRole
 from app.core.timeutil import utcnow
 from tests.helpers import upload, add_invite

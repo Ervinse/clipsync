@@ -11,7 +11,7 @@ class UploadInitRequest(BaseModel):
     """初始化分片上传请求"""
     original_name: str = Field(..., min_length=1, max_length=255, description="原始文件名")
     total_size: int = Field(..., gt=0, description="文件总大小（字节）")
-    chunk_size: int = Field(..., gt=0, description="每个分片大小（字节），不得超过服务端 CHUNK_SIZE")
+    chunk_size: int = Field(..., gt=0, description="期望的分片大小（字节）；服务端会调整到允许的范围，以响应里的 chunk_size 为准")
 
     @field_validator("original_name")
     @classmethod

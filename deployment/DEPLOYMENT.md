@@ -177,7 +177,7 @@ cd /opt/clipsync && cat VERSION
 powershell -ExecutionPolicy Bypass -File deployment\docker\publish-release.ps1 -Version <版本号>
 ```
 
-脚本不重新构建镜像：检查本机有该提交的 `clipsync-backend:<提交号>`、`clipsync-frontend:<提交号>`，且镜像里记录的提交号一致，再追加 `<版本号>` 标签导出。本机镜像被清理过时，先 `docker load` 导入该提交测试时的镜像包（`release\<提交号>\` 里的 `clipsync-images-<提交号>.tar.gz`，用 `-AppOnly` 打的是 `clipsync-images-<提交号>-app.tar.gz`）。产物在 `release\<版本号>\`：
+`release\<版本号>\` 已存在时脚本会先问是否覆盖，加 `-Yes` 跳过这个确认。脚本不重新构建镜像：检查本机有该提交的 `clipsync-backend:<提交号>`、`clipsync-frontend:<提交号>`，且镜像里记录的提交号一致，再追加 `<版本号>` 标签导出。本机镜像被清理过时，先 `docker load` 导入该提交测试时的镜像包（`release\<提交号>\` 里的 `clipsync-images-<提交号>.tar.gz`，用 `-AppOnly` 打的是 `clipsync-images-<提交号>-app.tar.gz`）。产物在 `release\<版本号>\`：
 
 | 文件 | 内容 |
 |------|------|
@@ -333,6 +333,8 @@ bash backup.sh
 docker load -i /root/clipsync-images-<版本号>.tar.gz
 tar -xzf /root/clipsync-deploy-<版本号>.tar.gz -C /opt/clipsync     # 不会覆盖 .env
 vi .env                     # CLIPSYNC_TAG 改成 <版本号>
+docker compose up -d
+# 挂载的 Nginx 配置内容变化时 compose 发现不了，强制重建 frontend、backend 让新配置生效（db 不受影响）
 docker compose up -d --force-recreate backend frontend
 sed "s|/opt/clipsync|$(pwd)|g" clipsync.cron > /etc/cron.d/clipsync && chmod 644 /etc/cron.d/clipsync
 cp clipsync.logrotate /etc/logrotate.d/clipsync
@@ -414,7 +416,7 @@ docker compose up -d backend
 | `clipsync_files_<时间>.tar.gz` | 上传的文件（不含未完成的上传分片） | 7 天 |
 
 - 两者要一起恢复：数据库里记录了文件，文件备份里是文件内容。
-- 导出失败或内容不完整时，脚本会删除这次的备份、以非零退出码结束，不会留下看似正常的空备份。
+- 导出失败或内容不完整时，脚本只删除失败的那一份、以非零退出码结束，不会留下看似正常的空备份。数据库备份成功而文件备份失败时，这次的数据库备份会保留，但没有同一时间戳的文件备份，恢复时要选两者都存在的一组。
 - 备份目录和文件只允许 root 读写：数据库备份里有明文的剪贴板文本。
 - 可以用环境变量 `BACKUP_DIR`、`DB_KEEP_DAYS`、`FILES_KEEP_DAYS` 调整目录和保留天数，例如 `DB_KEEP_DAYS=60 bash backup.sh`。改 cron 里的调用时同样适用。
 - `health_check.sh` 也按 `BACKUP_DIR`（默认 `/var/backups/clipsync`）查找最近一次备份。改了备份目录后，检查时也要带上：`BACKUP_DIR=<备份目录> bash health_check.sh`，否则会提示还没有备份。

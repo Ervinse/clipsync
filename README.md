@@ -117,7 +117,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 
 > 关键区别：**管理员负责日常管理，但看不到用户隐私内容**（只能看文件名、大小、时间等元数据），也只能管理普通用户；**超级管理员才能下载他人文件、查看他人文本、任免管理员和删除用户**。日常管理交给管理员，超管账号平时不必登录。这些约束在后端接口层强制：内容读取接口对 admin 与对普通用户一视同仁地做归属校验，仅 superadmin 可绕过；超管查看他人文本只读，不能修改、删除或恢复，每次查看与下载他人文件都写一条服务器日志（操作者、对象用户、内容）。
 >
-> 角色边界：admin 不能修改任何管理员或超管（包括自己）的配额与状态（403），不能改角色、不能删除用户（403）。超管不能禁用、删除或改角色的对象是自己（400）和其他 superadmin（403）；改角色只能在 `user` 与 `admin` 之间切换，不能通过接口设为 superadmin（422）。
+> 角色边界：admin 不能修改任何管理员或超管的配额与状态（403；改自己的配额也是 403，改自己的状态是 400），不能改角色、不能删除用户（403）。超管不能禁用、删除或改角色的对象是自己（400）和其他 superadmin（403）；改角色只能在 `user` 与 `admin` 之间切换，不能通过接口设为 superadmin（422）。
 
 ---
 
@@ -318,7 +318,7 @@ ClipSync 是一个 B/S 架构的 Web 应用。用户在任意设备的浏览器�
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
 | GET | /api/files | 登录 | 列出自己的文件（含 `access_code`、`access_expires_at`），并返回 `used_bytes`、`reserved_bytes`、`quota_bytes`（前端配额按 已用 + 上传中 计算） |
-| POST | /api/files/upload/init | 登录 | 初始化分片上传 `{original_name, total_size, chunk_size}`，返回 `{upload_id, total_chunks, chunk_size}`（分片大小以返回值为准）；超过单文件上限或配额不足 413，分片数过多 400，进行中的会话过多 429 |
+| POST | /api/files/upload/init | 登录 | 初始化分片上传 `{original_name, total_size, chunk_size}`，返回 `{upload_id, total_chunks, chunk_size}`（分片大小以返回值为准）；不支持空文件（0 字节，422）；超过单文件上限或配额不足 413，分片数过多 400，进行中的会话过多 429 |
 | POST | /api/files/upload/chunk | 登录 | 上传单个分片，multipart `{upload_id, chunk_index, chunk_data}`；分片过大 413、过小 400 |
 | POST | /api/files/upload/complete | 登录 | 合并分片 `{upload_id}`，写记录，广播 `file_added`；合并期间上传被取消或被清理时返回 404、不入库；流程与失败处理见第 10 节 |
 | DELETE | /api/files/upload/{upload_id} | 归属 | 取消进行中的上传：删会话（立即释放配额）+ 清理 tmp；他人会话与不存在统一 404，正在合并返回 409 |
@@ -685,7 +685,7 @@ CodeProject/
     │   │       ├── Texts.vue         # 文本栏目
     │   │       ├── Files.vue         # 文件
     │   │       ├── AccessCodes.vue   # 访问码总览
-    │   │       ├── Admin.vue         # 管理后台（5 个 tab）
+    │   │       ├── Admin.vue         # 管理后台（6 个 tab）
     │   │       └── QuickAccess.vue   # 凭「用户名@访问码」免登录进入 /quick
     │   ├── public/               # favicon.svg、theme-init.js（渲染前设好主题，外部文件以便 CSP 禁用内联脚本）
     │   ├── index.html
@@ -731,7 +731,7 @@ CodeProject/
 - **必须单 worker**：WebSocket 连接表与限流计数都在进程内存中，多进程会导致实时同步与限流失效。
 - **真实客户端 IP**：compose 使用固定子网 `172.28.0.0/16`，uvicorn 只信任这个网段发来的 `X-Forwarded-For`（`Dockerfile.backend` 的默认 `CMD` 与 compose 的 `command` 参数一致，单独 `docker run` 镜像时也只信任这个网段）；Nginx 用 `$remote_addr` 覆盖该头，客户端自带的值一律丢弃。
 - **镜像来源**：默认在开发机用 `build-release.ps1` 构建并打包，服务器 `docker load` 导入后启动，不需要联网下载；网络通畅的服务器也可叠加 `docker-compose.build.yml` 从源码构建。backend、frontend 设 `pull_policy: never`，不会从镜像仓库拉取同名镜像。
-- **版本标签**：镜像带 git 提交号标签；只有 master 上的提交额外标 `latest`。测试通过的构建由 `publish-release.ps1` 追加版本号标签（如 `1.0.0-alpha.1`）生成发布包，镜像不重新构建。服务器按 `.env` 的 `CLIPSYNC_TAG` 选用镜像。
+- **版本标签**：镜像带 git 提交号标签；只有打包时正好是 master 最新提交的构建额外标 `latest`（master 上的旧提交不标）。测试通过的构建由 `publish-release.ps1` 追加版本号标签（如 `1.0.0-alpha.1`）生成发布包，镜像不重新构建。服务器按 `.env` 的 `CLIPSYNC_TAG` 选用镜像。
 - **版本信息**：`build-release.ps1` 把提交号、分支、构建时间写成后端镜像里的 `/app/BUILD_INFO`；compose 把 `CLIPSYNC_TAG` 作为 `APP_VERSION` 传给 backend。后台「系统信息」显示这两部分，后端启动时据此登记部署记录（第 5.10 节）。服务器源码构建（`docker-compose.build.yml`）不生成 `BUILD_INFO`，提交号、分支、构建时间显示为空。
 - **定时任务**：宿主机 cron 每小时经 `docker compose exec` 执行 `scripts.cleanup_expired`，每天执行 `backup.sh` 备份数据库与上传文件、执行 `cert.sh renew` 检查证书续期（模板 `clipsync.cron`）。
 

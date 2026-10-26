@@ -28,7 +28,6 @@ const handleRegister = async () => {
   form.value.username = form.value.username.trim()
   form.value.invite_code = form.value.invite_code.trim()
 
-  // 验证
   if (!form.value.username || !form.value.password || !form.value.invite_code) {
     error.value = '请填写所有必填项'
     return

@@ -29,7 +29,6 @@ export const useFilesStore = defineStore('files', {
       )
     },
 
-    // 总文件数
     totalFiles(state) {
       return state.files.length
     },
@@ -51,7 +50,7 @@ export const useFilesStore = defineStore('files', {
       const seq = (this._seq = (this._seq || 0) + 1)
       try {
         if (!silent) this.isLoading = true
-        // 后端返回 { items, total, used_bytes, quota_bytes }
+        // 后端返回 { items, total, used_bytes, reserved_bytes, quota_bytes }
         const data = await api.files.list()
         if (seq !== this._seq) return
         this.files = data?.items || []
@@ -105,7 +104,6 @@ export const useFilesStore = defineStore('files', {
         const CHUNK_SIZE = initData.chunk_size
         const totalChunks = initData.total_chunks
 
-        // 初始化进度
         this.uploadProgress[uploadId] = {
           filename: file.name,
           current: 0,
@@ -122,7 +120,6 @@ export const useFilesStore = defineStore('files', {
           await api.files.uploadChunk(uploadId, i, chunk)
           ensureActive()
 
-          // 更新进度
           this.uploadProgress[uploadId].current = i + 1
           this.uploadProgress[uploadId].percentage = Math.round(
             ((i + 1) / totalChunks) * 100

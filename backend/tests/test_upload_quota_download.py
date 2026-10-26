@@ -1,4 +1,4 @@
-"""上传配额与文件下载：取消上传释放配额、reserved_bytes、下载时文件丢失、剪贴板按字节限长"""
+"""上传配额与文件下载：取消上传释放配额、reserved_bytes、下载时文件丢失、云剪切板按字节限长"""
 import pytest
 from pydantic import ValidationError
 
@@ -83,7 +83,7 @@ def test_download_still_works(client, make_user):
     assert resp.headers["content-length"] == "3000"
 
 
-# ---------- 剪贴板按 UTF-8 字节限长 ----------
+# ---------- 云剪切板按 UTF-8 字节限长 ----------
 
 def test_clipboard_limit_counts_utf8_bytes():
     # 字符数远低于上限，但 UTF-8 字节数超限（每个汉字 3 字节）

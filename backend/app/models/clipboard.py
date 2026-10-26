@@ -1,4 +1,4 @@
-"""剪贴板模型：当前文本 + 历史版本"""
+"""云剪切板模型：当前文本 + 历史版本"""
 from datetime import datetime
 
 from sqlalchemy import BigInteger, String, Integer, ForeignKey, DateTime, func

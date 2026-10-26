@@ -34,7 +34,6 @@ export const useUserStore = defineStore('user', {
       return state.userInfo?.role === 'superadmin'
     },
 
-    // 用户名
     username(state) {
       return state.userInfo?.username || ''
     },
@@ -44,7 +43,6 @@ export const useUserStore = defineStore('user', {
       return state.userInfo?.show_github_link === true
     },
 
-    // 配额信息
     quota(state) {
       // 后端 /auth/me 返回 used_bytes（已落盘）与 reserved_bytes（进行中上传占用）；两者都计入配额
       const used = state.userInfo?.used_bytes || 0
@@ -77,7 +75,6 @@ export const useUserStore = defineStore('user', {
         throw error
       }
 
-      // 连接 WebSocket
       ws.connect(this.token)
       return true
     },

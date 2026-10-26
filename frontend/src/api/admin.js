@@ -4,12 +4,10 @@
 import request from './request'
 
 export default {
-  // 统计数据
   stats() {
     return request.get('/admin/stats')
   },
 
-  // 用户管理
   users: {
     list(skip = 0, limit = 50) {
       return request.get('/admin/users', { params: { skip, limit } })
@@ -67,7 +65,6 @@ export default {
     },
   },
 
-  // 单个邀请码
   inviteCodes: {
     // 批量修改有效期（单个也走这里）：只能改未使用的码
     updateExpiry(ids, expiresAt) {
@@ -78,7 +75,6 @@ export default {
     },
   },
 
-  // 系统设置
   settings: {
     get() {
       return request.get('/admin/settings')

@@ -1,4 +1,4 @@
-"""管理后台路由：统计 + 用户管理 + 邀请码 + 系统设置 + 系统信息"""
+"""管理后台路由：统计 + 用户管理 + 邀请码 + 系统设置 + 系统信息 + 文件元数据列表 + 超管只读查看用户文本"""
 import logging
 from collections import defaultdict
 from datetime import datetime
@@ -87,7 +87,6 @@ async def get_system_stats(
 
     权限：admin + superadmin
     """
-    # 1. 用户统计
     result = await db.execute(select(func.count(User.id)))
     total_users = result.scalar()
 
@@ -96,7 +95,6 @@ async def get_system_stats(
     )
     active_users = result.scalar()
 
-    # 2. 文件统计
     result = await db.execute(select(func.count(File.id)))
     total_files = result.scalar()
 
@@ -156,7 +154,7 @@ async def _get_user_or_404(db: AsyncSession, user_id: int) -> User:
 
 
 async def _build_user_detail(db: AsyncSession, user: User) -> AdminUserDetail:
-    """用户详情（安全红线：只含元数据，剪贴板只给更新时间、不给内容）"""
+    """用户详情（安全红线：只含元数据，云剪切板只给更新时间、不给内容）"""
     used_bytes, file_count = (await _file_stats(db, [user.id])).get(user.id, (0, 0))
     result = await db.execute(
         select(Clipboard.updated_at).where(Clipboard.user_id == user.id)
@@ -350,7 +348,7 @@ async def delete_user(
     权限：仅 superadmin
     安全红线：
     - 禁止删除自己
-    - 级联删除：文件（磁盘+记录）、剪贴板、文本栏目等（访问码挂在这些内容上，随之删除）
+    - 级联删除：文件（磁盘+记录）、云剪切板、文本栏目等（访问码挂在这些内容上，随之删除）
     """
     user = await _get_user_or_404(db, user_id)
 
@@ -827,7 +825,6 @@ async def list_all_files(
     权限：admin + superadmin
     安全红线：仅返回元数据，不提供下载入口
     """
-    # 查询文件 + 用户名（join）
     result = await db.execute(
         select(File, User.username)
         .join(User, File.user_id == User.id)
@@ -838,7 +835,6 @@ async def list_all_files(
     )
     rows = result.all()
 
-    # 查询总数
     result = await db.execute(select(func.count(File.id)))
     total = result.scalar()
 
@@ -863,6 +859,7 @@ async def list_all_files(
 
 
 async def _content_owner_or_404(db: AsyncSession, current_user: User, user_id: int, what: str) -> User:
+    # 安全红线：超管查看他人内容的审计日志点，只记操作者、对象和内容类别，不记正文
     user = await _get_user_or_404(db, user_id)
     logger.info("超管查看用户内容 operator=%s target=%s what=%s", current_user.id, user_id, what)
     return user

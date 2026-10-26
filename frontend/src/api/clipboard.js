@@ -1,5 +1,5 @@
 /**
- * 剪贴板 API
+ * 云剪切板 API
  */
 import request from './request'
 

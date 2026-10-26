@@ -2,6 +2,9 @@
 
 访问码挂在云剪切板 / 文本 / 文件上，过期后把这一样内容上的访问码清空（内容本身保留）。
 
+本脚本由 cron 单独启动，不在后端服务进程里，运行期间没有其他请求并发执行；所以直接同步调用
+cleanup_upload_temp、delete_user_storage（内部是 shutil.rmtree），不会卡住用户请求，不需要放进线程池。
+
 用法（在 backend/ 目录）：python -m scripts.cleanup_expired
 部署环境由宿主机 cron 每小时执行 docker compose exec -T backend python -m scripts.cleanup_expired
 （模板见 deployment/docker/clipsync.cron）

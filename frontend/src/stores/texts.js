@@ -26,7 +26,8 @@ export const useTextsStore = defineStore('texts', {
 
   actions: {
     async fetchTexts({ silent = false } = {}) {
-      // 请求序号：期间又发出了更新的请求时，这次的结果（成功或失败）都作废，「加载中」由最新的一次收尾
+      // 请求序号：期间又发出了更新的请求时，这次的结果（成功或失败）都作废，「加载中」由最新的一次收尾；
+      // 序号挂在实例上、不放进 state，$reset（退出登录）不会清零
       const seq = (this._seq = (this._seq || 0) + 1)
       try {
         if (!silent) this.isLoading = true
