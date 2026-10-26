@@ -6,6 +6,7 @@
 """
 import re
 import time
+from collections import OrderedDict
 from datetime import timedelta
 from typing import Iterable
 
@@ -26,10 +27,10 @@ MAX_EXPIRES_HOURS = 8760  # 访问码最长有效期：1 年
 QUICK_TOKEN_TYPE = "qa"
 QUICK_TOKEN_MINUTES = 120  # 快速访问凭证有效期：2 小时
 
-# 同一用户（按用户名查到同一个人）连续输错 MAX_FAILURES 次，暂停其快速访问 LOCK_SECONDS 秒
+# 同一用户（按用户名查到同一个人）在 LOCK_SECONDS 内累计输错 MAX_FAILURES 次，暂停其快速访问 LOCK_SECONDS 秒
 MAX_FAILURES = 10
 LOCK_SECONDS = 15 * 60
-_TRACK_LIMIT = 10_000  # 记录条数超过这个数时清理过时记录，防止大量随机用户名撑大内存
+_TRACK_LIMIT = 10_000  # 失败记录条数的硬上限，防止大量随机用户名撑大内存
 
 # 内容带访问码的三张表：都有 user_id / access_code / access_expires_at 三列
 CODED_MODELS = (Clipboard, Text, File)
@@ -67,48 +68,78 @@ def lock_key(owner_id: int | None, username: str) -> str:
     return f"u{owner_id}" if owner_id is not None else f"n:{username.lower()}"
 
 
-class FailureTracker:
-    """
-    按锁定键（见 lock_key）记录连续输错次数（进程内存，后端单 worker；重启后清零）。
-    不存在的用户名同样计数和锁定，响应与存在的用户名一致，不暴露用户名是否存在。
-    """
+class _Entry:
+    """一个锁定键的记录：窗口内每次尝试的时间（clock 秒），以及锁定截止（0 表示未锁定）"""
+    __slots__ = ("attempts", "locked_until")
 
     def __init__(self):
-        # key → [连续失败次数, 锁定截止（monotonic 秒，0 表示未锁定）, 最近一次记录时间]
-        self._entries: dict[str, list[float]] = {}
+        self.attempts: list[float] = []
+        self.locked_until = 0.0
 
-    def is_locked(self, key: str) -> bool:
+
+class FailureTracker:
+    """
+    按锁定键（见 lock_key）统计 LOCK_SECONDS 内的输错次数（进程内存，后端单 worker；重启后清零）。
+    不存在的用户名同样计数和锁定，响应与存在的用户名一致，不暴露用户名是否存在。
+
+    用法：每次尝试先 begin_attempt（同步完成，期间没有 await，并发请求不会在计数前溜过锁定检查），
+    随后再去比对访问码；比对通过用 confirm_success 退还这一次，不通过什么都不用做（已经计过数）。
+    - 输对不会清零：知道某个有效访问码的人，也不能靠「输错 9 次、输对 1 次」循环绕过锁定去猜别的码
+    - 只统计窗口内的失败，更早的自然作废，偶尔手滑的正常用户不会越攒越多
+    - 记录数有硬上限 _TRACK_LIMIT：满了先丢最久没动静的未锁定记录
+    """
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        # 按最近一次尝试的先后排序（最久没动静的在最前），满了从前面淘汰
+        self._entries: OrderedDict[str, _Entry] = OrderedDict()
+
+    def begin_attempt(self, key: str) -> bool:
+        """登记一次尝试并按失败计数；已被锁定返回 False（此时不计数），否则返回 True"""
+        now = self._clock()
         entry = self._entries.get(key)
-        if entry is None or entry[1] == 0:
-            return False
-        if entry[1] > time.monotonic():
-            return True
-        # 锁定期已过：重新计数
-        del self._entries[key]
-        return False
+        if entry is not None:
+            if entry.locked_until > now:
+                return False
+            if entry.locked_until:
+                # 锁定期已过：重新计数
+                del self._entries[key]
+                entry = None
+            else:
+                window_start = now - LOCK_SECONDS
+                entry.attempts = [t for t in entry.attempts if t > window_start]
+        if entry is None:
+            if len(self._entries) >= _TRACK_LIMIT:
+                self._make_room(now)
+            entry = self._entries[key] = _Entry()
+        else:
+            self._entries.move_to_end(key)
+        entry.attempts.append(now)
+        if len(entry.attempts) >= MAX_FAILURES:
+            entry.locked_until = now + LOCK_SECONDS
+        return True
 
-    def record_failure(self, key: str) -> None:
-        now = time.monotonic()
-        if len(self._entries) >= _TRACK_LIMIT:
-            self._prune(now)
-        entry = self._entries.setdefault(key, [0, 0, now])
-        entry[0] += 1
-        entry[2] = now
-        if entry[0] >= MAX_FAILURES:
-            entry[1] = now + LOCK_SECONDS
-
-    def reset(self, key: str) -> None:
-        self._entries.pop(key, None)
+    def confirm_success(self, key: str) -> None:
+        """访问码比对通过：退还 begin_attempt 预记的这一次，窗口内其余的失败照旧保留"""
+        entry = self._entries.get(key)
+        if entry is None:
+            return
+        if entry.attempts:
+            entry.attempts.pop()
+        if not entry.attempts:
+            del self._entries[key]
+        elif len(entry.attempts) < MAX_FAILURES:
+            entry.locked_until = 0.0
 
     def clear(self) -> None:
         self._entries.clear()
 
-    def _prune(self, now: float) -> None:
-        """删掉锁定已结束、且最近 LOCK_SECONDS 内没有新失败的记录"""
-        stale = [k for k, (_, locked_until, last) in self._entries.items()
-                 if locked_until <= now and now - last > LOCK_SECONDS]
-        for key in stale:
-            del self._entries[key]
+    def _make_room(self, now: float) -> None:
+        """记录满了：丢掉最久没动静的未锁定记录；全都在锁定中时丢最旧的一条"""
+        victim = next((k for k, e in self._entries.items() if e.locked_until <= now), None)
+        if victim is None:
+            victim = next(iter(self._entries))
+        del self._entries[victim]
 
 
 failures = FailureTracker()

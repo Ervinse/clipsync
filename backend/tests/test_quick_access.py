@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import update
+from starlette.websockets import WebSocketDisconnect
 
 from app.models import User, Text, File, Clipboard
 from app.core.timeutil import utcnow
@@ -148,9 +149,6 @@ def test_quick_token_is_not_a_login_token(client, make_user):
     headers = quick_headers(client, f"{user.username}@mycode")
     for path in ["/api/auth/me", "/api/clipboard", "/api/texts", "/api/files", "/api/access-codes"]:
         assert client.get(path, headers=headers).status_code == 401, path
-    with pytest.raises(Exception):
-        with client.websocket_connect("/ws", subprotocols=["clipsync.v1", "bearer.x"]) as ws:
-            ws.receive_text()
 
 
 def test_login_token_is_not_a_quick_token(client, make_user):
@@ -333,19 +331,182 @@ def test_failures_across_spellings_share_one_count(client, make_user):
     assert quick_login(client, "alice@right").status_code == 429
 
 
-def test_success_resets_failure_count(client, make_user):
+def test_success_does_not_clear_earlier_failures(client, make_user):
+    """知道某个有效访问码的人，不能靠「输错几次、输对一次」循环绕过锁定去猜别的码"""
     user = make_user()
     set_code(client, user, "clipboard", code="right")
-    for _ in range(2):
-        for _ in range(MAX_FAILURES - 1):
-            quick_login(client, f"{user.username}@wrong1")
-        assert quick_login(client, f"{user.username}@right").status_code == 200
+    for _ in range(MAX_FAILURES - 1):
+        assert quick_login(client, f"{user.username}@wrong1").status_code == 404
+    assert quick_login(client, f"{user.username}@right").status_code == 200  # 输对只退还这一次
+    assert quick_login(client, f"{user.username}@wrong1").status_code == 404  # 累计第 10 次错，触发锁定
+    assert quick_login(client, f"{user.username}@right").status_code == 429
+
+
+def test_concurrent_guesses_cannot_exceed_the_limit(client, make_user, monkeypatch):
+    """比对访问码要回库（有 await）：并发进来的猜测在计数前不能溜过锁定检查，总共只放行 MAX_FAILURES 次"""
+    import asyncio
+    import httpx
+    from app.api import access as access_api
+    from app.main import app
+
+    user = make_user()
+    set_code(client, user, "clipboard", code="right")
+    real = access_api.code_is_active
+
+    async def slow(db, owner_id, code):
+        await asyncio.sleep(0.05)
+        return await real(db, owner_id, code)
+    monkeypatch.setattr(access_api, "code_is_active", slow)
+
+    async def burst():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
+            responses = await asyncio.gather(*(
+                ac.post("/api/access/login", json={"full_code": f"{user.username}@wrong1"})
+                for _ in range(MAX_FAILURES + 2)
+            ))
+        return sorted(r.status_code for r in responses)
+
+    assert client.portal.call(burst) == [404] * MAX_FAILURES + [429] * 2
+
+
+def test_unknown_and_wrong_code_cost_the_same_lookups(client, make_user, monkeypatch):
+    """用户名不存在时也照常查库比对，失败路径的耗时看不出用户名是否存在"""
+    from app.api import access as access_api
+
+    user = make_user()
+    set_code(client, user, "clipboard", code="right")
+    real, calls = access_api.code_is_active, []
+
+    async def spy(db, owner_id, code):
+        calls.append(owner_id)
+        return await real(db, owner_id, code)
+    monkeypatch.setattr(access_api, "code_is_active", spy)
+
+    assert quick_login(client, "nobody-here@wrong1").status_code == 404
+    assert quick_login(client, f"{user.username}@wrong1").status_code == 404
+    assert calls == [0, user.id]  # 不存在的用户名用 id 0（不属于任何用户）查一遍
+
+
+def test_failure_tracker_counts_only_recent_failures():
+    """窗口之外的失败作废：偶尔输错的人不会越攒越多；窗口内累计到上限才锁定"""
+    from app.core.quick_access import FailureTracker, LOCK_SECONDS
+
+    now = [1000.0]
+    tracker = FailureTracker(clock=lambda: now[0])
+    for _ in range(MAX_FAILURES - 1):
+        assert tracker.begin_attempt("u1")
+    now[0] += LOCK_SECONDS + 1
+    assert tracker.begin_attempt("u1")      # 之前的失败已过窗口，这是重新计数的第 1 次
+    for _ in range(MAX_FAILURES - 2):
+        assert tracker.begin_attempt("u1")
+    assert tracker.begin_attempt("u1")      # 窗口内第 10 次：本次放行比对，随后锁定
+    assert not tracker.begin_attempt("u1")
+    now[0] += LOCK_SECONDS + 1
+    assert tracker.begin_attempt("u1")      # 锁定结束后重新计数
+
+
+def test_failure_tracker_has_a_hard_size_limit(monkeypatch):
+    """随机用户名灌满记录时，淘汰最久没动静的记录，内存有硬上限，且正在锁定的记录优先保留"""
+    from app.core import quick_access
+    from app.core.quick_access import FailureTracker
+
+    monkeypatch.setattr(quick_access, "_TRACK_LIMIT", 5)
+    tracker = FailureTracker()
+    for _ in range(MAX_FAILURES):
+        tracker.begin_attempt("locked")
+    for i in range(50):
+        tracker.begin_attempt(f"n:random{i}")
+    assert len(tracker._entries) <= 5
+    assert not tracker.begin_attempt("locked")
 
 
 def test_quick_login_is_rate_limited_per_ip(client):
     statuses = [quick_login(client, f"user{i}x@code1").status_code for i in range(31)]
     assert statuses[:30] == [404] * 30
     assert statuses[30] == 429
+
+
+# ---------- 补充：已签发的凭证随访问码失效、越权访问 ----------
+
+def test_token_issued_before_expiry_stops_working_after_it(client, db, make_user):
+    """先换到凭证，访问码随后过期：已拿到的凭证立即返回 401，不用等凭证自己的 2 小时到期"""
+    user = make_user()
+    text_id = new_text(client, user)["id"]
+    set_code(client, user, "text", text_id, code="soon")
+    headers = quick_headers(client, f"{user.username}@soon")
+    assert client.get("/api/access/items", headers=headers).status_code == 200
+
+    async def _expire(s):
+        await s.execute(update(Text).where(Text.id == text_id).values(access_expires_at=utcnow() - timedelta(seconds=1)))
+    db(_expire)
+    assert client.get("/api/access/items", headers=headers).status_code == 401
+    assert client.get(f"/api/access/texts/{text_id}", headers=headers).status_code == 401
+
+
+def test_cleared_code_blocks_every_quick_endpoint(client, make_user):
+    """所有快速访问接口共用同一个校验：码被清除后，剪切板、文本、下载都返回 401"""
+    user = make_user()
+    client.put("/api/clipboard", json={"content": "clip"}, headers=user.headers)
+    text_id = new_text(client, user)["id"]
+    file_id = upload(client, user, b"data").json()["id"]
+    set_code(client, user, "clipboard")
+    set_code(client, user, "text", text_id)
+    set_code(client, user, "file", file_id)
+    headers = quick_headers(client, f"{user.username}@mycode")
+    for target, tid in (("clipboard", None), ("text", text_id), ("file", file_id)):
+        set_code(client, user, target, tid, code=None)
+    for path in ["/api/access/clipboard", f"/api/access/texts/{text_id}", f"/api/access/files/{file_id}/download"]:
+        assert client.get(path, headers=headers).status_code == 401, path
+
+
+def test_quick_download_cannot_reach_other_users_file_with_same_code(client, make_user):
+    """两个用户用了同一个访问码：凭 A 的完整访问码拿不到 B 的文件"""
+    alice, bob = make_user(), make_user()
+    a_file = upload(client, alice, b"alice-data").json()["id"]
+    b_file = upload(client, bob, b"BOB-SECRET").json()["id"]
+    set_code(client, alice, "file", a_file, code="shared")
+    set_code(client, bob, "file", b_file, code="shared")
+    headers = quick_headers(client, f"{alice.username}@shared")
+    assert client.get(f"/api/access/files/{a_file}/download", headers=headers).content == b"alice-data"
+    resp = client.get(f"/api/access/files/{b_file}/download", headers=headers)
+    assert resp.status_code == 404 and b"BOB-SECRET" not in resp.content
+
+
+def test_quick_edit_text_succeeds_and_persists(client, make_user):
+    user = make_user()
+    text = new_text(client, user, "v1")
+    set_code(client, user, "text", text["id"])
+    headers = quick_headers(client, f"{user.username}@mycode")
+    resp = client.put(f"/api/access/texts/{text['id']}", json={"content": "edited", "base_version": text["version"]}, headers=headers)
+    assert resp.status_code == 200 and resp.json()["content"] == "edited"
+    assert client.get(f"/api/texts/{text['id']}", headers=user.headers).json()["content"] == "edited"
+
+
+def test_clipboard_code_points_at_current_text(client, make_user):
+    """云剪切板的访问码不存快照：属主改了内容，快速访问页看到的随之变化"""
+    user = make_user()
+    client.put("/api/clipboard", json={"content": "first"}, headers=user.headers)
+    set_code(client, user, "clipboard")
+    headers = quick_headers(client, f"{user.username}@mycode")
+    assert client.get("/api/access/clipboard", headers=headers).json()["content"] == "first"
+    client.put("/api/clipboard", json={"content": "second"}, headers=user.headers)
+    assert client.get("/api/access/clipboard", headers=headers).json()["content"] == "second"
+    assert client.get("/api/access/items", headers=headers).json()["clipboard"]["content"] == "second"
+
+
+def test_ws_registered_after_owner_disabled_is_closed(client, db, make_user, monkeypatch):
+    """握手校验通过、登记连接之前用户被禁用（此时断开动作看不到这条连接）：登记后再确认一次，随即以 1008 关闭"""
+    from app.api import ws as ws_api
+
+    user = make_user(active=False)
+
+    async def _stale_auth(_websocket):
+        return ws_api._Peer(user_id=user.id)  # 模拟握手时用户还是启用的
+    monkeypatch.setattr(ws_api, "_authenticate", _stale_auth)
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with _ws(client, user.token) as ws:
+            ws.receive_text()
+    assert exc.value.code == 1008
 
 
 # ---------- 实时推送 ----------
@@ -375,9 +536,9 @@ def test_quick_ws_closed_when_code_cleared(client, make_user):
     set_code(client, user, "clipboard")
     with _ws(client, _quick_token(client, f"{user.username}@mycode")) as ws:
         set_code(client, user, "clipboard", code=None)
-        with pytest.raises(Exception) as exc:
+        with pytest.raises(WebSocketDisconnect) as exc:
             ws.receive_text()
-        assert getattr(exc.value, "code", 1008) == 1008
+        assert exc.value.code == 1008
 
 
 def test_quick_ws_closed_on_ping_after_code_expired(client, db, make_user):
@@ -389,8 +550,9 @@ def test_quick_ws_closed_on_ping_after_code_expired(client, db, make_user):
                             .values(access_expires_at=utcnow() - timedelta(seconds=1)))
         db(_expire)  # 不经过接口（如定时清理），只能靠心跳发现
         ws.send_text('{"type":"ping"}')
-        with pytest.raises(Exception):
+        with pytest.raises(WebSocketDisconnect) as exc:
             ws.receive_text()
+        assert exc.value.code == 1008
 
 
 def test_quick_ws_rejected_with_invalid_code(client, make_user):
@@ -398,9 +560,10 @@ def test_quick_ws_rejected_with_invalid_code(client, make_user):
     set_code(client, user, "clipboard")
     token = _quick_token(client, f"{user.username}@mycode")
     set_code(client, user, "clipboard", code=None)
-    with pytest.raises(Exception):
+    with pytest.raises(WebSocketDisconnect) as exc:
         with _ws(client, token) as ws:
             ws.receive_text()
+    assert exc.value.code == 1008
 
 
 def test_quick_ws_closed_when_owner_disabled(client, make_user):
@@ -409,8 +572,9 @@ def test_quick_ws_closed_when_owner_disabled(client, make_user):
     set_code(client, user, "clipboard")
     with _ws(client, _quick_token(client, f"{user.username}@mycode")) as ws:
         client.patch(f"/api/admin/users/{user.id}/status", json={"is_active": False}, headers=superadmin.headers)
-        with pytest.raises(Exception):
+        with pytest.raises(WebSocketDisconnect) as exc:
             ws.receive_text()
+        assert exc.value.code == 1008
 
 
 def test_quick_edit_notifies_owner_terminals(client, make_user):

@@ -1,4 +1,4 @@
-"""文件系统安全：路径穿越、分片伪造、配额绕过、下载头注入"""
+"""文件系统安全：路径穿越、分片伪造、配额绕过、下载头注入、下载类型、文件名清洗"""
 import uuid
 
 import pytest
@@ -129,3 +129,34 @@ def test_unicode_filename_download(client, make_user):
     file_id = upload(client, user, b"data", name="报告 2024.pdf").json()["id"]
     disposition = client.get(f"/api/files/{file_id}/download", headers=user.headers).headers["content-disposition"]
     assert disposition.isascii()
+
+
+@pytest.mark.parametrize("name", ["page.html", "image.svg", "note.txt", "noext"])
+def test_download_is_always_an_octet_stream(client, make_user, name):
+    """用户能上传 .html / .svg：下载一律按二进制流下发，浏览器不会把它当页面解析；列表里的 mime_type 照常显示"""
+    user = make_user()
+    uploaded = upload(client, user, b"<script>alert(1)</script>", name=name).json()
+    resp = client.get(f"/api/files/{uploaded['id']}/download", headers=user.headers)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/octet-stream"
+    assert resp.headers["content-disposition"].startswith("attachment;")
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    listed = client.get("/api/files", headers=user.headers).json()["items"][0]
+    assert listed["mime_type"] == uploaded["mime_type"]
+
+
+def test_filename_drops_direction_and_zero_width_characters(client, make_user):
+    """方向控制符能把 invoice<U+202E>fdp.exe 显示成 invoiceexe.pdf，零宽字符能让两个文件名看起来一样：入库前删掉"""
+    user = make_user()
+    assert upload(client, user, b"data", name="invoice‮fdp.exe").json()["original_name"] == "invoicefdp.exe"
+    assert upload(client, user, b"data", name="re​port﻿.pdf").json()["original_name"] == "report.pdf"
+
+
+def test_sanitize_filename_keeps_legitimate_characters():
+    from app.core.http_utils import sanitize_filename
+    assert sanitize_filename("报告 2024.pdf") == "报告 2024.pdf"
+    assert sanitize_filename("👨‍👩‍👧.png") == "👨‍👩‍👧.png"  # emoji 组合序列用的零宽连接符保留
+    assert sanitize_filename("می‌خواهم.txt") == "می‌خواهم.txt"            # 波斯语用的零宽非连接符保留
+    assert sanitize_filename("a\x85b c d.txt") == "a_b_c_d.txt"
+    assert sanitize_filename("‮​") == "file"
+    assert "/" not in sanitize_filename("../../evil.txt") and "\\" not in sanitize_filename("..\\evil.txt")

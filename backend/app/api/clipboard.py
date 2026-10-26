@@ -324,7 +324,10 @@ async def delete_clipboard_history(
         )
 
     await db.execute(
-        delete(ClipboardHistory).where(ClipboardHistory.id == history_id)
+        delete(ClipboardHistory).where(
+            ClipboardHistory.id == history_id,
+            ClipboardHistory.user_id == current_user.id,  # 安全红线：删除条件同样带归属
+        )
     )
     await db.commit()
 

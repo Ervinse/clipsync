@@ -40,6 +40,22 @@ def test_delete_user_removes_all_data(client, db, make_user):
     assert reuse.status_code == 400
 
 
+def test_deleted_user_loses_token_and_websocket(client, make_user):
+    """删除用户后：旧 token 立即 401，已连着的 WebSocket 被服务端关闭（1008），也不能再登录或重连"""
+    superadmin, victim = make_user(UserRole.SUPERADMIN), make_user()
+    assert client.get("/api/auth/me", headers=victim.headers).status_code == 200
+    with _ws(client, victim.token) as ws:
+        assert client.delete(f"/api/admin/users/{victim.id}", headers=superadmin.headers).status_code == 204
+        with pytest.raises(WebSocketDisconnect) as exc:
+            ws.receive_text()
+        assert exc.value.code == 1008
+    assert client.get("/api/auth/me", headers=victim.headers).status_code == 401
+    assert client.post("/api/auth/login", json={"username": victim.username, "password": "password123"}).status_code == 401
+    with pytest.raises(WebSocketDisconnect):
+        with _ws(client, victim.token) as ws:
+            ws.receive_text()
+
+
 def test_delete_admin_handles_their_invite_batches(client, db, make_user):
     """被删管理员的批次：码全未使用的批次整批删除；含已使用码的批次转记到执行删除的超管名下，备注保留"""
     superadmin, admin, member = make_user(UserRole.SUPERADMIN), make_user(UserRole.ADMIN), make_user()

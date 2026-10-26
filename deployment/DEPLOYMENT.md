@@ -238,7 +238,7 @@ vi .env          # 至少修改 CORS_ORIGINS
 | `COMPOSE_FILE` | 启用 HTTPS 时设为 `docker-compose.yml:docker-compose.https.yml`（第 9 节） | 不设置 |
 | `DB_ROOT_PASSWORD` | MySQL root 密码（用户名固定为 `root`） | 必填 |
 | `DB_NAME` / `DB_USER` / `DB_PASSWORD` | 应用使用的库名、账号、密码。`DB_USER` 不能是 `root` | `clipsync` / `clipsync` / 必填 |
-| `JWT_SECRET` | 登录令牌的签名密钥，至少 32 位。修改后所有用户需要重新登录 | 必填 |
+| `JWT_SECRET` | 登录令牌的签名密钥，至少 32 位且不同字符不少于 10 种。修改后所有用户需要重新登录 | 必填 |
 | `JWT_ALGORITHM` / `JWT_EXPIRE_MINUTES` | 签名算法（HS256/384/512）、令牌有效期（分钟） | `HS256` / `10080`（7 天） |
 | `CORS_ORIGINS` | 浏览器地址栏里的访问地址（协议 + 域名或 IP + 非默认端口），逗号分隔，不支持 `*` | `http://localhost` |
 | `HSTS_ENABLED` | HTTPS 生效后设为 `true`，HTTP 阶段必须为 `false` | `false` |
@@ -248,7 +248,7 @@ vi .env          # 至少修改 CORS_ORIGINS
 | `MAX_UPLOAD_SESSIONS_PER_USER` / `UPLOAD_SESSION_TTL_HOURS` | 每用户同时上传数、未完成上传的保留小时数 | `5` / `24` |
 | `HISTORY_KEEP` | 每个用户保留的云剪切板历史条数 | `50` |
 
-- 三个必填项未设置时 `docker compose` 直接报错；`JWT_SECRET` 太短或仍是示例值时 backend 拒绝启动。
+- 三个必填项未设置时 `docker compose` 直接报错；`JWT_SECRET` 太短、字符过于单一或仍是示例值时 backend 拒绝启动。
 - 数据库账号只在**第一次启动**（数据卷为空）时创建。之后修改 `DB_USER`、`DB_PASSWORD`、`DB_ROOT_PASSWORD` 不会改变数据库里的账号，反而会让 backend 连不上数据库。要改密码，先在数据库里 `ALTER USER`，再同步修改 `.env`。
 - `CORS_ORIGINS` 只影响从其他网址跨域调用接口；浏览器直接访问本站时不受它影响。仍建议填写实际访问地址。
 - 修改 `.env` 后执行 `docker compose up -d`，compose 会重建配置有变化的容器。
@@ -563,7 +563,7 @@ docker image prune                        # 删除没有标签的旧镜像层（
 | `pull access denied for clipsync-backend`、`No such image` | 镜像没有导入，或 `CLIPSYNC_TAG` 指向不存在的标签。`docker images clipsync-backend` 查看已有的标签，重新 `docker load` |
 | 部署了测试分支，页面却还是旧版本 | 非 master 的镜像没有 `latest` 标签，要把 `CLIPSYNC_TAG` 改成提交号 |
 | 导入了正式版本的发布包，页面却还是旧版本，或提示找不到镜像 | 发布包里的镜像没有 `latest` 标签，要把 `.env` 的 `CLIPSYNC_TAG` 改成版本号 |
-| backend 反复重启，日志提示 `JWT_SECRET 过弱` | `JWT_SECRET` 少于 32 位或含示例占位文字，用 `openssl rand -hex 32` 重新生成 |
+| backend 反复重启，日志提示 `JWT_SECRET 过弱` | `JWT_SECRET` 少于 32 位、字符过于单一（如整串同一个字符）或含示例占位文字，用 `openssl rand -hex 32` 重新生成 |
 | backend 日志 `Access denied for user` | `.env` 的数据库密码与数据库里实际的账号不一致，常见于数据卷已存在后又修改了密码（第 6.2 节） |
 | db 一直不是 healthy | `docker compose logs db`。磁盘满、数据目录损坏、内存不足都会导致 MySQL 启动失败 |
 | 容器启动即退出，日志 `exec format error` | 服务器不是 x86_64 |

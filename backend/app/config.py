@@ -6,6 +6,8 @@ from pydantic_settings import BaseSettings
 
 # 示例 / 占位密钥中常见的片段，命中即视为未替换
 _PLACEHOLDER_MARKERS = ("change_this", "changeme", "change-me", "your_", "secret_key_here", "example")
+# 密钥里至少要有这么多种不同字符；`openssl rand -hex 32` 生成的串几乎必然远超此值，32 个同一字符之类的低熵串过不了
+_MIN_DISTINCT_CHARS = 10
 
 
 class Settings(BaseSettings):
@@ -43,7 +45,11 @@ class Settings(BaseSettings):
     def _check_jwt_secret(cls, value: str) -> str:
         # 安全红线：弱密钥 / 示例密钥可被用来伪造任意用户（含 superadmin）的 token，直接拒绝启动
         lowered = value.lower()
-        if len(value) < 32 or any(marker in lowered for marker in _PLACEHOLDER_MARKERS):
+        if (
+            len(value) < 32
+            or len(set(value)) < _MIN_DISTINCT_CHARS
+            or any(marker in lowered for marker in _PLACEHOLDER_MARKERS)
+        ):
             raise ValueError(
                 "JWT_SECRET 过弱或仍是示例值，请用 `openssl rand -hex 32` 生成随机串后写入 .env"
             )

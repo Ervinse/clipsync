@@ -1,4 +1,4 @@
-"""认证：注册开关、邀请码、JWT 校验、禁用用户、弱密钥"""
+"""认证：注册开关、邀请码、JWT 校验、禁用用户、弱密钥、登录 / 注册 / 快速访问限流"""
 import pytest
 from jose import jwt
 from pydantic import ValidationError
@@ -129,6 +129,49 @@ def test_permission_denied_403_has_no_disabled_header(client, make_user):
 
 
 def test_weak_jwt_secret_refused():
-    for weak in ["short", "change_this_to_a_long_random_string_in_production"]:
+    for weak in [
+        "short",
+        "change_this_to_a_long_random_string_in_production",
+        "a" * 32,                              # 够长但只有一种字符
+        "abababababababababababababababab",    # 两种字符循环
+        "01234567" * 4,                        # 只有 8 种字符，规律明显
+    ]:
         with pytest.raises(ValidationError):
             Settings(JWT_SECRET=weak)
+
+
+def test_generated_jwt_secrets_accepted():
+    import secrets
+    for _ in range(20):
+        assert Settings(JWT_SECRET=secrets.token_hex(32)).JWT_SECRET
+
+
+# ---------- 限流（安全红线 7）：同一 IP 超过上限返回 429 ----------
+
+def test_login_is_rate_limited(client, make_user):
+    user = make_user()
+    body = {"username": user.username, "password": "wrong-password"}
+    statuses = [client.post("/api/auth/login", json=body).status_code for _ in range(11)]
+    assert statuses[:10] == [401] * 10
+    assert statuses[10] == 429
+    # 限流挡的是请求本身：超限后输对密码也进不去
+    ok = {"username": user.username, "password": "password123"}
+    assert client.post("/api/auth/login", json=ok).status_code == 429
+
+
+def test_register_is_rate_limited(client):
+    body = {"username": "someone", "password": "password123", "invite_code": "NO-SUCH-CODE"}
+    statuses = [client.post("/api/auth/register", json=body).status_code for _ in range(6)]
+    assert statuses[:5] == [400] * 5
+    assert statuses[5] == 429
+
+
+def test_quick_access_endpoints_are_rate_limited(client, make_user):
+    """持有凭证后的 /api/access/* 每个接口 120 次/分钟/IP"""
+    from tests.helpers import set_code, quick_headers
+    user = make_user()
+    set_code(client, user, "clipboard")
+    headers = quick_headers(client, f"{user.username}@mycode")
+    statuses = [client.get("/api/access/items", headers=headers).status_code for _ in range(121)]
+    assert statuses[:120] == [200] * 120
+    assert statuses[120] == 429
