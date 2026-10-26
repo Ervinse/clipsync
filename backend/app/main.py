@@ -34,7 +34,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ClipSync API",
-    version="0.1.0",
+    # 与后台「系统信息」显示的版本一致；开发环境没有版本号
+    version=settings.APP_VERSION or "dev",
     description="跨终端剪贴板与文件同步服务",
     lifespan=lifespan,
 )

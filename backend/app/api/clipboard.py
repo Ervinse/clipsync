@@ -14,14 +14,12 @@ from ..schemas import (
 )
 from ..core.deps import get_current_user
 from ..core.ws_manager import manager
-from ..core.quick_access import notify_quick_viewers
+from ..core.quick_access import notify_quick_viewers, CONTENT_GONE_DETAIL
 from ..core.timeutil import utcnow
 from ..config import settings
-from .texts import INLINE_CONTENT_BYTES, PREVIEW_CHARS
+from .texts import INLINE_CONTENT_BYTES, PREVIEW_CHARS, CONFLICT_DETAIL
 
 router = APIRouter()
-
-CONFLICT_DETAIL = "内容已在别处更新，请先载入最新内容"
 
 
 def to_clipboard_response(clipboard: Clipboard | None) -> ClipboardResponse:
@@ -105,7 +103,7 @@ async def write_clipboard(
         and (old_clipboard.access_expires_at is None or old_clipboard.access_expires_at > utcnow())
     ):
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="内容不存在或访问码已失效")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=CONTENT_GONE_DETAIL)
 
     if base_version is not None and base_version != current_version:
         await db.rollback()

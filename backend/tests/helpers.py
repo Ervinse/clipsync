@@ -9,6 +9,32 @@ from app.models import InviteBatch, InviteCode
 STORAGE_ROOT = Path(settings.STORAGE_DIR).resolve()
 
 
+def init_upload(client, user, total_size, chunk_size=1024, name="f.bin"):
+    """初始化分片上传，返回响应（不断言状态码）"""
+    return client.post(
+        "/api/files/upload/init",
+        json={"original_name": name, "total_size": total_size, "chunk_size": chunk_size},
+        headers=user.headers,
+    )
+
+
+def start_upload(client, user, total_size, chunk_size=1024, name="f.bin"):
+    """初始化分片上传并断言成功，返回 {upload_id, total_chunks, chunk_size}"""
+    resp = init_upload(client, user, total_size, chunk_size=chunk_size, name=name)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def post_chunk(client, user, upload_id, index, data: bytes):
+    """上传一个分片，返回响应（不断言状态码）"""
+    return client.post(
+        "/api/files/upload/chunk",
+        data={"upload_id": upload_id, "chunk_index": str(index)},
+        files={"chunk_data": ("blob", data)},
+        headers=user.headers,
+    )
+
+
 def upload(client, user, content: bytes, name="note.txt", chunk_size=1024):
     """完整走一遍三步上传，返回 complete 的响应"""
     resp = client.post(
@@ -32,6 +58,16 @@ def upload(client, user, content: bytes, name="note.txt", chunk_size=1024):
         json={"upload_id": info["upload_id"]},
         headers=user.headers,
     )
+
+
+def set_clipboard(client, user, text):
+    """保存云剪切板当前文本并断言成功"""
+    assert client.put("/api/clipboard", json={"content": text}, headers=user.headers).status_code == 200
+
+
+def ws_connect(client, token):
+    """用登录凭证或快速访问凭证连 /ws（凭证走子协议，见 api/ws.py）"""
+    return client.websocket_connect("/ws", subprotocols=["clipsync.v1", f"bearer.{token}"])
 
 
 def set_code(client, user, target_type, target_id=None, code="mycode", expires_at=None, expect=200):

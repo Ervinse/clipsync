@@ -21,7 +21,6 @@ export const useAdminStore = defineStore('admin', {
     files: [],
     filesTotal: 0,
     filesSkip: 0,
-    isLoading: false,
   }),
 
   actions: {
@@ -43,7 +42,6 @@ export const useAdminStore = defineStore('admin', {
      */
     async fetchUsers(skip = this.usersSkip) {
       try {
-        this.isLoading = true
         // 后端返回 { items, total }
         const data = await api.admin.users.list(skip, PAGE_SIZE)
         this.users = data?.items || []
@@ -56,8 +54,6 @@ export const useAdminStore = defineStore('admin', {
       } catch (error) {
         console.error('获取用户列表失败:', error)
         throw error
-      } finally {
-        this.isLoading = false
       }
     },
 

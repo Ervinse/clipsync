@@ -275,23 +275,9 @@ const handleClear = async () => {
   color: var(--color-text-inverse);
 }
 
-.input-with-suffix {
-  position: relative;
-  display: block;
-}
-
+/* 单位是两个字「小时」，比全局的 48px 多留一点 */
 .input-with-suffix .input {
   padding-right: 52px;
-}
-
-.input-suffix {
-  position: absolute;
-  right: var(--space-3);
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: var(--text-sm);
-  color: var(--color-text-tertiary);
-  pointer-events: none;
 }
 
 .warn-text {

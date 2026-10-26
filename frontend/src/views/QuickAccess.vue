@@ -2,7 +2,7 @@
 // 快速访问页：凭「用户名@访问码」进入后，列出该访问码下的云剪切板、文本与文件。
 // 文本可以查看与修改（含标题），文件可以下载；不能新建、删除、上传，也看不到、改不了访问码。
 // 属主或其他人改了这些内容时经 quickWs 实时刷新；访问码失效时提示并禁止编辑，未保存的内容留在页面上
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import {
   Save, Download, File, LoaderCircle, TriangleAlert, LogOut, RotateCw, Copy, Inbox,
@@ -11,10 +11,11 @@ import api from '../api'
 import { useQuickStore } from '../stores'
 import { quickWs } from '../stores/quick'
 import { createTextDrafts } from '../utils/textDrafts'
-import { formatSize, formatDateTime } from '../utils/format'
+import { formatSize, formatDateTime, formatDownloadProgress } from '../utils/format'
 import { copyText } from '../utils/clipboard'
-import { saveBlob } from '../utils/download'
+import { downloadWithProgress } from '../utils/download'
 import { confirmDialog } from '../utils/dialog'
+import { confirmDiscardChanges } from '../utils/editor'
 import toast from '../utils/toast'
 import BrandMark from '../components/BrandMark.vue'
 import ThemeToggle from '../components/ThemeToggle.vue'
@@ -99,13 +100,7 @@ onUnmounted(() => {
 // 有未保存的修改时离开（浏览器后退等）先确认；访问码已失效时修改本来也保存不了，不再拦
 onBeforeRouteLeave(async () => {
   if (!hasDirty() || lost.value) return true
-  return await confirmDialog({
-    title: '放弃未保存的修改？',
-    message: '有文本还没有保存，离开后会丢失。',
-    confirmText: '放弃并离开',
-    cancelText: '继续编辑',
-    danger: true,
-  })
+  return await confirmDiscardChanges()
 })
 
 // 访问码仍有效时退出先确认，防止误点；有未保存的修改时换成危险提示。
@@ -137,29 +132,14 @@ const handleExit = async () => {
 const copyDraft = (key) => copyText(drafts[key]?.content || '', '已复制')
 
 // 下载：以 blob 方式取回（要带快速访问凭证），期间显示进度
-const downloads = ref({})
-const downloadText = (file) => {
-  const state = downloads.value[file.id]
-  if (!state) return ''
-  return state.total > 0
-    ? `下载中 ${Math.min(100, Math.round((state.loaded / state.total) * 100))}%`
-    : '下载中…'
-}
+const downloads = reactive({})
+const downloadText = (file) => formatDownloadProgress(downloads[file.id])
 const handleDownload = async (file) => {
-  if (downloads.value[file.id] || lost.value) return
-  downloads.value[file.id] = { loaded: 0, total: file.size || 0 }
+  if (lost.value) return
   try {
-    const blob = await api.quick.downloadFile(file.id, (event) => {
-      const current = downloads.value[file.id]
-      if (!current) return
-      current.loaded = event.loaded
-      current.total = event.total || file.size || 0
-    })
-    saveBlob(blob, file.original_name)
+    await downloadWithProgress(downloads, file, (onProgress) => api.quick.downloadFile(file.id, onProgress))
   } catch (error) {
     if (error?.status !== 401) toast.error('下载失败：' + (error.message || '未知错误'))
-  } finally {
-    delete downloads.value[file.id]
   }
 }
 </script>

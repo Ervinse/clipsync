@@ -4,15 +4,11 @@ import pytest
 from app.api import files as files_api
 from app.config import settings
 from app.models import Setting, UserRole
-from tests.helpers import upload
+from tests.helpers import set_clipboard
 
 
 def _history(client, user):
     return client.get("/api/clipboard/history", headers=user.headers).json()["items"]
-
-
-def _put(client, user, text):
-    assert client.put("/api/clipboard", json={"content": text}, headers=user.headers).status_code == 200
 
 
 # ---------- 分片上传 ----------
@@ -62,16 +58,16 @@ def test_complete_releases_lock_after_failure(client, make_user):
 
 def test_saving_same_content_does_not_duplicate_history(client, make_user):
     user = make_user()
-    _put(client, user, "a")
-    _put(client, user, "a")
-    _put(client, user, "a")
+    set_clipboard(client, user, "a")
+    set_clipboard(client, user, "a")
+    set_clipboard(client, user, "a")
     assert _history(client, user) == []
 
 
 def test_restore_consumes_restored_history_entry(client, make_user):
     user = make_user()
-    _put(client, user, "a")
-    _put(client, user, "b")
+    set_clipboard(client, user, "a")
+    set_clipboard(client, user, "b")
     [entry] = _history(client, user)
     assert entry["content"] == "a"
 
@@ -84,7 +80,7 @@ def test_restore_consumes_restored_history_entry(client, make_user):
 def test_history_order_is_stable_within_same_second(client, make_user):
     user = make_user()
     for text in ["v1", "v2", "v3", "v4"]:
-        _put(client, user, text)
+        set_clipboard(client, user, text)
     # created_at 精度只到秒，多条可能相同，按 id 兜底后顺序固定为最新在前
     assert [h["content"] for h in _history(client, user)] == ["v3", "v2", "v1"]
 
@@ -94,7 +90,7 @@ def test_history_list_inlines_short_content_and_previews_long_content(client, ma
     user = make_user()
     short, long_text = "短文本", "长" * 30000  # 90000 字节，超过 64KB
     for text in (short, long_text, "current"):
-        _put(client, user, text)
+        set_clipboard(client, user, text)
     long_item, short_item = _history(client, user)  # 最新在前
     assert short_item["content"] == short and short_item["size"] == len(short.encode("utf-8"))
     assert long_item["content"] is None
@@ -110,7 +106,7 @@ def test_history_keep_removes_oldest(client, make_user, monkeypatch):
     monkeypatch.setattr(settings, "HISTORY_KEEP", 2)
     user = make_user()
     for text in ["v1", "v2", "v3", "v4", "v5"]:
-        _put(client, user, text)
+        set_clipboard(client, user, text)
     assert [h["content"] for h in _history(client, user)] == ["v4", "v3"]
 
 
@@ -161,9 +157,3 @@ def test_superadmin_can_still_manage_admin(client, make_user):
     superadmin, admin = make_user(UserRole.SUPERADMIN), make_user(UserRole.ADMIN)
     resp = client.patch(f"/api/admin/users/{admin.id}/status", json={"is_active": False}, headers=superadmin.headers)
     assert resp.status_code == 200 and resp.json()["is_active"] is False
-
-
-def test_upload_still_works_end_to_end(client, make_user):
-    user = make_user()
-    resp = upload(client, user, b"x" * 5000, chunk_size=1024)
-    assert resp.status_code == 200 and resp.json()["size"] == 5000

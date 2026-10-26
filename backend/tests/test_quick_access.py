@@ -8,7 +8,7 @@ from starlette.websockets import WebSocketDisconnect
 from app.models import User, Text, File, Clipboard
 from app.core.timeutil import utcnow
 from app.core.quick_access import MAX_FAILURES
-from tests.helpers import upload, set_code, new_text, quick_login, quick_headers
+from tests.helpers import upload, set_code, new_text, quick_login, quick_headers, ws_connect
 
 
 # ---------- 设置访问码 ----------
@@ -504,16 +504,12 @@ def test_ws_registered_after_owner_disabled_is_closed(client, db, make_user, mon
         return ws_api._Peer(user_id=user.id)  # 模拟握手时用户还是启用的
     monkeypatch.setattr(ws_api, "_authenticate", _stale_auth)
     with pytest.raises(WebSocketDisconnect) as exc:
-        with _ws(client, user.token) as ws:
+        with ws_connect(client, user.token) as ws:
             ws.receive_text()
     assert exc.value.code == 1008
 
 
 # ---------- 实时推送 ----------
-
-def _ws(client, token):
-    return client.websocket_connect("/ws", subprotocols=["clipsync.v1", f"bearer.{token}"])
-
 
 def _quick_token(client, full_code):
     return quick_login(client, full_code).json()["access_token"]
@@ -523,7 +519,7 @@ def test_quick_ws_gets_signal_when_owner_edits(client, make_user):
     user = make_user()
     text = new_text(client, user, "v1")
     set_code(client, user, "text", text["id"])
-    with _ws(client, _quick_token(client, f"{user.username}@mycode")) as ws:
+    with ws_connect(client, _quick_token(client, f"{user.username}@mycode")) as ws:
         ws.send_text('{"type":"ping"}')
         assert ws.receive_json() == {"type": "pong"}
         client.put(f"/api/texts/{text['id']}", json={"content": "SECRET-V2"}, headers=user.headers)
@@ -534,7 +530,7 @@ def test_quick_ws_gets_signal_when_owner_edits(client, make_user):
 def test_quick_ws_closed_when_code_cleared(client, make_user):
     user = make_user()
     set_code(client, user, "clipboard")
-    with _ws(client, _quick_token(client, f"{user.username}@mycode")) as ws:
+    with ws_connect(client, _quick_token(client, f"{user.username}@mycode")) as ws:
         set_code(client, user, "clipboard", code=None)
         with pytest.raises(WebSocketDisconnect) as exc:
             ws.receive_text()
@@ -544,7 +540,7 @@ def test_quick_ws_closed_when_code_cleared(client, make_user):
 def test_quick_ws_closed_on_ping_after_code_expired(client, db, make_user):
     user = make_user()
     set_code(client, user, "clipboard")
-    with _ws(client, _quick_token(client, f"{user.username}@mycode")) as ws:
+    with ws_connect(client, _quick_token(client, f"{user.username}@mycode")) as ws:
         async def _expire(s):
             await s.execute(update(Clipboard).where(Clipboard.user_id == user.id)
                             .values(access_expires_at=utcnow() - timedelta(seconds=1)))
@@ -561,7 +557,7 @@ def test_quick_ws_rejected_with_invalid_code(client, make_user):
     token = _quick_token(client, f"{user.username}@mycode")
     set_code(client, user, "clipboard", code=None)
     with pytest.raises(WebSocketDisconnect) as exc:
-        with _ws(client, token) as ws:
+        with ws_connect(client, token) as ws:
             ws.receive_text()
     assert exc.value.code == 1008
 
@@ -570,7 +566,7 @@ def test_quick_ws_closed_when_owner_disabled(client, make_user):
     from app.models import UserRole
     superadmin, user = make_user(UserRole.SUPERADMIN), make_user()
     set_code(client, user, "clipboard")
-    with _ws(client, _quick_token(client, f"{user.username}@mycode")) as ws:
+    with ws_connect(client, _quick_token(client, f"{user.username}@mycode")) as ws:
         client.patch(f"/api/admin/users/{user.id}/status", json={"is_active": False}, headers=superadmin.headers)
         with pytest.raises(WebSocketDisconnect) as exc:
             ws.receive_text()
@@ -582,14 +578,14 @@ def test_quick_edit_notifies_owner_terminals(client, make_user):
     text = new_text(client, user, "v1")
     set_code(client, user, "text", text["id"])
     headers = quick_headers(client, f"{user.username}@mycode")
-    with _ws(client, user.token) as ws:
+    with ws_connect(client, user.token) as ws:
         client.put(f"/api/access/texts/{text['id']}", json={"content": "v2"}, headers=headers)
         assert ws.receive_json() == {"type": "texts_changed", "data": {"id": text["id"]}}
 
 
 def test_setting_code_broadcasts_access_codes_changed(client, make_user):
     user = make_user()
-    with _ws(client, user.token) as ws:
+    with ws_connect(client, user.token) as ws:
         set_code(client, user, "clipboard")
         assert ws.receive_json()["type"] == "access_codes_changed"
         set_code(client, user, "clipboard", code=None)

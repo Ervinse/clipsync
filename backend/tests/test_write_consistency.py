@@ -12,11 +12,7 @@ from app.core import quick_access
 from app.models import File, Setting, UploadSession, User, UserRole
 from app.core.timeutil import utcnow
 from datetime import timedelta
-from tests.helpers import new_text, set_code, upload, quick_headers
-
-
-def _ws(client, token):
-    return client.websocket_connect("/ws", subprotocols=["clipsync.v1", f"bearer.{token}"])
+from tests.helpers import new_text, set_code, upload, quick_headers, ws_connect
 
 
 # ---------- 文本：没有变化的保存不加版本号、不广播 ----------
@@ -26,7 +22,7 @@ def test_saving_unchanged_clipboard_keeps_version_and_does_not_broadcast(client,
     user = make_user()
     first = client.put("/api/clipboard", json={"content": "same"}, headers=user.headers).json()
     assert first["version"] == 1
-    with _ws(client, user.token) as ws:
+    with ws_connect(client, user.token) as ws:
         for body in ({"content": "same"}, {"content": "same", "base_version": 1}):
             resp = client.put("/api/clipboard", json=body, headers=user.headers)
             assert resp.status_code == 200 and resp.json()["version"] == 1 and resp.json()["content"] == "same"
@@ -65,7 +61,7 @@ def test_saving_unchanged_text_keeps_version_and_does_not_broadcast(client, make
     user = make_user()
     text = new_text(client, user, "正文", title="标题")
     url = f"/api/texts/{text['id']}"
-    with _ws(client, user.token) as ws:
+    with ws_connect(client, user.token) as ws:
         for body in ({}, {"content": "正文"}, {"title": "标题", "content": "正文", "base_version": 1}):
             resp = client.put(url, json=body, headers=user.headers)
             assert resp.status_code == 200 and resp.json()["version"] == 1 and resp.json()["content"] == "正文"
@@ -155,7 +151,7 @@ def test_complete_gives_up_when_upload_is_cancelled_during_merge(client, db, mak
         return size
     monkeypatch.setattr(files_api, "_merge_chunks", merge_then_session_vanishes)
 
-    with _ws(client, user.token) as ws:
+    with ws_connect(client, user.token) as ws:
         resp = client.post("/api/files/upload/complete", json={"upload_id": uid}, headers=user.headers)
         assert resp.status_code == 404
         ws.send_text('{"type":"ping"}')
@@ -251,7 +247,7 @@ def test_ws_unexpected_error_is_logged(client, make_user, monkeypatch, caplog):
     monkeypatch.setattr(ws_api, "json", types.SimpleNamespace(loads=boom))
     user = make_user()
     with caplog.at_level(logging.ERROR):
-        with _ws(client, user.token) as ws:
+        with ws_connect(client, user.token) as ws:
             ws.send_text('{"type":"ping"}')
             # 要在连接还开着时等：退出 with 会取消服务端任务，可能赶不上记日志
             deadline = time.monotonic() + 5

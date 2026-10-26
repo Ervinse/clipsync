@@ -4,6 +4,8 @@
 import { computed } from 'vue'
 import { LoaderCircle, ChevronsDown } from '@lucide/vue'
 import { formatSize, formatRelative } from '../utils/format'
+import { isDraftDirty } from '../utils/textDrafts'
+import { isSaveShortcut } from '../utils/editor'
 
 const props = defineProps({
   draft: { type: Object, required: true },
@@ -17,8 +19,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['save', 'load-full'])
 
-const dirty = computed(() => props.draft.loaded
-  && (props.draft.title !== props.draft.syncedTitle || props.draft.content !== props.draft.syncedContent))
+const dirty = computed(() => isDraftDirty(props.draft))
 
 const stateText = computed(() => {
   if (props.draft.remoteChanged) return '已在别处更新，保存时会提示你选择'
@@ -28,7 +29,7 @@ const stateText = computed(() => {
 
 // Ctrl/⌘ + S 保存
 const onKeydown = (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+  if (isSaveShortcut(event)) {
     event.preventDefault()
     if (!props.readonly) emit('save')
   }
@@ -194,28 +195,6 @@ const onKeydown = (event) => {
   background: var(--color-bg-subtle);
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
-}
-
-.sync-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--color-text-secondary);
-}
-
-.sync-state .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-success);
-}
-
-.sync-state.dirty .dot {
-  background: var(--color-warning);
-}
-
-.sync-state.remote .dot {
-  background: var(--color-danger);
 }
 
 .text-meta {

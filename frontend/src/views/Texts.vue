@@ -7,6 +7,8 @@ import { useTextsStore, useUserStore } from '../stores'
 import toast from '../utils/toast'
 import { confirmDialog } from '../utils/dialog'
 import { createTextDrafts } from '../utils/textDrafts'
+import { confirmDiscardChanges } from '../utils/editor'
+import { utf8Bytes } from '../utils/format'
 import TextEditorCard from '../components/TextEditorCard.vue'
 import AccessCodeButton from '../components/AccessCodeButton.vue'
 import AccessCodeDialog from '../components/AccessCodeDialog.vue'
@@ -16,7 +18,6 @@ const textsStore = useTextsStore()
 const userStore = useUserStore()
 
 const PREVIEW_CHARS = 200
-const utf8Bytes = (value) => new TextEncoder().encode(value).length
 
 // 保存成功后就地更新列表项（列表刷新时版本号一致，草稿不会被重复更新）
 const { drafts, isDirty, hasDirty, sync, loadFull, save, forget } = createTextDrafts({
@@ -53,13 +54,7 @@ watch(anyDirty, (dirty) => {
 
 onBeforeRouteLeave(async () => {
   if (!anyDirty.value || !userStore.isLoggedIn) return true
-  return await confirmDialog({
-    title: '放弃未保存的修改？',
-    message: '有文本还没有保存，离开后会丢失。',
-    confirmText: '放弃并离开',
-    cancelText: '继续编辑',
-    danger: true,
-  })
+  return await confirmDiscardChanges()
 })
 
 const onBeforeUnload = (event) => {

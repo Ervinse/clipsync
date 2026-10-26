@@ -13,7 +13,7 @@ export const toastState = reactive({ items: [] })
 
 let seq = 0
 
-export function dismissToast(id) {
+function dismissToast(id) {
   const index = toastState.items.findIndex((item) => item.id === id)
   if (index !== -1) toastState.items.splice(index, 1)
 }

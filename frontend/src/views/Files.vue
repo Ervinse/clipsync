@@ -5,7 +5,7 @@ import {
   File, FileText, FileImage, FileArchive, FileVideoCamera, FileMusic, FileCode, FileSpreadsheet,
 } from '@lucide/vue'
 import { useFilesStore, useUserStore } from '../stores'
-import { formatSize, formatDateTime } from '../utils/format'
+import { formatSize, formatDateTime, formatDownloadProgress } from '../utils/format'
 import toast from '../utils/toast'
 import { confirmDialog } from '../utils/dialog'
 import AccessCodeButton from '../components/AccessCodeButton.vue'
@@ -67,13 +67,7 @@ const handleDownload = async (file) => {
 }
 
 // 下载中的状态文字：浏览器要收完整个文件才弹出保存，期间显示进度，避免用户以为没反应而重复点击
-const downloadText = (file) => {
-  const state = filesStore.downloads[file.id]
-  if (!state) return ''
-  return state.total > 0
-    ? `下载中 ${Math.min(100, Math.round((state.loaded / state.total) * 100))}%`
-    : '下载中…'
-}
+const downloadText = (file) => formatDownloadProgress(filesStore.downloads[file.id])
 
 const handleDelete = async (file) => {
   const ok = await confirmDialog({
@@ -126,9 +120,6 @@ const fileIcon = (file) => {
   if (mime.startsWith('text/')) return FileText
   return File
 }
-
-// 后端时间为 naive UTC，formatDateTime 内部按 UTC 解析
-const formatDate = (value) => formatDateTime(value)
 </script>
 
 <template>
@@ -212,11 +203,11 @@ const formatDate = (value) => formatDateTime(value)
         <span class="file-icon"><component :is="fileIcon(file)" :size="18" /></span>
         <span class="file-main">
           <span class="file-name" :title="file.original_name">{{ file.original_name }}</span>
-          <span class="file-sub">{{ formatSize(file.size) }} · {{ formatDate(file.created_at) }}</span>
+          <span class="file-sub">{{ formatSize(file.size) }} · {{ formatDateTime(file.created_at) }}</span>
           <span v-if="filesStore.downloads[file.id]" class="file-downloading" role="status">{{ downloadText(file) }}</span>
         </span>
         <span class="file-size">{{ formatSize(file.size) }}</span>
-        <span class="file-date">{{ formatDate(file.created_at) }}</span>
+        <span class="file-date">{{ formatDateTime(file.created_at) }}</span>
         <span class="file-actions">
           <AccessCodeButton
             :code="file.access_code"

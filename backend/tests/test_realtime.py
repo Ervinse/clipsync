@@ -1,9 +1,6 @@
 """实时同步：删除历史、管理员改配额都要推送信号（不带正文）"""
 from app.models import UserRole
-
-
-def _ws(client, token):
-    return client.websocket_connect("/ws", subprotocols=["clipsync.v1", f"bearer.{token}"])
+from tests.helpers import ws_connect
 
 
 def test_delete_history_broadcasts_clipboard_updated(client, make_user):
@@ -12,7 +9,7 @@ def test_delete_history_broadcasts_clipboard_updated(client, make_user):
     client.put("/api/clipboard", json={"content": "b"}, headers=user.headers)
     [entry] = client.get("/api/clipboard/history", headers=user.headers).json()["items"]
 
-    with _ws(client, user.token) as ws:
+    with ws_connect(client, user.token) as ws:
         resp = client.delete(f"/api/clipboard/history/{entry['id']}", headers=user.headers)
         assert resp.status_code == 204
         msg = ws.receive_json()
@@ -22,7 +19,7 @@ def test_delete_history_broadcasts_clipboard_updated(client, make_user):
 
 def test_quota_update_broadcasts_to_target_user(client, make_user):
     superadmin, user = make_user(UserRole.SUPERADMIN), make_user()
-    with _ws(client, user.token) as ws:
+    with ws_connect(client, user.token) as ws:
         resp = client.patch(f"/api/admin/users/{user.id}/quota",
                             json={"quota_bytes": 1024 * 1024}, headers=superadmin.headers)
         assert resp.status_code == 200

@@ -13,25 +13,7 @@ from sqlalchemy import delete as sql_delete
 
 from app.api import files as files_api
 from app.models import UploadSession
-
-
-def _init(client, user, total_size=2048, chunk_size=1024):
-    resp = client.post(
-        "/api/files/upload/init",
-        json={"original_name": "a.bin", "total_size": total_size, "chunk_size": chunk_size},
-        headers=user.headers,
-    )
-    assert resp.status_code == 200, resp.text
-    return resp.json()
-
-
-def _chunk(client, user, upload_id, index, data):
-    return client.post(
-        "/api/files/upload/chunk",
-        data={"upload_id": upload_id, "chunk_index": str(index)},
-        files={"chunk_data": ("blob", data)},
-        headers=user.headers,
-    )
+from tests.helpers import start_upload, post_chunk
 
 
 # ---------- 显式 UPDATE + rowcount ----------
@@ -39,20 +21,20 @@ def _chunk(client, user, upload_id, index, data):
 def test_retransmit_same_chunk_still_succeeds(client, make_user):
     """重传已落盘的分片：received_chunks 不变，显式 UPDATE 靠 FOUND_ROWS 仍匹配 1 行，返回 200 不误判为 404。"""
     user = make_user()
-    info = _init(client, user)
+    info = start_upload(client, user, 2048)
     uid = info["upload_id"]
 
-    r1 = _chunk(client, user, uid, 0, b"x" * 1024)
+    r1 = post_chunk(client, user, uid, 0, b"x" * 1024)
     assert r1.status_code == 200 and r1.json()["received_chunks"] == 1
 
-    r2 = _chunk(client, user, uid, 0, b"x" * 1024)
+    r2 = post_chunk(client, user, uid, 0, b"x" * 1024)
     assert r2.status_code == 200 and r2.json()["received_chunks"] == 1
 
 
 def test_chunk_404_when_session_deleted_during_write(client, db, make_user, monkeypatch):
     """模拟写盘后、UPDATE 前会话被并发删除：rowcount==0 时返回 404 并清理临时目录。"""
     user = make_user()
-    info = _init(client, user, total_size=10, chunk_size=1024)
+    info = start_upload(client, user, 10)
     uid = info["upload_id"]
 
     orig = files_api._count_chunks
@@ -68,7 +50,7 @@ def test_chunk_404_when_session_deleted_during_write(client, db, make_user, monk
 
     monkeypatch.setattr(files_api, "_count_chunks", spy)
 
-    resp = _chunk(client, user, uid, 0, b"x" * 10)
+    resp = post_chunk(client, user, uid, 0, b"x" * 10)
     assert resp.status_code == 404
     assert not files_api.get_upload_temp_dir(uid).exists()  # 临时目录已被清理，不留孤儿
 
@@ -78,7 +60,7 @@ def test_chunk_404_when_session_deleted_during_write(client, db, make_user, monk
 def test_chunk_404_when_write_hits_missing_dir(client, make_user, monkeypatch):
     """写盘时临时目录已不存在：_save_chunk 抛 FileNotFoundError，按会话已结束返回 404。"""
     user = make_user()
-    info = _init(client, user, total_size=10, chunk_size=1024)
+    info = start_upload(client, user, 10)
     uid = info["upload_id"]
 
     def boom(*args, **kwargs):
@@ -86,14 +68,14 @@ def test_chunk_404_when_write_hits_missing_dir(client, make_user, monkeypatch):
 
     monkeypatch.setattr(files_api, "_save_chunk", boom)
 
-    resp = _chunk(client, user, uid, 0, b"x" * 10)
+    resp = post_chunk(client, user, uid, 0, b"x" * 10)
     assert resp.status_code == 404
 
 
 def test_chunk_404_when_tempdir_removed_before_replace(client, make_user, monkeypatch):
     """写完分片、原子替换前临时目录被 rmtree：partial_path.replace 抛 FileNotFoundError，返回 404。"""
     user = make_user()
-    info = _init(client, user, total_size=10, chunk_size=1024)
+    info = start_upload(client, user, 10)
     uid = info["upload_id"]
 
     orig = files_api._save_chunk
@@ -105,5 +87,5 @@ def test_chunk_404_when_tempdir_removed_before_replace(client, make_user, monkey
 
     monkeypatch.setattr(files_api, "_save_chunk", wrapper)
 
-    resp = _chunk(client, user, uid, 0, b"x" * 10)
+    resp = post_chunk(client, user, uid, 0, b"x" * 10)
     assert resp.status_code == 404

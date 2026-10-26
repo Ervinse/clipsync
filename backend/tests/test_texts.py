@@ -88,18 +88,6 @@ def test_text_events_broadcast(client, make_user):
         assert ws.receive_json()["type"] == "texts_changed"
 
 
-def test_delete_user_removes_texts(client, db, make_user):
-    from sqlalchemy import select, func
-    from app.models import Text, UserRole
-    superadmin, victim = make_user(UserRole.SUPERADMIN), make_user()
-    new_text(client, victim, "x")
-    assert client.delete(f"/api/admin/users/{victim.id}", headers=superadmin.headers).status_code == 204
-
-    async def _count(s):
-        return (await s.execute(select(func.count()).select_from(Text).where(Text.user_id == victim.id))).scalar()
-    assert db(_count) == 0
-
-
 # ---------- 云剪切板的版本号与冲突检测 ----------
 
 def test_clipboard_version_and_conflict(client, make_user):

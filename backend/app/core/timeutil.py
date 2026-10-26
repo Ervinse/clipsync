@@ -1,5 +1,5 @@
 """时间工具：统一 UTC。数据库 DateTime 列为 naive，约定一律存 naive UTC，精度到秒。"""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def utcnow() -> datetime:
@@ -24,3 +24,23 @@ def to_naive_utc(value: datetime | None) -> datetime | None:
         except OverflowError:
             raise ValueError("时间超出可表示的范围")
     return value.replace(microsecond=0)
+
+
+def parse_future_expiry(value: datetime | None, max_hours: int | None = None) -> datetime | None:
+    """
+    校验并换算用户提交的过期时间（访问码、邀请码共用）：转为 naive UTC，必须晚于当前时间；
+    给了 max_hours 时不能晚于那么多小时之后（留 1 分钟余量，避免前端按整点小时计算后因时钟误差被拒）。
+    None 表示永不过期，原样返回。不合规时抛 ValueError，消息可直接给用户看，由调用方转成 400。
+    """
+    try:
+        expires_at = to_naive_utc(value)
+    except ValueError:
+        raise ValueError("过期时间超出有效范围")
+    if expires_at is None:
+        return None
+    now = utcnow()
+    if expires_at <= now:
+        raise ValueError("过期时间必须晚于当前时间")
+    if max_hours is not None and expires_at > now + timedelta(hours=max_hours, minutes=1):
+        raise ValueError(f"有效期最长 {max_hours} 小时")
+    return expires_at

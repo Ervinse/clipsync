@@ -27,13 +27,6 @@ class UploadInitResponse(BaseModel):
     chunk_size: int = Field(..., description="服务端确认的分片大小")
 
 
-class UploadChunkRequest(BaseModel):
-    """上传单个分片请求（multipart/form-data）"""
-    upload_id: str
-    chunk_index: int = Field(..., ge=0, description="分片索引（从 0 开始）")
-    # chunk_data: 实际文件数据通过 UploadFile 接收
-
-
 class UploadCompleteRequest(BaseModel):
     """完成上传请求"""
     upload_id: str = Field(..., min_length=36, max_length=36)

@@ -1,8 +1,7 @@
 """管理后台路由：统计 + 用户管理 + 邀请码 + 系统设置 + 系统信息"""
 import logging
-from datetime import datetime
-
 from collections import defaultdict
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.concurrency import run_in_threadpool
@@ -58,7 +57,7 @@ from ..schemas import (
 from ..core.deps import require_role
 from ..core.storage import delete_user_storage, cleanup_upload_temp
 from ..core.ws_manager import manager
-from ..core.timeutil import utcnow, to_naive_utc
+from ..core.timeutil import utcnow, parse_future_expiry
 from ..core.app_settings import (
     get_default_quota_bytes,
     get_registration_enabled,
@@ -93,7 +92,7 @@ async def get_system_stats(
     total_users = result.scalar()
 
     result = await db.execute(
-        select(func.count(User.id)).where(User.is_active == True)
+        select(func.count(User.id)).where(User.is_active.is_(True))
     )
     active_users = result.scalar()
 
@@ -281,17 +280,8 @@ async def update_user_status(
 
     权限：admin（只能操作普通用户）+ superadmin（不能操作其他 superadmin）
     """
-    # 1. 查询用户
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    user = await _get_user_or_404(db, user_id)
 
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="用户不存在",
-        )
-
-    # 2. 禁止操作自己
     if user.id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -306,16 +296,14 @@ async def update_user_status(
         )
     _ensure_admin_targets_plain_user(current_user, user)
 
-    # 3. 更新状态
     user.is_active = data.is_active
     await db.commit()
-    await db.refresh(user)
 
     # 安全红线：禁用后立即断开其实时连接（HTTP 接口由 get_current_user 每次回库拦截）
     if not user.is_active:
         await manager.disconnect_user(user.id)
 
-    # 4. 返回详情
+    # expire_on_commit=False，提交后属性仍可直接读取，无需 refresh
     return await _build_user_detail(db, user)
 
 
@@ -364,17 +352,8 @@ async def delete_user(
     - 禁止删除自己
     - 级联删除：文件（磁盘+记录）、剪贴板、文本栏目等（访问码挂在这些内容上，随之删除）
     """
-    # 1. 查询用户
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    user = await _get_user_or_404(db, user_id)
 
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="用户不存在",
-        )
-
-    # 2. 禁止删除自己
     if user.id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -388,7 +367,7 @@ async def delete_user(
             detail="不能删除其他超级管理员",
         )
 
-    # 3. 锁住被删用户行，与 init_upload 的加锁串行化：防止「读到的 upload_ids」与随后并发 init 新建的会话
+    # 1. 锁住被删用户行，与 init_upload 的加锁串行化：防止「读到的 upload_ids」与随后并发 init 新建的会话
     #    之间出现空档，导致新会话的临时目录成为无主孤儿。加锁前先 commit 结束鉴权读视图（MySQL 默认 RR）。
     await db.commit()
     await db.execute(select(User.id).where(User.id == user_id).with_for_update())
@@ -397,7 +376,7 @@ async def delete_user(
     result = await db.execute(select(UploadSession.upload_id).where(UploadSession.user_id == user_id))
     upload_ids = [row[0] for row in result.all()]
 
-    # 4. 显式按依赖顺序删除关联数据（迁移中外键没有 ON DELETE CASCADE，不能依赖数据库级联）
+    # 2. 显式按依赖顺序删除关联数据（迁移中外键没有 ON DELETE CASCADE，不能依赖数据库级联）
     await db.execute(sql_delete(UploadSession).where(UploadSession.user_id == user_id))
     await db.execute(sql_delete(File).where(File.user_id == user_id))
     await db.execute(sql_delete(Text).where(Text.user_id == user_id))
@@ -426,7 +405,7 @@ async def delete_user(
     await db.execute(sql_delete(User).where(User.id == user_id))
     await db.commit()
 
-    # 5. 删除磁盘文件与临时目录（rmtree 可能涉及大量文件，放入线程池避免阻塞事件循环）
+    # 3. 删除磁盘文件与临时目录（rmtree 可能涉及大量文件，放入线程池避免阻塞事件循环）
     #    记录已删除：磁盘清理失败只记日志，残留目录由 scripts/cleanup_expired.py 的孤儿扫描兜底
     try:
         await run_in_threadpool(delete_user_storage, user_id)
@@ -438,7 +417,7 @@ async def delete_user(
         except OSError:
             logger.exception("清理上传临时目录失败 upload_id=%s", upload_id)
 
-    # 6. 断开该用户所有实时连接
+    # 4. 断开该用户所有实时连接
     await manager.disconnect_user(user_id)
 
     return None
@@ -448,20 +427,16 @@ async def delete_user(
 
 
 def _parse_invite_expiry(value: datetime | None) -> datetime | None:
-    """过期时间统一转 naive UTC（与 register 中的 utcnow() 比较口径一致），且必须晚于当前时间"""
+    """过期时间统一转 naive UTC（与 register 中的 utcnow() 比较口径一致），且必须晚于当前时间；邀请码没有最长期限"""
     try:
-        expires_at = to_naive_utc(value)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="过期时间超出有效范围",
-        )
-    if expires_at is not None and expires_at <= utcnow():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="过期时间必须晚于当前时间",
-        )
-    return expires_at
+        return parse_future_expiry(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+def _is_used(invite: InviteCode) -> bool:
+    """邀请码是否已用过：used_at 非空即用过（使用者被删后 used_by 会置空，used_at 仍保留）"""
+    return invite.used_at is not None or invite.used_by is not None
 
 
 async def _load_batches(db: AsyncSession, batch_id: int | None = None) -> list[InviteBatchResponse]:
@@ -585,8 +560,7 @@ async def update_invite_codes_expiry(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="部分邀请码不存在，请刷新列表后重试",
         )
-    # used_at 非空即用过（使用者被删后 used_by 会置空）
-    if any(i.used_at is not None or i.used_by is not None for i in invites):
+    if any(_is_used(i) for i in invites):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="已使用的邀请码不能修改有效期",
@@ -664,8 +638,7 @@ async def delete_invite_batch_unused(
     invites = (await db.execute(
         select(InviteCode).where(InviteCode.batch_id == batch_id).with_for_update()
     )).scalars().all()
-    # used_at 非空即用过（使用者被删后 used_by 会置空）
-    unused_ids = [i.id for i in invites if i.used_at is None and i.used_by is None]
+    unused_ids = [i.id for i in invites if not _is_used(i)]
 
     if unused_ids:
         await db.execute(sql_delete(InviteCode).where(InviteCode.id.in_(unused_ids)))
@@ -702,8 +675,8 @@ async def delete_invite_code(
             detail="邀请码不存在",
         )
 
-    # 已使用的码保留作为注册审计记录，不允许删除（used_at 非空即用过，使用者被删后 used_by 会置空）
-    if invite_code.used_at is not None or invite_code.used_by is not None:
+    # 已使用的码保留作为注册审计记录，不允许删除
+    if _is_used(invite_code):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="邀请码已被使用，不能删除",
@@ -967,6 +940,3 @@ async def get_user_text(
     if text is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文本不存在")
     return to_text_response(text)
-
-
-

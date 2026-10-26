@@ -68,6 +68,16 @@ def _delete_own_session(upload_id: str, user_id: int):
     )
 
 
+async def _reject_if_expired(db: AsyncSession, session: UploadSession, user_id: int) -> None:
+    """会话超过 UPLOAD_SESSION_TTL_HOURS：删掉会话与临时分片，返回 404「上传会话已过期」（分片与完成上传共用）"""
+    if session.created_at >= utcnow() - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS):
+        return
+    await db.execute(_delete_own_session(session.upload_id, user_id))
+    await db.commit()
+    await run_in_threadpool(cleanup_upload_temp, session.upload_id)
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话已过期")
+
+
 async def _reserved_bytes(db: AsyncSession, user_id: int, exclude_upload_id: str | None = None) -> int:
     """
     已占用配额 = 已落盘文件 + 进行中的上传会话声明大小。
@@ -341,12 +351,8 @@ async def upload_chunk(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SESSION_GONE_DETAIL)
 
-    # 会话过期：不再接收分片，顺带清理（先于分片编号检查，过期的会话一律按已过期处理）
-    if session.created_at < utcnow() - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS):
-        await db.execute(_delete_own_session(upload_id, current_user.id))
-        await db.commit()
-        await run_in_threadpool(cleanup_upload_temp, upload_id)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话已过期")
+    # 先于分片编号检查：过期的会话一律按已过期处理
+    await _reject_if_expired(db, session, current_user.id)
 
     if chunk_index >= session.total_chunks:
         raise HTTPException(
@@ -463,12 +469,7 @@ async def _complete_upload(data: UploadCompleteRequest, current_user: User, db: 
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SESSION_GONE_DETAIL)
 
-    # 会话过期：拒绝合并并清理
-    if session.created_at < utcnow() - timedelta(hours=settings.UPLOAD_SESSION_TTL_HOURS):
-        await db.execute(_delete_own_session(data.upload_id, current_user.id))
-        await db.commit()
-        await run_in_threadpool(cleanup_upload_temp, data.upload_id)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传会话已过期")
+    await _reject_if_expired(db, session, current_user.id)
 
     temp_dir = get_upload_temp_dir(data.upload_id)
     received = await run_in_threadpool(_list_chunk_indexes, temp_dir)

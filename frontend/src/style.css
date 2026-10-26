@@ -496,17 +496,6 @@ a:hover {
   cursor: not-allowed;
 }
 
-/* 文字链接样式的按钮 */
-.btn-link {
-  color: var(--color-accent);
-  font-weight: 500;
-}
-
-.btn-link:hover {
-  color: var(--color-accent-hover);
-  text-decoration: underline;
-}
-
 /* ---------- 表单 ---------- */
 .field {
   display: flex;
@@ -526,8 +515,50 @@ a:hover {
   color: var(--color-text-tertiary);
 }
 
-.input,
-.select {
+/* 输入框右侧带单位（MB、天、个等）：<span class="input-with-suffix"><input class="input" /><span class="input-suffix">MB</span></span> */
+.input-with-suffix {
+  position: relative;
+  display: block;
+}
+
+.input-with-suffix .input {
+  padding-right: 48px;
+}
+
+.input-suffix {
+  position: absolute;
+  right: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--text-sm);
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+/* 编辑框状态栏的「已保存 / 有未保存的修改 / 已在别处更新」：绿 / 黄 / 红点 + 文字 */
+.sync-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+}
+
+.sync-state .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-success);
+}
+
+.sync-state.dirty .dot {
+  background: var(--color-warning);
+}
+
+.sync-state.remote .dot {
+  background: var(--color-danger);
+}
+
+.input {
   width: 100%;
   height: var(--control-height);
   padding: 0 var(--space-3);
@@ -544,13 +575,11 @@ a:hover {
   height: var(--control-height-lg);
 }
 
-.input:hover:not(:disabled):not(:focus),
-.select:hover:not(:disabled):not(:focus) {
+.input:hover:not(:disabled):not(:focus) {
   border-color: var(--color-border-hover);
 }
 
-.input:focus,
-.select:focus {
+.input:focus {
   outline: none;
   border-color: var(--color-accent);
   box-shadow: 0 0 0 3px var(--color-focus-ring);
@@ -560,20 +589,10 @@ a:hover {
   color: var(--color-text-tertiary);
 }
 
-.input:disabled,
-.select:disabled {
+.input:disabled {
   background: var(--color-bg-subtle);
   color: var(--color-text-tertiary);
   cursor: not-allowed;
-}
-
-/* 下拉框：去掉系统箭头，换成统一的细线箭头 */
-.select {
-  appearance: none;
-  padding-right: 34px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b8b96' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
 }
 
 /* 开关（替代复选框）：<label class="switch"><input type="checkbox" /><span class="switch-track"></span>文字</label> */

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CircleAlert, CircleCheck, LoaderCircle } from '@lucide/vue'
 import { useUserStore } from '../stores'
+import { utf8Bytes } from '../utils/format'
 import AuthLayout from '../components/AuthLayout.vue'
 
 const route = useRoute()
@@ -44,7 +45,7 @@ const handleRegister = async () => {
     return
   }
 
-  if (new TextEncoder().encode(form.value.password).length > 72) {
+  if (utf8Bytes(form.value.password) > 72) {
     error.value = '密码不能超过 72 字节'
     return
   }

@@ -7,6 +7,7 @@ import { formatRelative, formatSize } from '../utils/format'
 import toast from '../utils/toast'
 import { confirmDialog } from '../utils/dialog'
 import { askConflict } from '../utils/conflict'
+import { SAVE_KEY_HINT, isSaveShortcut, confirmDiscardChanges } from '../utils/editor'
 import AccessCodeButton from '../components/AccessCodeButton.vue'
 import AccessCodeDialog from '../components/AccessCodeDialog.vue'
 
@@ -26,8 +27,6 @@ const loadError = ref('')
 
 const isDirty = computed(() => textContent.value !== syncedText.value)
 
-// 快捷键提示：苹果设备用 ⌘，其余用 Ctrl（按键处理两者都认）
-const saveKeyHint = /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent) ? '⌘ + S' : 'Ctrl + S'
 
 // 本页自己整体替换编辑框内容（恢复历史、载入最新内容）期间，store 的变化是自己造成的，不算「别处更新」
 let selfUpdating = 0
@@ -74,13 +73,7 @@ watch(isDirty, (dirty) => {
 // 已经登出（退出登录、登录过期）时不再拦：退出登录的确认在登出之前已经做过
 onBeforeRouteLeave(async () => {
   if (!isDirty.value || !userStore.isLoggedIn) return true
-  return await confirmDialog({
-    title: '放弃未保存的修改？',
-    message: '编辑框里的内容还没有保存，离开后会丢失。',
-    confirmText: '放弃并离开',
-    cancelText: '继续编辑',
-    danger: true,
-  })
+  return await confirmDiscardChanges('编辑框里的内容还没有保存，离开后会丢失。')
 })
 
 // 刷新、关闭标签页时由浏览器自带的确认框拦一下（文案由浏览器决定）
@@ -173,7 +166,7 @@ const onCodeSaved = (result) => {
 
 // Ctrl/⌘ + S 保存
 const onEditorKeydown = (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+  if (isSaveShortcut(event)) {
     event.preventDefault()
     if (!isSaving.value) handleSave()
   }
@@ -257,8 +250,6 @@ const handleDeleteHistory = async (item) => {
   }
 }
 
-// 后端时间为 naive UTC，formatRelative 内部按 UTC 解析
-const formatDate = formatRelative
 </script>
 
 <template>
@@ -316,7 +307,7 @@ const formatDate = formatRelative
           </span>
           <span class="editor-meta">
             {{ textContent.length.toLocaleString() }} 字符
-            <span class="kbd-hint">· {{ saveKeyHint }} 保存</span>
+            <span class="kbd-hint">· {{ SAVE_KEY_HINT }} 保存</span>
           </span>
         </div>
       </section>
@@ -346,7 +337,7 @@ const formatDate = formatRelative
           >
             <p class="history-content">{{ historyText(item).substring(0, 140) }}<span v-if="historyTruncated(item)">…</span></p>
             <div class="history-meta">
-              <span>{{ formatDate(item.created_at) }} · {{ historySize(item) }}</span>
+              <span>{{ formatRelative(item.created_at) }} · {{ historySize(item) }}</span>
               <span class="history-actions">
                 <button class="btn-icon" title="恢复为当前文本并同步" aria-label="恢复" @click.stop="handleRestore(item)">
                   <RotateCcw :size="14" />
@@ -451,24 +442,6 @@ const formatDate = formatRelative
   background: var(--color-bg-subtle);
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
-}
-
-.sync-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--color-text-secondary);
-}
-
-.sync-state .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-success);
-}
-
-.sync-state.dirty .dot {
-  background: var(--color-warning);
 }
 
 .editor-meta {
