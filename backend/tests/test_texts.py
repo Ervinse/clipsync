@@ -62,7 +62,7 @@ def test_text_count_limit(client, make_user, monkeypatch):
 
 def test_text_size_limit(client, make_user):
     user = make_user()
-    big = "a" * (8 * 1024 * 1024 + 1)
+    big = "a" * (4 * 1024 * 1024 + 1)
     assert client.post("/api/texts", json={"content": big}, headers=user.headers).status_code == 422
 
 

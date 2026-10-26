@@ -6,7 +6,6 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from .config import settings
@@ -42,7 +41,13 @@ app = FastAPI(
 
 # 限流器配置
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    """限流 → 429 + 中文 detail（slowapi 默认返回英文的 error 字段，前端按 detail 显示）"""
+    return JSONResponse(status_code=status.HTTP_429_TOO_MANY_REQUESTS, content={"detail": "操作过于频繁，请稍后再试"})
+
 
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError):

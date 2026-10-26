@@ -53,7 +53,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # 降级会丢失文本栏目的全部内容与所有访问码
-    op.drop_index('ix_texts_user_access_code', table_name='texts')
+    # ix_texts_user_access_code 是 user_id 外键唯一能用的索引，不能单独删，随 drop_table 一起删除
     op.drop_table('texts')
 
     op.drop_index('ix_files_user_access_code', table_name='files')

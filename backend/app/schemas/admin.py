@@ -83,20 +83,22 @@ class InviteBatchCreate(BaseModel):
     expires_at: Optional[datetime] = Field(None, description="过期时间（可选，空为永久有效）")
     note: str = Field("", max_length=MAX_INVITE_NOTE_CHARS, description="备注（可选，最多 100 字）")
 
-    @field_validator("note")
+    @field_validator("note", mode="before")
     @classmethod
-    def _strip_note(cls, value: str) -> str:
-        return value.strip()
+    def _strip_note(cls, value):
+        # before：先去首尾空格再校验长度，正文正好上限、前后带空格的备注不会被误拒
+        return value.strip() if isinstance(value, str) else value
 
 
 class InviteBatchNoteUpdate(BaseModel):
     """修改批次备注（空字符串表示清空）"""
     note: str = Field(..., max_length=MAX_INVITE_NOTE_CHARS, description="备注（最多 100 字）")
 
-    @field_validator("note")
+    @field_validator("note", mode="before")
     @classmethod
-    def _strip_note(cls, value: str) -> str:
-        return value.strip()
+    def _strip_note(cls, value):
+        # before：先去首尾空格再校验长度，正文正好上限、前后带空格的备注不会被误拒
+        return value.strip() if isinstance(value, str) else value
 
 
 class InviteCodeExpiryUpdate(BaseModel):
@@ -198,10 +200,11 @@ class DeploymentNoteUpdate(BaseModel):
     """修改部署备注（仅超管）；空字符串表示清除"""
     note: str = Field(..., max_length=MAX_DEPLOYMENT_NOTE_CHARS, description="备注（最多 200 字）")
 
-    @field_validator("note")
+    @field_validator("note", mode="before")
     @classmethod
-    def _strip_note(cls, value: str) -> str:
-        return value.strip()
+    def _strip_note(cls, value):
+        # before：先去首尾空格再校验长度，正文正好上限、前后带空格的备注不会被误拒
+        return value.strip() if isinstance(value, str) else value
 
 
 class AdminFileListItem(BaseModel):

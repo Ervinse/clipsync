@@ -42,8 +42,8 @@ export async function extractMessage(status, data) {
     }
   }
 
-  // FastAPI 用 detail；slowapi 限流用 error
-  let message = data?.detail ?? data?.error
+  // 后端的错误（含限流的 429）都用 detail 字段
+  let message = data?.detail
   // 422 校验错误的 detail 是数组 [{ loc, msg, type }]
   if (Array.isArray(message)) {
     // pydantic 的自定义校验会给 msg 加上英文前缀 "Value error, "，对用户没有意义，去掉

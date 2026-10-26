@@ -1,5 +1,6 @@
 """数据库层容错：上传出错时磁盘与会话行保持一致、极端时区、清理脚本的用户快照、排序规则与部署一致"""
 import os
+import threading
 import uuid
 from datetime import datetime, timedelta
 
@@ -12,7 +13,7 @@ from app.config import settings
 from app.core.timeutil import to_naive_utc, utcnow
 from app.models import UploadSession, User, UserRole
 from scripts import cleanup_expired
-from tests.helpers import STORAGE_ROOT, upload
+from tests.helpers import STORAGE_ROOT, add_invite, new_text, upload
 
 
 def _init(client, user, total_size=100):
@@ -110,6 +111,108 @@ def test_init_commit_failure_removes_temp_dir(client, make_user, db, monkeypatch
     assert seen["dir_existed_at_failure"], "没有走到「目录已建好、提交失败」这一步，测试没有意义"
     assert db(_count_sessions) == 0
     assert list(tmp_root.iterdir()) == []
+
+
+# ---------- 并发：请求被行锁挡住时，另一个连接改库 ----------
+
+def _race_with_row_lock(lock_sql, lock_params, change_sql, change_params, request):
+    """
+    让 request（返回响应的无参函数，在线程里发出）被行锁挡住，再从另一个连接改库并提交，放行后返回响应。
+    模拟「请求处理到一半，另一个终端同时改了同一行」的竞态，确定地复现，不靠运气。
+    """
+    conn = _sync_connection()
+    outcome = {}
+
+    def _call():
+        try:
+            outcome["response"] = request()
+        except BaseException as exc:  # noqa: BLE001 - 带回主线程再抛出
+            outcome["error"] = exc
+
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(lock_sql, lock_params)
+            thread = threading.Thread(target=_call)
+            thread.start()
+            thread.join(1.0)
+            assert thread.is_alive(), "请求没有被行锁挡住，测试没有意义"
+            cur.execute(change_sql, change_params)
+        conn.commit()
+        thread.join(15)
+        assert not thread.is_alive(), "放开行锁后请求仍未返回"
+    finally:
+        conn.close()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["response"]
+
+
+def test_upload_init_judges_quota_read_after_taking_the_lock(client, make_user):
+    """加锁后才读配额：管理员恰好同时调低配额时，本次 init 按新配额判断"""
+    user = make_user()
+    resp = _race_with_row_lock(
+        "SELECT id FROM users WHERE id = %s FOR UPDATE", (user.id,),
+        "UPDATE users SET quota_bytes = 5 WHERE id = %s", (user.id,),
+        lambda: _init(client, user, total_size=100),
+    )
+    assert resp.status_code == 413
+
+
+def test_delete_invite_code_waits_for_registration_and_keeps_used_code(client, db, make_user):
+    """注册正持有邀请码行锁时删除该码：等注册提交后再判断，已使用的码保留作审计记录（409）"""
+    admin, member = make_user(UserRole.ADMIN), make_user()
+    invite_id, _ = add_invite(db, "RACE-RACE-RACE", admin.id)
+    resp = _race_with_row_lock(
+        "SELECT id FROM invite_codes WHERE id = %s FOR UPDATE", (invite_id,),
+        "UPDATE invite_codes SET used_by = %s, used_at = NOW() WHERE id = %s", (member.id, invite_id),
+        lambda: client.delete(f"/api/admin/invite-codes/{invite_id}", headers=admin.headers),
+    )
+    assert resp.status_code == 409
+    codes = client.get("/api/admin/invite-batches", headers=admin.headers).json()["items"][0]["codes"]
+    assert [c["id"] for c in codes] == [invite_id]
+
+
+@pytest.mark.parametrize("kind", ["history", "text", "file"])
+def test_second_of_two_concurrent_deletes_gets_404(client, make_user, kind):
+    """同一条历史 / 文本 / 文件被同时删除：先提交的成功，后到的返回 404（不是 204，也不重复广播）"""
+    user = make_user()
+    if kind == "history":
+        client.put("/api/clipboard", json={"content": "a"}, headers=user.headers)
+        client.put("/api/clipboard", json={"content": "b"}, headers=user.headers)
+        row_id = client.get("/api/clipboard/history", headers=user.headers).json()["items"][0]["id"]
+        url, table = f"/api/clipboard/history/{row_id}", "clipboard_history"
+    elif kind == "text":
+        row_id = new_text(client, user)["id"]
+        url, table = f"/api/texts/{row_id}", "texts"
+    else:
+        row_id = upload(client, user, b"data").json()["id"]
+        url, table = f"/api/files/{row_id}", "files"
+    resp = _race_with_row_lock(
+        f"SELECT id FROM {table} WHERE id = %s FOR UPDATE", (row_id,),
+        f"DELETE FROM {table} WHERE id = %s", (row_id,),
+        lambda: client.delete(url, headers=user.headers),
+    )
+    assert resp.status_code == 404
+
+
+# ---------- 时间精度：小数秒入库前截掉 ----------
+
+def test_utcnow_and_to_naive_utc_drop_fractional_seconds():
+    assert utcnow().microsecond == 0
+    assert to_naive_utc(datetime(2030, 1, 1, 0, 0, 0, 600000)) == datetime(2030, 1, 1, 0, 0, 0)
+    assert to_naive_utc(datetime.fromisoformat("2030-01-01T08:00:00.999+08:00")) == datetime(2030, 1, 1, 0, 0, 0)
+
+
+def test_invite_expiry_with_fractional_seconds_is_truncated_not_rounded_up(client, make_user):
+    """9999-12-31 23:59:59.6 被 MySQL 四舍五入进位到 10000 年会报错（500）：小数秒入库前截掉"""
+    admin = make_user(UserRole.ADMIN)
+    far = client.post("/api/admin/invite-batches", json={"expires_at": "9999-12-31T23:59:59.6"}, headers=admin.headers)
+    assert far.status_code == 200
+    assert far.json()["codes"][0]["expires_at"].startswith("9999-12-31T23:59:59")
+    soon = client.post("/api/admin/invite-batches", json={"expires_at": "2030-01-01T00:00:00.6Z"}, headers=admin.headers)
+    assert soon.status_code == 200
+    assert soon.json()["codes"][0]["expires_at"].startswith("2030-01-01T00:00:00")
 
 
 # ---------- 极端时区 ----------

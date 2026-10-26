@@ -16,7 +16,7 @@ class Text(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
     title: Mapped[str] = mapped_column(String(100), nullable=False, default="")
-    # 与云剪切板相同：应用层上限 8MB（schemas/clipboard.py），列容量 16MB
+    # 与云剪切板相同：应用层上限 4MB（schemas/clipboard.py），列容量 16MB
     content: Mapped[str] = mapped_column(MEDIUMTEXT, nullable=False)
     # 每次保存加 1：保存时带上读到的版本号，不一致说明已在别处改过（冲突检测）
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")

@@ -11,6 +11,7 @@
   定时清理删掉过期访问码这类没有经过接口的变化，最迟一个心跳周期内也会断开
 """
 import json
+import logging
 import time
 from dataclasses import dataclass
 
@@ -22,6 +23,8 @@ from ..models import User
 from ..core.security import decode_access_token, get_user_id_from_payload
 from ..core.quick_access import parse_quick_payload, quick_access_is_valid
 from ..core.ws_manager import manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -124,9 +127,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     break
                 await websocket.send_text('{"type":"pong"}')
     except WebSocketDisconnect:
-        pass
+        pass  # 客户端正常断开
     except Exception:
-        pass
+        logger.exception("WebSocket 连接异常 user=%s", peer.user_id)
     finally:
         # 无论何种方式断开都清理，避免连接表残留
         if peer.quick_code is None:

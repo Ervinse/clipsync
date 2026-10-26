@@ -111,12 +111,16 @@ async def write_clipboard(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=CONFLICT_DETAIL)
 
     if consumed_history_id is not None:
-        await db.execute(
+        consumed = await db.execute(
             delete(ClipboardHistory).where(
                 ClipboardHistory.id == consumed_history_id,
                 ClipboardHistory.user_id == user_id,
             )
         )
+        if consumed.rowcount == 0:
+            # 读出内容之后，这条历史被另一台设备删除或恢复掉了：不再把它写成当前文本
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="历史记录不存在或无权访问")
 
     # 2. 旧内容非空且与新内容不同才归档（保存相同内容不产生重复历史）
     if old_clipboard and old_clipboard.content and old_clipboard.content != content:
@@ -323,12 +327,16 @@ async def delete_clipboard_history(
             detail="历史记录不存在或无权访问",
         )
 
-    await db.execute(
+    deleted = await db.execute(
         delete(ClipboardHistory).where(
             ClipboardHistory.id == history_id,
             ClipboardHistory.user_id == current_user.id,  # 安全红线：删除条件同样带归属
         )
     )
+    if deleted.rowcount == 0:
+        # 同时有另一个请求先删除了这条历史：不重复广播
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="历史记录不存在或无权访问")
     await db.commit()
 
     # 其他终端打开着历史面板时据此重拉（只发信号）
