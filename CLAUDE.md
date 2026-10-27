@@ -95,8 +95,10 @@
   2. 镜像 label `org.opencontainers.image.revision=<commit>`（`health_check.sh` 据此显示运行中的提交）
   3. 部署包内 `VERSION` 文件，含 `commit=` / `branch=` / `latest=` / `built=` 四个字段
   4. 两个产物的文件名：`clipsync-images-<commit>[-app].tar.gz`、`clipsync-deploy-<commit>.tar.gz`
-  5. 后端镜像里的 `/app/BUILD_INFO`（`commit=` / `branch=` / `built=`，built 为 UTC），后台「系统信息」据此显示；版本号不写进镜像，由 compose 把 `CLIPSYNC_TAG` 作为 `APP_VERSION` 传入
+  5. 后端镜像里的 `/app/BUILD_INFO`（`commit=` / `branch=` / `built=`），后台「系统信息」据此显示；版本号不写进镜像，由 compose 把 `CLIPSYNC_TAG` 作为 `APP_VERSION` 传入
+- **构建时间与分支一致**：脚本只取一次构建时间（UTC，`yyyy-MM-ddTHH:mm:ssZ`），同时写入 `BUILD_INFO` 与 `VERSION` 的 `built=`、镜像 label `org.opencontainers.image.created`；`publish-release.ps1` 从这个 label 读出构建时间写进发布包的 `VERSION`。`branch=` 在打包 `HEAD` 时取当前分支；`-Ref` 传的是提交号或标签、而它正是 master 的最新提交时记为 `master`，其他情况记为 `-Ref` 原样。
 - 打包只取**已提交**的代码（`git archive`），工作区未提交的改动不进镜像；打包的不是 master 最新提交，或打包的是 `HEAD`（`-Ref` 的默认值）而工作区不干净时，脚本要求确认（`-Yes` 跳过确认）。
+- **产物先写临时目录**：两个包先生成在 `release/.partial-<随机串>/`，全部成功后才移进 `release/<commit>/`，临时目录无论成败都会删除；中途失败（磁盘满、Ctrl+C）不会留下被截断的包，也不会覆盖同一提交之前完整的包。`publish-release.ps1` 同样先在 `release/.partial-<随机串>/` 生成三个文件，全部成功后才删除旧的 `release/<版本号>/`，把临时目录改名为它。
 
 ## 正式版本晋级（publish-release.ps1）
 用户要求「把某个提交 / 测试构建晋级为版本 X」时，按以下步骤做。核心原则：**不重新构建**，只给测试过的同一份镜像追加版本号标签。
